@@ -27,7 +27,7 @@ def render_job(job):
         print("Starting headless Cycles render...")
         # Run Blender in the background (-b), force Cycles (-E CYCLES), set output path (-o), render frame 1 (-f 1)
         render_command = [
-            'blender', '-b', local_blend_path, 
+            '/opt/blender/blender', '-b', local_blend_path, 
             '-E', 'CYCLES', 
             '-o', f'{output_prefix}#', 
             '-f', '1'

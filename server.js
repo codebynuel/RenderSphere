@@ -42,4 +42,39 @@ app.post('/api/get-upload-url', async (req, res) => {
   }
 });
 
+app.post('/api/trigger-render', async (req, res) => {
+  const { fileKey } = req.body;
+  
+  // The RunPod Serverless execution URL
+  const runpodUrl = `https://api.runpod.ai/v2/${process.env.RUNPOD_ENDPOINT_ID}/run`;
+
+  try {
+    const response = await fetch(runpodUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.RUNPOD_API_KEY}`
+      },
+      // We pass the fileKey inside the 'input' object, which matches 
+      // exactly what our handler.py script is looking for!
+      body: JSON.stringify({
+        input: { file_key: fileKey }
+      })
+    });
+
+    const data = await response.json();
+    
+    if (response.ok) {
+      console.log(`🚀 Render Job Dispatched! Job ID: ${data.id}`);
+      res.json({ success: true, jobId: data.id, status: data.status });
+    } else {
+      console.error("RunPod Error:", data);
+      res.status(400).json({ error: "Failed to trigger RunPod" });
+    }
+  } catch (error) {
+    console.error("Gateway Error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.listen(3000, () => console.log('Gateway running on port 3000 🚀'));

@@ -38,7 +38,7 @@ def render_job(job):
         
         # Blender pads the frame number, so frame 1 becomes render_1.png (or 0001.png depending on settings)
         # We'll assume the standard 4-digit padding: render_0001.png
-        final_image_path = '/tmp/render_0001.png'
+        final_image_path = '/tmp/render_1.png'
         result_key = f"finished_renders/{job['id']}.png"
         
         print("Uploading finished render back to R2...")

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RunPod Render Gateway",
     "author": "Ella",
-    "version": (1, 5),
+    "version": (1, 6),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Cloud Render",
     "category": "Render",
@@ -15,7 +15,6 @@ import http.client
 import time
 from urllib.parse import urlparse
 
-# Global variables for UI tracking
 current_job_id = None
 current_status = "Idle"
 job_start_time = 0.0
@@ -23,21 +22,18 @@ last_api_check = 0.0
 current_elapsed_str = ""
 
 def force_ui_redraw():
-    """Forces Blender's UI to refresh so our status text updates live"""
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
 
 def set_status(text):
-    """Updates the global status and refreshes the UI"""
     global current_status
     current_status = text
     force_ui_redraw()
     print(f"Status: {text}")
 
 def check_job_status():
-    """Ticks every 1 second for the clock, but only polls the API every 5 seconds"""
     global current_job_id, current_status, job_start_time, last_api_check, current_elapsed_str
     
     if not current_job_id:
@@ -45,13 +41,11 @@ def check_job_status():
         force_ui_redraw()
         return None 
 
-    # 1. Update the local UI clock every single second
     elapsed = int(time.time() - job_start_time)
     mins, secs = divmod(elapsed, 60)
     current_elapsed_str = f" [{mins:02d}:{secs:02d}]"
     force_ui_redraw()
 
-    # 2. Only hit the Node API every 5 seconds to prevent spamming
     if time.time() - last_api_check >= 5.0:
         last_api_check = time.time()
         status_endpoint = f"http://localhost:3000/api/job-status/{current_job_id}"
@@ -95,7 +89,6 @@ def check_job_status():
         except Exception as e:
             current_status = "Network blip... retrying"
             
-    # Return 1.0 to keep Blender's timer ticking every second
     return 1.0 
 
 class RENDER_OT_cloud_upload(bpy.types.Operator):
@@ -166,16 +159,22 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                 set_status("Waking up GPU Worker...")
                 
                 trigger_endpoint = "http://localhost:3000/api/trigger-render"
-                trigger_payload = json.dumps({"fileKey": file_key}).encode('utf-8')
+                
+                # NEW: Grab the user's UI settings to pass to the backend
+                trigger_payload = json.dumps({
+                    "fileKey": file_key,
+                    "engine": context.scene.runpod_engine,
+                    "samples": context.scene.runpod_samples
+                }).encode('utf-8')
+                
                 trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload, headers={'Content-Type': 'application/json'})
                 
                 with urllib.request.urlopen(trigger_req) as trigger_response:
                     job_data = json.loads(trigger_response.read().decode())
                     current_job_id = job_data.get("jobId")
                     
-                    # Start the clock!
                     job_start_time = time.time()
-                    last_api_check = time.time() - 5.0 # Force an immediate API check
+                    last_api_check = time.time() - 5.0
                     
                     set_status("Job Queued. Waiting...")
                     bpy.app.timers.register(check_job_status, first_interval=1.0)
@@ -199,7 +198,13 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="RunPod Infrastructure")
+        
+        # Draw the new options for the user!
+        layout.label(text="Cloud Settings:", icon='PREFERENCES')
+        layout.prop(context.scene, "runpod_engine")
+        layout.prop(context.scene, "runpod_samples")
+        
+        layout.separator()
         
         row = layout.row()
         row.enabled = (current_status in ["Idle", "Render Complete! 🎉", "Error"])
@@ -209,15 +214,30 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
             layout.separator()
             box = layout.box()
             icon = 'CHECKMARK' if current_status == "Render Complete! 🎉" else 'TIME'
-            
-            # Combine the status text and the timer string!
             box.label(text=f"{current_status}{current_elapsed_str}", icon=icon)
 
 def register():
+    # Register our custom variables so Blender saves them in the file
+    bpy.types.Scene.runpod_engine = bpy.props.EnumProperty(
+        name="Engine",
+        description="Select the render engine for the cloud GPU",
+        items=[('CYCLES', 'Cycles', ''), ('BLENDER_EEVEE_NEXT', 'Eevee', '')],
+        default='CYCLES'
+    )
+    bpy.types.Scene.runpod_samples = bpy.props.IntProperty(
+        name="Samples",
+        description="Override render samples (Set to 0 to use your file's default)",
+        default=0,
+        min=0,
+        max=8192
+    )
+    
     bpy.utils.register_class(RENDER_OT_cloud_upload)
     bpy.utils.register_class(RENDER_PT_cloud_panel)
 
 def unregister():
+    del bpy.types.Scene.runpod_engine
+    del bpy.types.Scene.runpod_samples
     bpy.utils.unregister_class(RENDER_OT_cloud_upload)
     bpy.utils.unregister_class(RENDER_PT_cloud_panel)
 

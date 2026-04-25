@@ -15,7 +15,11 @@ BUCKET_NAME = os.environ.get('R2_BUCKET_NAME')
 
 def render_job(job):
     job_input = job['input']
-    file_key = job_input['file_key'] # The key we just passed from Blender -> Node -> RunPod
+    
+    # Grab the variables passed from the Blender UI via Node!
+    file_key = job_input.get('fileKey') or job_input.get('file_key') 
+    engine = job_input.get('engine', 'CYCLES')
+    samples = job_input.get('samples', 0)
     
     local_blend_path = '/tmp/scene.blend'
     output_prefix = '/tmp/render_'
@@ -24,20 +28,26 @@ def render_job(job):
         print(f"Downloading {file_key} from R2...")
         s3.download_file(BUCKET_NAME, file_key, local_blend_path)
         
-        print("Starting headless Cycles render...")
-        # Run Blender in the background (-b), force Cycles (-E CYCLES), set output path (-o), render frame 1 (-f 1)
+        print(f"Starting headless {engine} render...")
+        
+        # Build the base Blender terminal command
         render_command = [
             '/opt/blender/blender', '-b', local_blend_path, 
-            '-E', 'CYCLES', 
-            '-o', f'{output_prefix}#', 
-            '-f', '1'
+            '-E', engine
         ]
+        
+        # If the user typed a number > 0, inject a tiny Python script to overwrite sample settings
+        if samples > 0:
+            expr = f"import bpy; bpy.context.scene.cycles.samples={samples}; bpy.context.scene.eevee.taa_render_samples={samples}"
+            render_command.extend(['--python-expr', expr])
+            
+        # Cap it off with the output path and the frame number
+        render_command.extend(['-o', f'{output_prefix}#', '-f', '1'])
         
         # This will block until the render is completely finished
         subprocess.run(render_command, check=True)
         
-        # Blender pads the frame number, so frame 1 becomes render_1.png (or 0001.png depending on settings)
-        # We'll assume the standard 4-digit padding: render_0001.png
+        # Blender pads the frame number, so frame 1 becomes render_1.png
         final_image_path = '/tmp/render_1.png'
         result_key = f"finished_renders/{job['id']}.png"
         

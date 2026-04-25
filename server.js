@@ -81,8 +81,13 @@ app.post('/api/get-upload-url', async (req, res) => {
 });
 
 app.post('/api/trigger-render', async (req, res) => {
-  const { fileKey } = req.body;
-  
+  const { fileKey, engine, samples } = req.body;
+
+    // Pass them inside the 'input' object to RunPod
+    const runpodPayload = {
+        input: { fileKey, engine, samples }
+    };
+
   // The RunPod Serverless execution URL
   const runpodUrl = `https://api.runpod.ai/v2/${process.env.RUNPOD_ENDPOINT_ID}/run`;
 
@@ -95,9 +100,7 @@ app.post('/api/trigger-render', async (req, res) => {
       },
       // We pass the fileKey inside the 'input' object, which matches 
       // exactly what our handler.py script is looking for!
-      body: JSON.stringify({
-        input: { file_key: fileKey }
-      })
+      body: JSON.stringify(runpodPayload)
     });
 
     const data = await response.json();

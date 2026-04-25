@@ -4,6 +4,7 @@ dotenv.config();
 import express from 'express';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 
 const app = express();
 app.use(express.json());
@@ -16,6 +17,43 @@ const s3Client = new S3Client({
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
+});
+
+app.get('/api/job-status/:jobId', async (req, res) => {
+  const { jobId } = req.params;
+  const runpodUrl = `https://api.runpod.ai/v2/${process.env.RUNPOD_ENDPOINT_ID}/status/${jobId}`;
+
+  try {
+    // 1. Check RunPod for the status
+    const rpRes = await fetch(runpodUrl, {
+      headers: { 'Authorization': `Bearer ${process.env.RUNPOD_API_KEY}` }
+    });
+    const rpData = await rpRes.json();
+
+    if (rpData.status === 'COMPLETED') {
+      // 2. RunPod is done! Grab the exact file key our handler.py spit out
+      const resultKey = rpData.output.result_key;
+
+      // 3. Generate a secure, 1-hour download link from Cloudflare R2
+      const command = new GetObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: resultKey,
+      });
+      const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+
+      // 4. Send the link back to Blender!
+      res.json({ status: 'COMPLETED', downloadUrl });
+      
+    } else if (rpData.status === 'FAILED') {
+      res.json({ status: 'FAILED', error: rpData.error });
+    } else {
+      // If it's IN_QUEUE or IN_PROGRESS, just tell Blender to keep waiting
+      res.json({ status: rpData.status });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to check status" });
+  }
 });
 
 app.post('/api/get-upload-url', async (req, res) => {

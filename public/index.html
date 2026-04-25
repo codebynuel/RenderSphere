@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RenderSphere | Next-Gen Blender Cloud Farm</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        blender: {
+                            orange: '#E87D0D',
+                            light: '#FFA64D',
+                            dark: '#B35E00',
+                        },
+                        surface: {
+                            900: '#0B0F13',
+                            800: '#111820',
+                            700: '#1A232E',
+                            600: '#263342',
+                        }
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "url(\"data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h40v40H0V0zm1 1h38v38H1V1z' fill='%23ffffff' fill-opacity='0.03' fill-rule='evenodd'/%3E%3C/svg%3E\")",
+                        'glow-gradient': 'radial-gradient(circle at 50% 0%, rgba(232, 125, 13, 0.15), transparent 50%)',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-surface-900 text-gray-300 font-sans antialiased overflow-x-hidden selection:bg-blender-orange selection:text-white">
+    
+    <!-- Background Effects -->
+    <div class="fixed inset-0 bg-grid-pattern pointer-events-none -z-10"></div>
+    <div class="fixed inset-0 bg-glow-gradient pointer-events-none -z-10"></div>
+
+    <!-- Navigation -->
+    <nav class="border-b border-surface-700 bg-surface-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded bg-gradient-to-br from-blender-orange to-blender-dark flex items-center justify-center text-white font-bold text-xl shadow-[0_0_15px_rgba(232,125,13,0.4)]">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                    </div>
+                    <span class="text-white font-bold text-xl tracking-tight">Render<span class="text-blender-orange">Sphere</span></span>
+                </div>
+                <div class="hidden md:flex space-x-8">
+                    <a href="#features" class="text-sm font-medium hover:text-white transition-colors">Features</a>
+                    <a href="#how-it-works" class="text-sm font-medium hover:text-white transition-colors">How it Works</a>
+                    <a href="#docs" class="text-sm font-medium hover:text-white transition-colors">Docs</a>
+                </div>
+                <div>
+                    <button class="bg-surface-700 hover:bg-surface-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all border border-surface-600 hover:border-blender-orange/50">Log In</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <main class="relative pt-20 pb-32 lg:pt-32 lg:pb-40 overflow-hidden">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">          
+            <h1 class="text-5xl md:text-7xl font-extrabold text-white tracking-tight mb-6">
+                Render at the speed of <br class="hidden md:block" />
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-blender-light via-blender-orange to-red-500">thought.</span>
+            </h1>
+            
+            <p class="mt-4 max-w-2xl text-lg md:text-xl text-gray-400 mx-auto mb-10">
+                The ultimate one-click render farm integration for Blender. Push your scenes to our massive GPU cluster directly from your viewport and get your frames back instantly.
+            </p>
+            
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <button class="px-8 py-4 rounded-xl bg-blender-orange hover:bg-blender-light text-surface-900 font-bold text-lg transition-all shadow-[0_0_30px_rgba(232,125,13,0.3)] hover:shadow-[0_0_40px_rgba(232,125,13,0.5)] transform hover:-translate-y-1 flex items-center justify-center gap-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Download Extension
+                </button>
+                <button class="px-8 py-4 rounded-xl bg-surface-800 hover:bg-surface-700 border border-surface-600 text-white font-bold text-lg transition-all flex items-center justify-center gap-2">
+                    View Documentation
+                </button>
+            </div>
+
+            <!-- Terminal Mockup -->
+            <div class="mt-20 max-w-4xl mx-auto bg-surface-800 rounded-xl border border-surface-600 shadow-2xl overflow-hidden text-left">
+                <div class="bg-surface-700 px-4 py-3 flex items-center gap-2 border-b border-surface-600">
+                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span class="ml-2 text-xs font-mono text-gray-400">rendersphere-cli</span>
+                </div>
+                <div class="p-6 font-mono text-sm leading-relaxed overflow-x-auto">
+                    <div class="text-gray-400">$ rendersphere submit ./CyberCity_v2.blend --engine cycles</div>
+                    <div class="text-blue-400">>> Analyzing scene dependencies... [OK]</div>
+                    <div class="text-blue-400">>> Packing textures and assets... [OK]</div>
+                    <div class="text-blue-400">>> Uploading to secure bucket... (1.2GB) [OK]</div>
+                    <div class="text-yellow-400">>> Provisioning 64x RTX 4090 instances...</div>
+                    <div class="text-green-400 mt-2">>> Render started! Job ID: rs-9f82a1b</div>
+                    <div class="text-gray-400 mt-2">Progress: [████████████████████░░░░░] 82% ETA: 12s</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Features -->
+    <section id="how-it-works" class="py-24 bg-surface-800 border-y border-surface-700">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Zero friction workflow.</h2>
+                <p class="text-gray-400 max-w-2xl mx-auto">We've eliminated the tedious manual upload process. RenderSphere integrates directly where you work.</p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <!-- Step 1 -->
+                <div class="bg-surface-900 border border-surface-700 p-8 rounded-2xl relative group hover:border-blender-orange/50 transition-colors">
+                    <div class="absolute -top-6 -left-6 w-12 h-12 rounded-xl bg-surface-700 border border-surface-600 flex items-center justify-center text-xl font-bold text-white group-hover:bg-blender-orange group-hover:border-blender-orange transition-colors">1</div>
+                    <h3 class="text-xl font-bold text-white mb-3 mt-2">Click Render</h3>
+                    <p class="text-gray-400">Install our lightweight Blender add-on. Set your sample count, output path, and hit the RenderSphere button right in the render properties panel.</p>
+                </div>
+                
+                <!-- Step 2 -->
+                <div class="bg-surface-900 border border-surface-700 p-8 rounded-2xl relative group hover:border-blender-orange/50 transition-colors">
+                    <div class="absolute -top-6 -left-6 w-12 h-12 rounded-xl bg-surface-700 border border-surface-600 flex items-center justify-center text-xl font-bold text-white group-hover:bg-blender-orange group-hover:border-blender-orange transition-colors">2</div>
+                    <h3 class="text-xl font-bold text-white mb-3 mt-2">We Scale Out</h3>
+                    <p class="text-gray-400">Your scene is securely packed and distributed across hundreds of high-end GPUs. Complex animations that take days locally finish in minutes.</p>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="bg-surface-900 border border-surface-700 p-8 rounded-2xl relative group hover:border-blender-orange/50 transition-colors">
+                    <div class="absolute -top-6 -left-6 w-12 h-12 rounded-xl bg-surface-700 border border-surface-600 flex items-center justify-center text-xl font-bold text-white group-hover:bg-blender-orange group-hover:border-blender-orange transition-colors">3</div>
+                    <h3 class="text-xl font-bold text-white mb-3 mt-2">Instant Delivery</h3>
+                    <p class="text-gray-400">Frames are streamed directly back to your local machine as they finish. Watch the progress live in your native Blender image editor.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats / Trust -->
+    <section class="py-20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center border-b border-surface-700 pb-20">
+                <div>
+                    <div class="text-4xl font-extrabold text-white mb-2">10k+</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">GPUs Available</div>
+                </div>
+                <div>
+                    <div class="text-4xl font-extrabold text-white mb-2">~15s</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">Avg. Job Start Time</div>
+                </div>
+                <div>
+                    <div class="text-4xl font-extrabold text-white mb-2">256-bit</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">AES Encryption</div>
+                </div>
+                <div>
+                    <div class="text-4xl font-extrabold text-white mb-2">99.9%</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">Uptime</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-surface-900 py-12 border-t border-surface-700">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="flex items-center gap-2">
+                <span class="text-white font-bold text-xl tracking-tight">Render<span class="text-blender-orange">Sphere</span></span>
+            </div>
+            <div class="text-gray-500 text-sm">
+                &copy; 2026 RenderSphere Inc. All rights reserved.
+            </div>
+            <div class="flex gap-4">
+                <a href="#" class="text-gray-400 hover:text-white transition-colors">Twitter</a>
+                <a href="#" class="text-gray-400 hover:text-white transition-colors">GitHub</a>
+                <a href="#" class="text-gray-400 hover:text-white transition-colors">Discord</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

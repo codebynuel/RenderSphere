@@ -24,4 +24,4 @@ jobs:
       with:
         context: .
         push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/blender-runpod-worker:v4
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/blender-runpod-worker:v5.1

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RunPod Render Gateway",
     "author": "Ella",
-    "version": (1, 6),
+    "version": (1, 7),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Cloud Render",
     "category": "Render",
@@ -15,11 +15,13 @@ import http.client
 import time
 from urllib.parse import urlparse
 
+# Global variables for UI tracking
 current_job_id = None
 current_status = "Idle"
 job_start_time = 0.0
 last_api_check = 0.0
 current_elapsed_str = ""
+is_current_job_animation = False
 
 def force_ui_redraw():
     for window in bpy.context.window_manager.windows:
@@ -34,7 +36,7 @@ def set_status(text):
     print(f"Status: {text}")
 
 def check_job_status():
-    global current_job_id, current_status, job_start_time, last_api_check, current_elapsed_str
+    global current_job_id, current_status, job_start_time, last_api_check, current_elapsed_str, is_current_job_animation
     
     if not current_job_id:
         current_elapsed_str = ""
@@ -60,21 +62,26 @@ def check_job_status():
                     current_status = f"GPU Working... ({status})"
                     
                 elif status == "COMPLETED":
-                    current_status = "Downloading Render..."
-                    force_ui_redraw()
-                    
+                    set_status("Downloading Render...")
                     download_url = data.get("downloadUrl")
-                    save_path = os.path.join(bpy.app.tempdir, "cloud_render_final.png")
-                    urllib.request.urlretrieve(download_url, save_path)
 
-                    img = bpy.data.images.load(save_path)
-                    
-                    for window in bpy.context.window_manager.windows:
-                        for area in window.screen.areas:
-                            if area.type == 'IMAGE_EDITOR':
-                                area.spaces.active.image = img
-                    
-                    current_status = "Render Complete! 🎉"
+                    if is_current_job_animation:
+                        # For animations, save the ZIP directly to their Desktop
+                        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", f"animation_{current_job_id[:6]}.zip")
+                        urllib.request.urlretrieve(download_url, desktop_path)
+                        current_status = "Zip saved to Desktop! 🎉"
+                    else:
+                        # For single frames, load it into the Blender Image Editor
+                        save_path = os.path.join(bpy.app.tempdir, "cloud_render_final.png")
+                        urllib.request.urlretrieve(download_url, save_path)
+                        img = bpy.data.images.load(save_path)
+                        
+                        for window in bpy.context.window_manager.windows:
+                            for area in window.screen.areas:
+                                if area.type == 'IMAGE_EDITOR':
+                                    area.spaces.active.image = img
+                        current_status = "Render Complete! 🎉"
+
                     current_elapsed_str = f" (Took {mins:02d}:{secs:02d})"
                     current_job_id = None
                     force_ui_redraw()
@@ -120,7 +127,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         layout.prop(self, "ignore_missing", text="I know, proceed anyway")
 
     def execute(self, context):
-        global current_job_id, job_start_time, last_api_check
+        global current_job_id, job_start_time, last_api_check, is_current_job_animation
         
         set_status("Packing .blend file...")
         try:
@@ -158,13 +165,17 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
             if upload_res.status in [200, 201]:
                 set_status("Waking up GPU Worker...")
                 
-                trigger_endpoint = "http://localhost:3000/api/trigger-render"
+                # Update our global flag so the status checker knows what to download later
+                is_current_job_animation = context.scene.runpod_is_animation
                 
-                # NEW: Grab the user's UI settings to pass to the backend
+                trigger_endpoint = "http://localhost:3000/api/trigger-render"
                 trigger_payload = json.dumps({
                     "fileKey": file_key,
                     "engine": context.scene.runpod_engine,
-                    "samples": context.scene.runpod_samples
+                    "samples": context.scene.runpod_samples,
+                    "isAnimation": context.scene.runpod_is_animation,
+                    "startFrame": context.scene.runpod_frame_start,
+                    "endFrame": context.scene.runpod_frame_end
                 }).encode('utf-8')
                 
                 trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload, headers={'Content-Type': 'application/json'})
@@ -199,37 +210,62 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
-        # Draw the new options for the user!
         layout.label(text="Cloud Settings:", icon='PREFERENCES')
         layout.prop(context.scene, "runpod_engine")
         layout.prop(context.scene, "runpod_samples")
         
         layout.separator()
+        layout.prop(context.scene, "runpod_is_animation", icon='RENDER_ANIMATION')
+        
+        # Only show the frame numbers if the animation box is checked
+        if context.scene.runpod_is_animation:
+            row = layout.row(align=True)
+            row.prop(context.scene, "runpod_frame_start")
+            row.prop(context.scene, "runpod_frame_end")
+            
+        layout.separator()
         
         row = layout.row()
-        row.enabled = (current_status in ["Idle", "Render Complete! 🎉", "Error"])
-        row.operator("render.cloud_upload", icon='WORLD')
+        row.enabled = (current_status in ["Idle", "Render Complete! 🎉", "Zip saved to Desktop! 🎉", "Error"])
+        
+        # Change button text depending on mode
+        btn_text = "Render Animation on RunPod" if context.scene.runpod_is_animation else "Render Frame on RunPod"
+        row.operator("render.cloud_upload", text=btn_text, icon='WORLD')
         
         if current_status != "Idle":
             layout.separator()
             box = layout.box()
-            icon = 'CHECKMARK' if current_status == "Render Complete! 🎉" else 'TIME'
+            icon = 'CHECKMARK' if "🎉" in current_status else 'TIME'
             box.label(text=f"{current_status}{current_elapsed_str}", icon=icon)
 
 def register():
-    # Register our custom variables so Blender saves them in the file
     bpy.types.Scene.runpod_engine = bpy.props.EnumProperty(
         name="Engine",
-        description="Select the render engine for the cloud GPU",
         items=[('CYCLES', 'Cycles', ''), ('BLENDER_EEVEE_NEXT', 'Eevee', '')],
         default='CYCLES'
     )
     bpy.types.Scene.runpod_samples = bpy.props.IntProperty(
         name="Samples",
-        description="Override render samples (Set to 0 to use your file's default)",
-        default=0,
-        min=0,
+        description="Ray-tracing samples per pixel",
+        default=256, 
+        min=1,
         max=8192
+    )
+    # New animation properties with industry-standard defaults
+    bpy.types.Scene.runpod_is_animation = bpy.props.BoolProperty(
+        name="Render Animation",
+        description="Renders a sequence of frames and returns a .zip file",
+        default=False
+    )
+    bpy.types.Scene.runpod_frame_start = bpy.props.IntProperty(
+        name="Start",
+        default=1,
+        min=0
+    )
+    bpy.types.Scene.runpod_frame_end = bpy.props.IntProperty(
+        name="End",
+        default=250,
+        min=1
     )
     
     bpy.utils.register_class(RENDER_OT_cloud_upload)
@@ -238,6 +274,9 @@ def register():
 def unregister():
     del bpy.types.Scene.runpod_engine
     del bpy.types.Scene.runpod_samples
+    del bpy.types.Scene.runpod_is_animation
+    del bpy.types.Scene.runpod_frame_start
+    del bpy.types.Scene.runpod_frame_end
     bpy.utils.unregister_class(RENDER_OT_cloud_upload)
     bpy.utils.unregister_class(RENDER_PT_cloud_panel)
 

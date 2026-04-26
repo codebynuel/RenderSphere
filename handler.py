@@ -2,10 +2,10 @@ import runpod
 import boto3
 import subprocess
 import os
+import shutil
 
-# Initialize our R2 Client inside the worker
 s3 = boto3.client('s3',
-    endpoint_url=os.environ.get('R2_ENDPOINT'), # e.g., https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+    endpoint_url=os.environ.get('R2_ENDPOINT'),
     aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID'),
     aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY'),
     region_name='auto'
@@ -18,66 +18,82 @@ def render_job(job):
     
     file_key = job_input.get('fileKey') or job_input.get('file_key') 
     engine = job_input.get('engine', 'CYCLES')
-    samples = job_input.get('samples', 0)
+    samples = job_input.get('samples', 256)
+    
+    # Grab the new animation variables
+    is_animation = job_input.get('isAnimation', False)
+    start_frame = job_input.get('startFrame', 1)
+    end_frame = job_input.get('endFrame', 250)
     
     local_blend_path = '/tmp/scene.blend'
-    output_prefix = '/tmp/render_'
+    
+    # We create a dedicated folder just for the image sequence
+    output_dir = '/tmp/renders'
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Telling Blender to pad the frame numbers with 4 digits (e.g. frame_0001.png)
+    output_prefix = os.path.join(output_dir, 'frame_####')
     gpu_script_path = '/tmp/enable_gpu.py'
     
     try:
         print(f"Downloading {file_key} from R2...")
         s3.download_file(BUCKET_NAME, file_key, local_blend_path)
-        
         print(f"Starting headless {engine} render...")
         
-        # We write a custom Python script to aggressively force Blender to use the RTX 4090
         gpu_script = """
 import bpy
-
-# Tell Cycles to use the GPU instead of CPU
 bpy.context.scene.cycles.device = 'GPU'
-
-# Dig into the preferences and force Nvidia OptiX
 prefs = bpy.context.preferences
 prefs.addons['cycles'].preferences.get_devices()
 cprefs = prefs.addons['cycles'].preferences
 cprefs.compute_device_type = 'OPTIX'
-
-# Enable every OptiX device it finds (our RTX 4090)
 for device in cprefs.devices:
     if device.type == 'OPTIX':
         device.use = True
 """
-        # If the user passed sample overrides, append them to the script
         if samples > 0:
             gpu_script += f"\nbpy.context.scene.cycles.samples={samples}\nbpy.context.scene.eevee.taa_render_samples={samples}"
 
-        # Save this script so Blender can run it before rendering
         with open(gpu_script_path, 'w') as f:
             f.write(gpu_script)
 
-        # Build the base Blender terminal command and pass our new GPU script with -P
         render_command = [
             '/opt/blender/blender', '-b', local_blend_path, 
             '-E', engine,
             '-P', gpu_script_path,
-            '-o', f'{output_prefix}#', 
-            '-f', '1'
+            '-o', output_prefix
         ]
         
-        # This will block until the render is completely finished
+        # Branch the command logic based on the user's choice
+        if is_animation:
+            render_command.extend(['-s', str(start_frame), '-e', str(end_frame), '-a'])
+        else:
+            render_command.extend(['-f', str(start_frame)])
+        
         subprocess.run(render_command, check=True)
         
-        # Blender pads the frame number
-        final_image_path = '/tmp/render_1.png'
-        result_key = f"finished_renders/{job['id']}.png"
+        # Handle the packing and uploading
+        if is_animation:
+            print("Zipping image sequence...")
+            zip_base_path = '/tmp/render_output' # shutil appends .zip automatically
+            shutil.make_archive(zip_base_path, 'zip', output_dir)
+            
+            upload_file = f"{zip_base_path}.zip"
+            result_key = f"finished_renders/{job['id']}.zip"
+        else:
+            # Grab the specific single frame they asked for
+            frame_str = str(start_frame).zfill(4)
+            upload_file = os.path.join(output_dir, f'frame_{frame_str}.png')
+            result_key = f"finished_renders/{job['id']}.png"
+            
+        print(f"Uploading {result_key} back to R2...")
+        s3.upload_file(upload_file, BUCKET_NAME, result_key)
         
-        print("Uploading finished render back to R2...")
-        s3.upload_file(final_image_path, BUCKET_NAME, result_key)
-        
-        # Clean up the container's temp storage
+        # Clean up
         os.remove(local_blend_path)
-        os.remove(final_image_path)
+        shutil.rmtree(output_dir) # Deletes the whole folder of images
+        if os.path.exists(upload_file):
+            os.remove(upload_file)
         if os.path.exists(gpu_script_path):
             os.remove(gpu_script_path)
         
@@ -91,5 +107,4 @@ for device in cprefs.devices:
         print(f"Render failed: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-# Start the serverless listener
 runpod.serverless.start({"handler": render_job})

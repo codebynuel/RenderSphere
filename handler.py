@@ -3,6 +3,8 @@ import boto3
 import subprocess
 import os
 import shutil
+import re
+import time
 
 s3 = boto3.client('s3',
     endpoint_url=os.environ.get('R2_ENDPOINT'),
@@ -20,18 +22,14 @@ def render_job(job):
     engine = job_input.get('engine', 'CYCLES')
     samples = job_input.get('samples', 256)
     
-    # Grab the new animation variables
     is_animation = job_input.get('isAnimation', False)
     start_frame = job_input.get('startFrame', 1)
     end_frame = job_input.get('endFrame', 250)
     
     local_blend_path = '/tmp/scene.blend'
-    
-    # We create a dedicated folder just for the image sequence
     output_dir = '/tmp/renders'
     os.makedirs(output_dir, exist_ok=True)
     
-    # Telling Blender to pad the frame numbers with 4 digits (e.g. frame_0001.png)
     output_prefix = os.path.join(output_dir, 'frame_####')
     gpu_script_path = '/tmp/enable_gpu.py'
     
@@ -64,24 +62,54 @@ for device in cprefs.devices:
             '-o', output_prefix
         ]
         
-        # Branch the command logic based on the user's choice
         if is_animation:
             render_command.extend(['-s', str(start_frame), '-e', str(end_frame), '-a'])
         else:
             render_command.extend(['-f', str(start_frame)])
         
-        subprocess.run(render_command, check=True)
+        process = subprocess.Popen(render_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         
-        # Handle the packing and uploading
+        last_update_time = 0
+        current_frame_val = start_frame
+        current_sample_val = 0
+        
+        for line in process.stdout:
+            print(line, end='') 
+            
+            # Use Regex to hunt for the frame and sample numbers in the log output
+            frame_match = re.search(r'Fra:(\d+)', line)
+            sample_match = re.search(r'Sample (\d+)/', line)
+            
+            changed = False
+            if frame_match:
+                current_frame_val = int(frame_match.group(1))
+                changed = True
+            if sample_match:
+                current_sample_val = int(sample_match.group(1))
+                changed = True
+                
+            # Throttle the API ping to once every 2 seconds to prevent RunPod from dropping packets!
+            now = time.time()
+            if changed and (now - last_update_time > 2.0):
+                runpod.serverless.progress_update({
+                    "current_frame": current_frame_val,
+                    "current_sample": current_sample_val
+                })
+                last_update_time = now
+                    
+        process.wait()
+        
+        if process.returncode != 0:
+            raise RuntimeError(f"Blender crashed with exit code {process.returncode}")
+        
         if is_animation:
             print("Zipping image sequence...")
-            zip_base_path = '/tmp/render_output' # shutil appends .zip automatically
+            zip_base_path = '/tmp/render_output' 
             shutil.make_archive(zip_base_path, 'zip', output_dir)
             
             upload_file = f"{zip_base_path}.zip"
             result_key = f"finished_renders/{job['id']}.zip"
         else:
-            # Grab the specific single frame they asked for
             frame_str = str(start_frame).zfill(4)
             upload_file = os.path.join(output_dir, f'frame_{frame_str}.png')
             result_key = f"finished_renders/{job['id']}.png"
@@ -89,9 +117,8 @@ for device in cprefs.devices:
         print(f"Uploading {result_key} back to R2...")
         s3.upload_file(upload_file, BUCKET_NAME, result_key)
         
-        # Clean up
         os.remove(local_blend_path)
-        shutil.rmtree(output_dir) # Deletes the whole folder of images
+        shutil.rmtree(output_dir) 
         if os.path.exists(upload_file):
             os.remove(upload_file)
         if os.path.exists(gpu_script_path):

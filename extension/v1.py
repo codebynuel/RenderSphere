@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RunPod Render Gateway",
     "author": "Ella",
-    "version": (1, 8),
+    "version": (1, 9),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Cloud Render",
     "category": "Render",
@@ -20,8 +20,12 @@ current_job_id = None
 current_status = "Idle"
 job_start_time = 0.0
 last_api_check = 0.0
-current_elapsed_str = ""
+current_elapsed_str = "00:00"
 is_current_job_animation = False
+
+# New live telemetry variables
+ui_frame_current = 0
+ui_sample_current = 0
 
 def force_ui_redraw():
     for window in bpy.context.window_manager.windows:
@@ -36,16 +40,15 @@ def set_status(text):
     print(f"Status: {text}")
 
 def check_job_status():
-    global current_job_id, current_status, job_start_time, last_api_check, current_elapsed_str, is_current_job_animation
+    global current_job_id, current_status, job_start_time, last_api_check, current_elapsed_str
+    global is_current_job_animation, ui_frame_current, ui_sample_current
     
     if not current_job_id:
-        current_elapsed_str = ""
-        force_ui_redraw()
         return None 
 
     elapsed = int(time.time() - job_start_time)
     mins, secs = divmod(elapsed, 60)
-    current_elapsed_str = f" [{mins:02d}:{secs:02d}]"
+    current_elapsed_str = f"{mins:02d}:{secs:02d}"
     force_ui_redraw()
 
     if time.time() - last_api_check >= 5.0:
@@ -59,26 +62,43 @@ def check_job_status():
                 status = data.get("status")
 
                 if status in ["IN_QUEUE", "IN_PROGRESS"]:
-                    # NEW: Grab the live stream data forwarded from Node
-                    stream_data = data.get("stream", [])
                     
-                    if stream_data and isinstance(stream_data, list):
-                        latest_update = stream_data[-1] # Get the most recent ping
-                        
-                        # Check if it's our custom frame dictionary from handler.py
-                        if isinstance(latest_update, dict) and "current_frame" in latest_update:
-                            current_frame = latest_update["current_frame"]
-                            
-                            # Calculate total frames for a pretty progress fraction
-                            if is_current_job_animation:
-                                total_frames = bpy.context.scene.runpod_frame_end - bpy.context.scene.runpod_frame_start + 1
-                                current_status = f"Rendering Frame {current_frame}/{total_frames}..."
-                            else:
-                                current_status = "Rendering Single Frame..."
-                        else:
-                            current_status = f"GPU Working... ({status})"
+                    if status == "IN_QUEUE":
+                        current_status = "In Queue..."
                     else:
-                        current_status = f"GPU Working... ({status})"
+                        current_status = "Rendering Animation..." if is_current_job_animation else "Rendering Frame..."
+
+                    # The ultimate stream parser!
+                    stream_data = data.get("stream", [])
+                    if stream_data and isinstance(stream_data, list):
+                        # Walk backwards to find the most recent valid ping
+                        for item in reversed(stream_data):
+                            payload = item
+                            
+                            # Strip RunPod's wrappers if they exist
+                            if isinstance(item, dict):
+                                if "update" in item: payload = item["update"]
+                                elif "output" in item: payload = item["output"]
+                                
+                            # Convert stringified JSON back to a dict
+                            if isinstance(payload, str):
+                                try:
+                                    payload = json.loads(payload)
+                                except:
+                                    pass
+                                    
+                            # Update our UI numbers if we found the payload!
+                            if isinstance(payload, dict):
+                                found_data = False
+                                if "current_frame" in payload:
+                                    ui_frame_current = payload["current_frame"]
+                                    found_data = True
+                                if "current_sample" in payload:
+                                    ui_sample_current = payload["current_sample"]
+                                    found_data = True
+                                
+                                if found_data:
+                                    break 
                     
                 elif status == "COMPLETED":
                     set_status("Downloading Render...")
@@ -99,7 +119,6 @@ def check_job_status():
                                     area.spaces.active.image = img
                         current_status = "Render Complete! 🎉"
 
-                    current_elapsed_str = f" (Took {mins:02d}:{secs:02d})"
                     current_job_id = None
                     force_ui_redraw()
                     return None 
@@ -111,7 +130,7 @@ def check_job_status():
                     return None
                     
         except Exception as e:
-            current_status = "Network blip... retrying"
+            pass # Keep previous status on network blip
             
     return 1.0 
 
@@ -144,7 +163,12 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         layout.prop(self, "ignore_missing", text="I know, proceed anyway")
 
     def execute(self, context):
-        global current_job_id, job_start_time, last_api_check, is_current_job_animation
+        global current_job_id, job_start_time, last_api_check
+        global is_current_job_animation, ui_frame_current, ui_sample_current
+        
+        # Reset telemetry for new job
+        ui_frame_current = context.scene.runpod_frame_start
+        ui_sample_current = 0
         
         set_status("Packing .blend file...")
         try:
@@ -203,7 +227,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                     job_start_time = time.time()
                     last_api_check = time.time() - 5.0
                     
-                    set_status("Job Queued. Waiting...")
+                    set_status("In Queue...")
                     bpy.app.timers.register(check_job_status, first_interval=1.0)
                     
             else:
@@ -249,8 +273,31 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
         if current_status != "Idle":
             layout.separator()
             box = layout.box()
+            
+            # The new restructured telemetry UI!
             icon = 'CHECKMARK' if "🎉" in current_status else 'TIME'
-            box.label(text=f"{current_status}{current_elapsed_str}", icon=icon)
+            box.label(text=f"Status: {current_status}", icon=icon)
+            
+            if current_status in ["In Queue...", "Rendering Animation...", "Rendering Frame..."]:
+                box.label(text=f"Elapsed time: {current_elapsed_str}")
+                
+                # Calculate the logic
+                target_samples = context.scene.runpod_samples
+                if context.scene.runpod_is_animation:
+                    total_frames = context.scene.runpod_frame_end - context.scene.runpod_frame_start + 1
+                    pct = int((ui_frame_current / max(total_frames, 1)) * 100)
+                else:
+                    total_frames = 1
+                    pct = int((ui_sample_current / max(target_samples, 1)) * 100)
+                
+                pct = min(100, pct) # Cap it at 100%
+                
+                box.label(text=f"Frame: {ui_frame_current} / {total_frames}")
+                box.label(text=f"Samples: {ui_sample_current} / {target_samples}")
+                box.label(text=f"Percentage Done: {pct}%")
+                
+            elif "🎉" in current_status:
+                box.label(text=f"Elapsed time: {current_elapsed_str}")
 
 def register():
     bpy.types.Scene.runpod_engine = bpy.props.EnumProperty(

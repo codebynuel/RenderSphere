@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RunPod Render Gateway",
     "author": "Ella",
-    "version": (1, 7),
+    "version": (1, 8),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Cloud Render",
     "category": "Render",
@@ -59,19 +59,36 @@ def check_job_status():
                 status = data.get("status")
 
                 if status in ["IN_QUEUE", "IN_PROGRESS"]:
-                    current_status = f"GPU Working... ({status})"
+                    # NEW: Grab the live stream data forwarded from Node
+                    stream_data = data.get("stream", [])
+                    
+                    if stream_data and isinstance(stream_data, list):
+                        latest_update = stream_data[-1] # Get the most recent ping
+                        
+                        # Check if it's our custom frame dictionary from handler.py
+                        if isinstance(latest_update, dict) and "current_frame" in latest_update:
+                            current_frame = latest_update["current_frame"]
+                            
+                            # Calculate total frames for a pretty progress fraction
+                            if is_current_job_animation:
+                                total_frames = bpy.context.scene.runpod_frame_end - bpy.context.scene.runpod_frame_start + 1
+                                current_status = f"Rendering Frame {current_frame}/{total_frames}..."
+                            else:
+                                current_status = "Rendering Single Frame..."
+                        else:
+                            current_status = f"GPU Working... ({status})"
+                    else:
+                        current_status = f"GPU Working... ({status})"
                     
                 elif status == "COMPLETED":
                     set_status("Downloading Render...")
                     download_url = data.get("downloadUrl")
 
                     if is_current_job_animation:
-                        # For animations, save the ZIP directly to their Desktop
                         desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", f"animation_{current_job_id[:6]}.zip")
                         urllib.request.urlretrieve(download_url, desktop_path)
                         current_status = "Zip saved to Desktop! 🎉"
                     else:
-                        # For single frames, load it into the Blender Image Editor
                         save_path = os.path.join(bpy.app.tempdir, "cloud_render_final.png")
                         urllib.request.urlretrieve(download_url, save_path)
                         img = bpy.data.images.load(save_path)
@@ -165,7 +182,6 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
             if upload_res.status in [200, 201]:
                 set_status("Waking up GPU Worker...")
                 
-                # Update our global flag so the status checker knows what to download later
                 is_current_job_animation = context.scene.runpod_is_animation
                 
                 trigger_endpoint = "http://localhost:3000/api/trigger-render"
@@ -217,7 +233,6 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
         layout.separator()
         layout.prop(context.scene, "runpod_is_animation", icon='RENDER_ANIMATION')
         
-        # Only show the frame numbers if the animation box is checked
         if context.scene.runpod_is_animation:
             row = layout.row(align=True)
             row.prop(context.scene, "runpod_frame_start")
@@ -228,7 +243,6 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
         row = layout.row()
         row.enabled = (current_status in ["Idle", "Render Complete! 🎉", "Zip saved to Desktop! 🎉", "Error"])
         
-        # Change button text depending on mode
         btn_text = "Render Animation on RunPod" if context.scene.runpod_is_animation else "Render Frame on RunPod"
         row.operator("render.cloud_upload", text=btn_text, icon='WORLD')
         
@@ -251,7 +265,6 @@ def register():
         min=1,
         max=8192
     )
-    # New animation properties with industry-standard defaults
     bpy.types.Scene.runpod_is_animation = bpy.props.BoolProperty(
         name="Render Animation",
         description="Renders a sequence of frames and returns a .zip file",

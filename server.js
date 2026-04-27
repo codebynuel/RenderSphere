@@ -47,8 +47,10 @@ app.get('/api/job-status/:jobId', async (req, res) => {
     } else if (rpData.status === 'FAILED') {
       res.json({ status: 'FAILED', error: rpData.error });
     } else {
-      // If it's IN_QUEUE or IN_PROGRESS, just tell Blender to keep waiting
-      res.json({ status: rpData.status });
+      res.json({
+        status: rpData.status,
+        stream: rpData.stream || []
+      });
     }
   } catch (error) {
     console.error(error);

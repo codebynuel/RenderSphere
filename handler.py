@@ -76,7 +76,6 @@ for device in cprefs.devices:
         for line in process.stdout:
             print(line, end='') 
             
-            # Use Regex to hunt for the frame and sample numbers in the log output
             frame_match = re.search(r'Fra:(\d+)', line)
             sample_match = re.search(r'Sample (\d+)/', line)
             
@@ -88,10 +87,10 @@ for device in cprefs.devices:
                 current_sample_val = int(sample_match.group(1))
                 changed = True
                 
-            # Throttle the API ping to once every 2 seconds to prevent RunPod from dropping packets!
             now = time.time()
             if changed and (now - last_update_time > 2.0):
-                runpod.serverless.progress_update({
+                # FIXED: Passed 'job' as the first positional argument
+                runpod.serverless.progress_update(job, {
                     "current_frame": current_frame_val,
                     "current_sample": current_sample_val
                 })

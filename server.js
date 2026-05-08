@@ -23,7 +23,7 @@ import {
   validateRequiredEnv,
 } from './helpers/config.js';
 import { readResponseJson } from './helpers/http.js';
-import { createRateLimiter, securityHeaders } from './helpers/security.js';
+import { createRateLimiter, requireSameOriginForBrowserWrites, securityHeaders } from './helpers/security.js';
 import {
   connectStore,
   getStoreDbName,
@@ -42,6 +42,7 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
 app.use(securityHeaders);
+app.use(requireSameOriginForBrowserWrites);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -121,7 +122,7 @@ function normalizeAccessKeys(user) {
         id: crypto.randomUUID(),
         name: 'Legacy access key',
         tokenHash: user.apiKeyHash,
-        tokenValue: null,
+        tokenPreview: 'Legacy key',
         createdAt: user.apiKeyUpdatedAt || user.createdAt || nowIso(),
         lastUsedAt: null,
       },
@@ -131,12 +132,16 @@ function normalizeAccessKeys(user) {
   return [];
 }
 
-function publicAccessKey(accessKey) {
+function tokenPreview(token) {
+  return `${token.slice(0, 10)}...${token.slice(-6)}`;
+}
+
+function publicAccessKey(accessKey, token = null) {
   return {
     id: accessKey.id,
     name: accessKey.name,
-    token: accessKey.tokenValue || null,
-    preview: accessKey.tokenValue ? `${accessKey.tokenValue.slice(0, 10)}...${accessKey.tokenValue.slice(-6)}` : 'Unavailable',
+    token,
+    preview: token ? tokenPreview(token) : accessKey.tokenPreview || (accessKey.tokenValue ? tokenPreview(accessKey.tokenValue) : 'Hidden after creation'),
     createdAt: accessKey.createdAt,
     lastUsedAt: accessKey.lastUsedAt || null,
   };
@@ -292,6 +297,16 @@ async function authenticateToken(token) {
   const user = store.users.find((item) => normalizeAccessKeys(item).some((accessKey) => accessKey.tokenHash === tokenHash));
   if (!user) return null;
 
+  const accessKey = normalizeAccessKeys(user).find((item) => item.tokenHash === tokenHash);
+  const lastUsedAt = accessKey?.lastUsedAt ? new Date(accessKey.lastUsedAt).getTime() : 0;
+  if (!lastUsedAt || Date.now() - lastUsedAt > 5 * 60 * 1000) {
+    await updateStore(async (nextStore) => {
+      const nextUser = nextStore.users.find((item) => item.id === user.id);
+      const nextAccessKey = nextUser ? normalizeAccessKeys(nextUser).find((item) => item.tokenHash === tokenHash) : null;
+      if (nextAccessKey) nextAccessKey.lastUsedAt = nowIso();
+    });
+  }
+
   return { user, authType: 'accessKey' };
 }
 
@@ -340,7 +355,7 @@ async function createApiKeyForUser(store, user) {
     id: crypto.randomUUID(),
     name: `Access key ${user.accessKeys.length + 1}`,
     tokenHash: hashToken(accessKey),
-    tokenValue: accessKey,
+    tokenPreview: tokenPreview(accessKey),
     createdAt: nowIso(),
     lastUsedAt: null,
   });

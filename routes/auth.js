@@ -58,8 +58,8 @@ function createAuthRouter({
           starterBalanceUsd: 0,
           createdAt: nowIso(),
         };
-        await createApiKeyForUser(store, user);
-        const createdAccessKey = publicAccessKey(normalizeAccessKeys(user).at(-1));
+        const accessKeyToken = await createApiKeyForUser(store, user);
+        const createdAccessKey = publicAccessKey(normalizeAccessKeys(user).at(-1), accessKeyToken);
         const token = await createSessionForUser(store, user.id);
         store.users.push(user);
 
@@ -121,12 +121,12 @@ function createAuthRouter({
     const result = await updateStore(async (store) => {
       const user = store.users.find((item) => item.id === req.user.id);
       if (!user) return null;
-      const accessKey = await createApiKeyForUser(store, user);
+      const accessKeyToken = await createApiKeyForUser(store, user);
       const created = normalizeAccessKeys(user).at(-1);
       if (created && requestedName) {
         created.name = requestedName.slice(0, 80);
       }
-      return { accessKey: publicAccessKey(created) };
+      return { accessKey: publicAccessKey(created, accessKeyToken) };
     });
 
     if (!result) return res.status(404).json({ error: 'User not found' });
@@ -158,11 +158,11 @@ function createAuthRouter({
     const result = await updateStore(async (store) => {
       const user = store.users.find((item) => item.id === req.user.id);
       if (!user) return null;
-      const accessKey = await createApiKeyForUser(store, user);
+      const accessKeyToken = await createApiKeyForUser(store, user);
       const created = normalizeAccessKeys(user).at(-1);
       return {
-        apiKey: accessKey,
-        accessKey: publicAccessKey(created),
+        apiKey: accessKeyToken,
+        accessKey: publicAccessKey(created, accessKeyToken),
       };
     });
 

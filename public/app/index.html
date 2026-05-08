@@ -24,7 +24,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>Access keys</h2>
-                            <p class="muted">Create, reveal, copy, and delete keys for Blender and automation.</p>
+                            <p class="muted">Create keys for Blender and automation. Full keys are shown once, then only the preview remains.</p>
                         </div>
                     </div>
                     <form id="accessKeyForm" class="inline-form">
@@ -127,6 +127,14 @@
             return `$${amount.toFixed(2)}`;
         }
 
+        function setEmptyMessage(container, message) {
+            container.replaceChildren();
+            const empty = document.createElement('div');
+            empty.className = 'muted';
+            empty.textContent = message;
+            container.append(empty);
+        }
+
         function renderHeader() {
             els.accountLabel.textContent = state.user?.email || 'Not signed in';
             if (state.user) {
@@ -154,9 +162,9 @@
         }
 
         function renderAccessKeys() {
-            els.accessKeys.innerHTML = '';
+            els.accessKeys.replaceChildren();
             if (!state.accessKeys.length) {
-                els.accessKeys.innerHTML = '<div class="muted">No access keys yet.</div>';
+                setEmptyMessage(els.accessKeys, 'No access keys yet.');
                 return;
             }
 
@@ -166,10 +174,12 @@
 
                 const meta = document.createElement('div');
                 meta.className = 'stack-meta';
-                meta.innerHTML = `
-                    <strong>${accessKey.name || 'Access key'}</strong>
-                    <div class="subtle">Created ${formatDate(accessKey.createdAt)}</div>
-                `;
+                const title = document.createElement('strong');
+                title.textContent = accessKey.name || 'Access key';
+                const created = document.createElement('div');
+                created.className = 'subtle';
+                created.textContent = `Created ${formatDate(accessKey.createdAt)}`;
+                meta.append(title, created);
 
                 const input = document.createElement('input');
                 input.readOnly = true;
@@ -184,6 +194,7 @@
                 showButton.type = 'button';
                 showButton.textContent = state.visibleAccessKeyIds.has(accessKey.id) ? 'Hide' : 'Show';
                 showButton.disabled = !accessKey.token;
+                showButton.title = accessKey.token ? '' : 'Full access keys are only shown when first created.';
                 showButton.addEventListener('click', () => {
                     if (!accessKey.token) return;
                     if (state.visibleAccessKeyIds.has(accessKey.id)) state.visibleAccessKeyIds.delete(accessKey.id);
@@ -196,6 +207,7 @@
                 copyButton.type = 'button';
                 copyButton.textContent = 'Copy';
                 copyButton.disabled = !accessKey.token;
+                copyButton.title = accessKey.token ? '' : 'Full access keys are only shown when first created.';
                 copyButton.addEventListener('click', async () => {
                     if (!accessKey.token) return;
                     await navigator.clipboard.writeText(accessKey.token);
@@ -227,21 +239,23 @@
         }
 
         function renderFiles() {
-            els.renderedFiles.innerHTML = '';
+            els.renderedFiles.replaceChildren();
             if (!state.files.length) {
-                els.renderedFiles.innerHTML = '<div class="muted">No rendered files yet.</div>';
+                setEmptyMessage(els.renderedFiles, 'No rendered files yet.');
                 return;
             }
 
             for (const file of state.files) {
                 const row = document.createElement('div');
                 row.className = 'stack-item';
-                row.innerHTML = `
-                    <div class="stack-meta">
-                        <strong>${file.fileName || file.resultKey}</strong>
-                        <div class="subtle">Completed ${formatDate(file.completedAt || file.createdAt)}</div>
-                    </div>
-                `;
+                const meta = document.createElement('div');
+                meta.className = 'stack-meta';
+                const title = document.createElement('strong');
+                title.textContent = file.fileName || file.resultKey;
+                const completed = document.createElement('div');
+                completed.className = 'subtle';
+                completed.textContent = `Completed ${formatDate(file.completedAt || file.createdAt)}`;
+                meta.append(title, completed);
 
                 const actions = document.createElement('div');
                 actions.className = 'button-row compact-row';
@@ -263,15 +277,15 @@
                 });
 
                 actions.append(openLink, copyLinkButton);
-                row.append(actions);
+                row.append(meta, actions);
                 els.renderedFiles.append(row);
             }
         }
 
         function renderJobs(jobs) {
-            els.jobs.innerHTML = '';
+            els.jobs.replaceChildren();
             if (!jobs.length) {
-                els.jobs.innerHTML = '<div class="muted">No jobs yet.</div>';
+                setEmptyMessage(els.jobs, 'No jobs yet.');
                 return;
             }
 

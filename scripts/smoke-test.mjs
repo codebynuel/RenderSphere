@@ -1,18 +1,15 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 
 const port = process.env.SMOKE_TEST_PORT || '3999';
 const baseUrl = `http://127.0.0.1:${port}`;
-const dataDir = await mkdtemp(path.join(tmpdir(), 'rendersphere-smoke-'));
+const mongoDbName = `rendersphere_smoke_${Date.now()}`;
 
 const server = spawn(process.execPath, ['server.js'], {
   cwd: process.cwd(),
   env: {
     ...process.env,
     PORT: port,
-    RENDERSPHERE_DATA_DIR: dataDir,
+    MONGODB_DB_NAME: mongoDbName,
     CLOUDFLARE_ACCOUNT_ID: 'smoke-account',
     R2_ACCESS_KEY_ID: 'smoke-access-key',
     R2_SECRET_ACCESS_KEY: 'smoke-secret-key',
@@ -129,5 +126,4 @@ try {
   console.log('Smoke test passed.');
 } finally {
   server.kill();
-  await rm(dataDir, { recursive: true, force: true });
 }

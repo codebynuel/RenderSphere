@@ -1,5 +1,5 @@
 bl_info = {
-    "name": "RunPod Render Gateway",
+    "name": "RenderSphere Extension",
     "author": "Ella",
     "version": (1, 10, 0),
     "blender": (4, 0, 0),
@@ -581,7 +581,7 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
             "Error",
         ]
 
-        btn_text = "Render Animation on RunPod" if scene.runpod_is_animation else "Render Frame on RunPod"
+        btn_text = "Render Animation" if scene.runpod_is_animation else "Render Frame"
         row.operator("render.cloud_upload", text=btn_text, icon='WORLD')
 
         if current_job_id:

@@ -2,9 +2,11 @@
 
 ## Gateway Storage
 
-For the MVP, the gateway can keep using the JSON store if `RENDERSPHERE_DATA_DIR` points at a persistent mounted volume.
+The gateway now persists metadata in MongoDB.
 
-Do not run more than one gateway instance against the JSON store. Move to Postgres or another managed database before scaling horizontally.
+Set `MONGODB_URI` to your cluster/instance connection string and optionally override `MONGODB_DB_NAME`.
+
+Multiple gateway instances can share the same MongoDB database.
 
 Required gateway environment variables:
 
@@ -17,7 +19,8 @@ Required gateway environment variables:
 
 Recommended gateway environment variables:
 
-- `RENDERSPHERE_DATA_DIR`
+- `MONGODB_URI`
+- `MONGODB_DB_NAME`
 - `RENDERSPHERE_PUBLIC_URL`
 - `RENDERSPHERE_SUPPORT_EMAIL`
 - `RENDERSPHERE_INVITE_CODE`
@@ -77,7 +80,7 @@ Suggested MVP rules:
 - Delete `finished_renders/` outputs after 14-30 days.
 - Keep a shorter retention period while the product is free or invite-only.
 
-The app-level `POST /api/admin/cleanup-records` endpoint only cleans local JSON metadata. It does not delete R2 objects.
+The app-level `POST /api/admin/cleanup-records` endpoint only cleans MongoDB metadata. It does not delete R2 objects.
 
 ## Add-on Packaging
 

@@ -3,11 +3,11 @@ dotenv.config();
 
 import crypto from 'crypto';
 import express from 'express';
-import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { MongoClient } from 'mongodb';
 import http from 'http';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,12 +42,15 @@ const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
 const ACTIVE_JOB_STATUSES = new Set(['SUBMITTED', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING']);
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const SESSION_COOKIE_NAME = 'rs_session';
-const DATA_DIR = process.env.RENDERSPHERE_DATA_DIR || path.join(__dirname, '.data');
-const STORE_FILE = path.join(DATA_DIR, 'store.json');
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'rendersphere';
+const STORE_COLLECTIONS = ['users', 'sessions', 'uploads', 'jobs'];
 const MB = 1024 * 1024;
 
 let writeQueue = Promise.resolve();
 const rateLimitBuckets = new Map();
+let mongoClient;
+let mongoDb;
 
 function parsePositiveIntegerEnv(name, fallback) {
   const value = Number(process.env[name]);
@@ -133,21 +136,52 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function collection(name) {
+  if (!mongoDb) throw new Error('MongoDB is not connected');
+  return mongoDb.collection(name);
+}
+
+async function connectStore() {
+  mongoClient = new MongoClient(MONGODB_URI);
+  await mongoClient.connect();
+  mongoDb = mongoClient.db(MONGODB_DB_NAME);
+
+  await Promise.all([
+    collection('users').createIndex({ id: 1 }, { unique: true }),
+    collection('users').createIndex({ email: 1 }, { unique: true }),
+    collection('users').createIndex({ apiKeyHash: 1 }, { sparse: true }),
+    collection('sessions').createIndex({ id: 1 }, { unique: true }),
+    collection('sessions').createIndex({ tokenHash: 1 }, { unique: true }),
+    collection('sessions').createIndex({ expiresAt: 1 }),
+    collection('uploads').createIndex({ key: 1 }, { unique: true }),
+    collection('jobs').createIndex({ jobId: 1 }, { unique: true }),
+  ]);
+}
+
 async function readStore() {
-  try {
-    const raw = await fs.readFile(STORE_FILE, 'utf8');
-    return { ...createEmptyStore(), ...JSON.parse(raw) };
-  } catch (error) {
-    if (error.code === 'ENOENT') return createEmptyStore();
-    throw error;
-  }
+  const [users, sessions, uploads, jobs] = await Promise.all(
+    STORE_COLLECTIONS.map((name) => collection(name).find({}, { projection: { _id: 0 } }).toArray())
+  );
+
+  return {
+    users,
+    sessions,
+    uploads,
+    jobs,
+  };
 }
 
 async function writeStore(store) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const tmpFile = `${STORE_FILE}.tmp`;
-  await fs.writeFile(tmpFile, `${JSON.stringify(store, null, 2)}\n`);
-  await fs.rename(tmpFile, STORE_FILE);
+  const normalizedStore = { ...createEmptyStore(), ...store };
+
+  await Promise.all(STORE_COLLECTIONS.map(async (name) => {
+    const docs = normalizedStore[name] || [];
+    const targetCollection = collection(name);
+    await targetCollection.deleteMany({});
+    if (docs.length > 0) {
+      await targetCollection.insertMany(docs, { ordered: true });
+    }
+  }));
 }
 
 async function updateStore(mutator) {
@@ -410,6 +444,7 @@ async function createApiKeyForUser(store, user) {
 }
 
 validateRequiredEnv();
+await connectStore();
 
 const s3Client = new S3Client({
   region: "auto",
@@ -422,10 +457,10 @@ const s3Client = new S3Client({
 
 app.get('/healthz', async (req, res) => {
   try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
+    await mongoDb.command({ ping: 1 });
     res.json({
       status: 'ok',
-      dataDir: DATA_DIR,
+      database: MONGODB_DB_NAME,
       limits: {
         maxUploadBytes: config.maxUploadBytes,
         maxRenderSamples: config.maxRenderSamples,
@@ -436,7 +471,7 @@ app.get('/healthz', async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ status: 'error', error: 'Data directory is not writable' });
+    res.status(500).json({ status: 'error', error: 'MongoDB is not reachable' });
   }
 });
 
@@ -469,7 +504,7 @@ app.get('/api/admin/summary', requireAdmin, async (req, res) => {
     activeJobs: activeJobs.length,
     failedJobs: failedJobs.length,
     completedJobs: completedJobs.length,
-    dataDir: DATA_DIR,
+    database: MONGODB_DB_NAME,
     limits: {
       maxUploadBytes: config.maxUploadBytes,
       maxRenderSamples: config.maxRenderSamples,

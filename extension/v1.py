@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RenderSphere Extension",
     "author": "Ella",
-    "version": (1, 10, 0),
+    "version": (1, 11, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Cloud Render",
     "category": "Render",
@@ -72,38 +72,38 @@ def reset_job_state(status="Idle"):
     force_ui_redraw()
 
 
-def get_server_url(context=None):
+def get_addon_preferences(context=None):
     addon_keys = [key for key in {__package__, __name__} if key]
     context = context or bpy.context
 
     for addon_key in addon_keys:
         addon = context.preferences.addons.get(addon_key)
-        if addon and addon.preferences.server_url:
-            return addon.preferences.server_url.rstrip("/")
+        if addon:
+            return addon.preferences
+
+    return None
+
+
+def get_server_url(context=None):
+    prefs = get_addon_preferences(context)
+    if prefs and prefs.server_url:
+        return prefs.server_url.rstrip("/")
 
     return DEFAULT_SERVER_URL
 
 
 def get_api_key(context=None):
-    addon_keys = [key for key in {__package__, __name__} if key]
-    context = context or bpy.context
-
-    for addon_key in addon_keys:
-        addon = context.preferences.addons.get(addon_key)
-        if addon and addon.preferences.api_key:
-            return addon.preferences.api_key.strip()
+    prefs = get_addon_preferences(context)
+    if prefs and prefs.api_key:
+        return prefs.api_key.strip()
 
     return ""
 
 
 def get_animation_output_dir(context=None):
-    addon_keys = [key for key in {__package__, __name__} if key]
-    context = context or bpy.context
-
-    for addon_key in addon_keys:
-        addon = context.preferences.addons.get(addon_key)
-        if addon and addon.preferences.animation_output_dir:
-            return bpy.path.abspath(addon.preferences.animation_output_dir)
+    prefs = get_addon_preferences(context)
+    if prefs and prefs.animation_output_dir:
+        return bpy.path.abspath(prefs.animation_output_dir)
 
     return os.path.join(os.path.expanduser("~"), "Desktop")
 
@@ -347,6 +347,68 @@ class RENDERSPHERE_OT_test_connection(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+class RENDERSPHERE_OT_unlock(bpy.types.Operator):
+    bl_idname = "rendersphere.unlock"
+    bl_label = "Unlock RenderSphere"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        global current_error_msg
+
+        prefs = get_addon_preferences(context)
+        if not prefs:
+            current_error_msg = "Could not find RenderSphere add-on preferences."
+            self.report({'ERROR'}, current_error_msg)
+            return {'CANCELLED'}
+
+        if not get_api_key(context):
+            current_error_msg = "Enter your RenderSphere access key."
+            self.report({'ERROR'}, current_error_msg)
+            set_status("Render Failed")
+            return {'CANCELLED'}
+
+        try:
+            req = urllib.request.Request(f"{get_server_url(context)}/api/auth/me", headers=auth_headers(context))
+            with urllib.request.urlopen(req, timeout=15) as response:
+                data = json.loads(response.read().decode())
+                user = data.get("user", {})
+                email = user.get("email", "account")
+
+            try:
+                bpy.ops.wm.save_userpref()
+            except Exception as exc:
+                print(f"Could not save user preferences: {exc}")
+
+            current_error_msg = ""
+            set_status("Connection OK")
+            self.report({'INFO'}, f"RenderSphere unlocked for {email}")
+            return {'FINISHED'}
+        except Exception as exc:
+            current_error_msg = describe_url_error(exc)
+            set_status("Render Failed")
+            self.report({'ERROR'}, current_error_msg)
+            return {'CANCELLED'}
+
+
+class RENDERSPHERE_OT_clear_access_key(bpy.types.Operator):
+    bl_idname = "rendersphere.clear_access_key"
+    bl_label = "Sign Out of RenderSphere"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        prefs = get_addon_preferences(context)
+        if prefs:
+            prefs.api_key = ""
+            try:
+                bpy.ops.wm.save_userpref()
+            except Exception as exc:
+                print(f"Could not save user preferences: {exc}")
+
+        reset_job_state()
+        self.report({'INFO'}, "RenderSphere access key removed.")
+        return {'FINISHED'}
+
+
 class RENDER_OT_cloud_upload(bpy.types.Operator):
     bl_idname = "render.cloud_upload"
     bl_label = "Upload & Render on RunPod"
@@ -558,6 +620,27 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
+        prefs = get_addon_preferences(context)
+
+        if not get_api_key(context):
+            layout.label(text="Connect RenderSphere", icon='LOCKED')
+            layout.label(text="Enter your access key to start cloud rendering.")
+
+            if prefs:
+                layout.separator()
+                layout.prop(prefs, "server_url")
+                layout.prop(prefs, "api_key")
+                layout.operator("rendersphere.unlock", text="Continue", icon='KEY_HLT')
+            else:
+                layout.label(text="Add-on preferences are unavailable.", icon='ERROR')
+
+            if current_status == "Render Failed" and current_error_msg:
+                layout.separator()
+                box = layout.box()
+                box.label(text="Access check failed", icon='ERROR')
+                box.label(text=current_error_msg)
+
+            return
 
         layout.label(text="Cloud Settings:", icon='PREFERENCES')
         layout.prop(scene, "runpod_engine")
@@ -603,6 +686,11 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
             cancel_row = layout.row()
             cancel_row.operator("render.cancel_job", text="Cancel Job", icon='CANCEL')
 
+        layout.separator()
+        account_row = layout.row(align=True)
+        account_row.operator("rendersphere.test_connection", text="Test", icon='URL')
+        account_row.operator("rendersphere.clear_access_key", text="Sign Out", icon='UNLINKED')
+
         if current_status != "Idle":
             layout.separator()
             box = layout.box()
@@ -639,6 +727,8 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
 classes = (
     RENDERSPHERE_AddonPreferences,
     RENDERSPHERE_OT_test_connection,
+    RENDERSPHERE_OT_unlock,
+    RENDERSPHERE_OT_clear_access_key,
     RENDER_OT_cloud_upload,
     RENDER_OT_cancel_job,
     RENDER_PT_cloud_panel,

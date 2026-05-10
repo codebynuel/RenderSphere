@@ -11,11 +11,14 @@ import bpy
 import os
 import json
 import urllib.request
+import urllib.error
 import http.client
 import time
 from urllib.parse import urlparse
 
 DEFAULT_SERVER_URL = "http://localhost:3000"
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+ADDON_VERSION = ".".join(str(part) for part in bl_info["version"])
 
 OUTPUT_EXTENSIONS = {
     "PNG": "png",
@@ -81,6 +84,80 @@ def get_server_url(context=None):
     return DEFAULT_SERVER_URL
 
 
+def get_api_key(context=None):
+    addon_keys = [key for key in {__package__, __name__} if key]
+    context = context or bpy.context
+
+    for addon_key in addon_keys:
+        addon = context.preferences.addons.get(addon_key)
+        if addon and addon.preferences.api_key:
+            return addon.preferences.api_key.strip()
+
+    return ""
+
+
+def auth_headers(context=None, content_type=None):
+    headers = {}
+    api_key = get_api_key(context)
+    if api_key:
+        headers['Authorization'] = f"Bearer {api_key}"
+    if content_type:
+        headers['Content-Type'] = content_type
+    return headers
+
+
+def describe_url_error(error):
+    if isinstance(error, urllib.error.HTTPError):
+        try:
+            body = error.read().decode('utf-8')
+            data = json.loads(body)
+            message = data.get("error") or data.get("message") or body
+        except Exception:
+            message = error.reason
+        return f"{error.code}: {message}"
+
+    return str(error)
+
+
+def remove_temp_payload(temp_path):
+    try:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+    except Exception as exc:
+        print(f"Could not remove temp payload: {exc}")
+
+
+def get_missing_external_files():
+    missing_files = []
+    for img in bpy.data.images:
+        if img.source in {'FILE', 'SEQUENCE', 'MOVIE'} and img.filepath:
+            abs_path = bpy.path.abspath(img.filepath)
+            if not os.path.exists(abs_path):
+                missing_files.append(img.name)
+    return missing_files
+
+
+def get_render_frame_range(scene):
+    start_frame = scene.frame_start if scene.runpod_use_scene_frames else scene.runpod_frame_start
+    end_frame = scene.frame_end if scene.runpod_use_scene_frames else scene.runpod_frame_end
+    return start_frame, end_frame if scene.runpod_is_animation else start_frame
+
+
+def describe_render_job(scene):
+    start_frame, end_frame = get_render_frame_range(scene)
+    frame_count = end_frame - start_frame + 1
+    render_type = "Animation" if scene.runpod_is_animation else "Still frame"
+    return {
+        "render_type": render_type,
+        "start_frame": start_frame,
+        "end_frame": end_frame,
+        "frame_count": frame_count,
+        "samples": scene.runpod_samples,
+        "resolution_pct": scene.runpod_resolution_pct,
+        "format": scene.runpod_output_format,
+    }
+
+
 def check_job_status():
     global current_job_id, current_status, current_error_msg, job_start_time, last_api_check, current_elapsed_str
     global is_current_job_animation, ui_frame_current, ui_sample_current
@@ -98,7 +175,7 @@ def check_job_status():
         status_endpoint = f"{get_server_url()}/api/job-status/{current_job_id}"
 
         try:
-            req = urllib.request.Request(status_endpoint)
+            req = urllib.request.Request(status_endpoint, headers=auth_headers())
             with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode())
                 status = data.get("status")
@@ -188,9 +265,51 @@ class RENDERSPHERE_AddonPreferences(bpy.types.AddonPreferences):
         description="RenderSphere gateway server URL",
         default=DEFAULT_SERVER_URL,
     )
+    api_key: bpy.props.StringProperty(
+        name="API Key",
+        description="RenderSphere API key from your account dashboard",
+        default="",
+        subtype='PASSWORD',
+    )
 
     def draw(self, context):
-        self.layout.prop(self, "server_url")
+        layout = self.layout
+        layout.label(text=f"RenderSphere Add-on v{ADDON_VERSION}")
+        layout.prop(self, "server_url")
+        layout.prop(self, "api_key")
+        layout.operator("rendersphere.test_connection", icon='URL')
+
+
+class RENDERSPHERE_OT_test_connection(bpy.types.Operator):
+    bl_idname = "rendersphere.test_connection"
+    bl_label = "Test RenderSphere Connection"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        global current_error_msg
+
+        if not get_api_key(context):
+            current_error_msg = "Add your RenderSphere API key before testing."
+            self.report({'ERROR'}, current_error_msg)
+            set_status("Render Failed")
+            return {'CANCELLED'}
+
+        try:
+            req = urllib.request.Request(f"{get_server_url(context)}/api/auth/me", headers=auth_headers(context))
+            with urllib.request.urlopen(req, timeout=15) as response:
+                data = json.loads(response.read().decode())
+                user = data.get("user", {})
+                email = user.get("email", "account")
+
+            current_error_msg = ""
+            set_status("Connection OK")
+            self.report({'INFO'}, f"Connected as {email}")
+            return {'FINISHED'}
+        except Exception as exc:
+            current_error_msg = describe_url_error(exc)
+            set_status("Render Failed")
+            self.report({'ERROR'}, current_error_msg)
+            return {'CANCELLED'}
 
 
 class RENDER_OT_cloud_upload(bpy.types.Operator):
@@ -199,27 +318,36 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     ignore_missing: bpy.props.BoolProperty(default=False, options={'HIDDEN'})
+    missing_summary: bpy.props.StringProperty(default="", options={'HIDDEN'})
 
     def invoke(self, context, event):
-        missing_files = []
-        for img in bpy.data.images:
-            if img.source in {'FILE', 'SEQUENCE', 'MOVIE'} and img.filepath:
-                abs_path = bpy.path.abspath(img.filepath)
-                if not os.path.exists(abs_path):
-                    missing_files.append(img.name)
+        missing_files = get_missing_external_files()
+        self.missing_summary = ", ".join(missing_files[:5])
+        if len(missing_files) > 5:
+            self.missing_summary += f" and {len(missing_files) - 5} more"
 
-        if missing_files and not self.ignore_missing:
-            return context.window_manager.invoke_props_dialog(self, width=400)
-
-        return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=460)
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="Warning: Missing External Files", icon='ERROR')
-        layout.label(text="This downloaded scene references files that don't exist on your PC.")
-        layout.label(text="Your final render might have missing textures.")
+        scene = context.scene
+        summary = describe_render_job(scene)
+
+        if self.missing_summary:
+            layout.label(text="Warning: Missing External Files", icon='ERROR')
+            layout.label(text=self.missing_summary)
+            layout.label(text="Your final render might have missing textures.")
+            layout.prop(self, "ignore_missing", text="Proceed with missing files")
+            layout.separator()
+
+        layout.label(text="Confirm Render Job", icon='RENDER_STILL')
+        layout.label(text=f"Type: {summary['render_type']}")
+        layout.label(text=f"Frames: {summary['start_frame']} - {summary['end_frame']} ({summary['frame_count']} total)")
+        layout.label(text=f"Samples: {summary['samples']}")
+        layout.label(text=f"Resolution: {summary['resolution_pct']}%")
+        layout.label(text=f"Format: {summary['format']}")
         layout.separator()
-        layout.prop(self, "ignore_missing", text="I know, proceed anyway")
+        layout.label(text="This will use one render credit if the job starts.")
 
     def execute(self, context):
         global current_job_id, job_start_time, last_api_check, current_error_msg
@@ -228,8 +356,18 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
 
         scene = context.scene
         server_url = get_server_url(context)
-        start_frame = scene.frame_start if scene.runpod_use_scene_frames else scene.runpod_frame_start
-        end_frame = scene.frame_end if scene.runpod_use_scene_frames else scene.runpod_frame_end
+        if not get_api_key(context):
+            current_error_msg = "Add your RenderSphere API key in the add-on preferences."
+            set_status("Render Failed")
+            return {'CANCELLED'}
+
+        missing_files = get_missing_external_files()
+        if missing_files and not self.ignore_missing:
+            current_error_msg = "Missing external files must be acknowledged before rendering."
+            set_status("Render Failed")
+            return {'CANCELLED'}
+
+        start_frame, end_frame = get_render_frame_range(scene)
 
         if end_frame < start_frame:
             current_error_msg = "End frame must be greater than or equal to start frame."
@@ -251,27 +389,38 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
 
         temp_path = os.path.join(bpy.app.tempdir, "runpod_payload.blend")
         bpy.ops.wm.save_as_mainfile(filepath=temp_path, copy=True)
+        file_size = os.path.getsize(temp_path)
+
+        if file_size > MAX_UPLOAD_BYTES:
+            current_error_msg = f"Packed file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+            set_status("Render Failed")
+            remove_temp_payload(temp_path)
+            return {'CANCELLED'}
 
         set_status("Securing Cloudflare link...")
         api_endpoint = f"{server_url}/api/get-upload-url"
-        payload = json.dumps({"fileName": "runpod_payload.blend"}).encode('utf-8')
+        payload = json.dumps({
+            "fileName": "runpod_payload.blend",
+            "fileSizeBytes": file_size,
+        }).encode('utf-8')
 
         try:
-            req = urllib.request.Request(api_endpoint, data=payload, headers={'Content-Type': 'application/json'})
+            req = urllib.request.Request(api_endpoint, data=payload, headers=auth_headers(context, 'application/json'))
             with urllib.request.urlopen(req) as response:
                 res_data = json.loads(response.read().decode())
                 upload_url = res_data.get("uploadUrl")
                 file_key = res_data.get("key")
         except Exception as e:
             print(f"Upload URL request failed: {e}")
-            set_status("Failed to reach Node Gateway.")
+            current_error_msg = describe_url_error(e)
+            set_status("Render Failed")
+            remove_temp_payload(temp_path)
             return {'CANCELLED'}
 
         set_status("Uploading to Cloudflare R2...")
         try:
             parsed_url = urlparse(upload_url)
             conn = http.client.HTTPSConnection(parsed_url.netloc)
-            file_size = os.path.getsize(temp_path)
 
             with open(temp_path, 'rb') as file_data:
                 conn.request(
@@ -301,7 +450,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                     "noiseThreshold": scene.runpod_noise_threshold,
                 }).encode('utf-8')
 
-                trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload, headers={'Content-Type': 'application/json'})
+                trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload, headers=auth_headers(context, 'application/json'))
 
                 with urllib.request.urlopen(trigger_req) as trigger_response:
                     job_data = json.loads(trigger_response.read().decode())
@@ -314,14 +463,19 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                     bpy.app.timers.register(check_job_status, first_interval=1.0)
 
             else:
-                set_status("R2 Upload Failed.")
+                current_error_msg = f"R2 upload failed with status {upload_res.status}."
+                set_status("Render Failed")
+                remove_temp_payload(temp_path)
                 return {'CANCELLED'}
         except Exception as e:
             print(f"Upload or trigger failed: {e}")
-            set_status("Upload Error.")
+            current_error_msg = describe_url_error(e)
+            set_status("Render Failed")
+            remove_temp_payload(temp_path)
             return {'CANCELLED'}
 
         self.ignore_missing = False
+        remove_temp_payload(temp_path)
         return {'FINISHED'}
 
 
@@ -345,7 +499,7 @@ class RENDER_OT_cancel_job(bpy.types.Operator):
             req = urllib.request.Request(
                 f"{get_server_url(context)}/api/cancel-job",
                 data=payload,
-                headers={'Content-Type': 'application/json'},
+                headers=auth_headers(context, 'application/json'),
                 method='POST',
             )
             with urllib.request.urlopen(req) as response:
@@ -402,6 +556,7 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
             "Render Complete.",
             "Zip saved to Desktop.",
             "Render Failed",
+            "Connection OK",
             "Error",
         ]
 
@@ -420,7 +575,7 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
                 box.label(text=current_status, icon='ERROR')
                 box.label(text=f"Error: {current_error_msg}")
             else:
-                icon = 'CHECKMARK' if current_status in ["Render Complete.", "Zip saved to Desktop."] else 'TIME'
+                icon = 'CHECKMARK' if current_status in ["Render Complete.", "Zip saved to Desktop.", "Connection OK"] else 'TIME'
                 box.label(text=f"Status: {current_status}", icon=icon)
 
                 if current_status in ["In Queue...", "Rendering Animation...", "Rendering Frame..."]:
@@ -447,6 +602,7 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
 
 classes = (
     RENDERSPHERE_AddonPreferences,
+    RENDERSPHERE_OT_test_connection,
     RENDER_OT_cloud_upload,
     RENDER_OT_cancel_job,
     RENDER_PT_cloud_panel,

@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RenderSphere</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #101114;
+            --panel: #191b20;
+            --panel-soft: #20242b;
+            --line: #313741;
+            --text: #f5f7fb;
+            --muted: #a9b0bd;
+            --subtle: #737d8c;
+            --accent: #ff8a3d;
+            --accent-dark: #bd5d22;
+            --teal: #32d5bc;
+            --blue: #78a7ff;
+            --danger: #ff6478;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background:
+                linear-gradient(140deg, rgba(120, 167, 255, 0.14), transparent 28%),
+                linear-gradient(24deg, rgba(50, 213, 188, 0.12), transparent 34%),
+                var(--bg);
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        a {
+            color: inherit;
+        }
+
+        .shell {
+            width: min(1160px, calc(100vw - 32px));
+            margin: 0 auto;
+        }
+
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(16, 17, 20, 0.86);
+            backdrop-filter: blur(16px);
+        }
+
+        .topbar-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 68px;
+            gap: 20px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 800;
+            letter-spacing: 0;
+        }
+
+        .mark {
+            display: grid;
+            place-items: center;
+            width: 38px;
+            height: 38px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, var(--accent), var(--teal));
+            color: #111;
+            box-shadow: 0 12px 30px rgba(255, 138, 61, 0.2);
+        }
+
+        .cube {
+            width: 19px;
+            height: 19px;
+            border: 2px solid currentColor;
+            transform: rotate(45deg);
+            border-radius: 3px;
+        }
+
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--muted);
+            font-size: 14px;
+            min-width: 0;
+        }
+
+        .page {
+            padding: 34px 0 46px;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+            gap: 28px;
+            align-items: stretch;
+            min-height: calc(100vh - 148px);
+        }
+
+        .workbench {
+            display: grid;
+            align-content: space-between;
+            gap: 24px;
+            padding: 34px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            background:
+                linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+                linear-gradient(160deg, rgba(255, 138, 61, 0.12), rgba(50, 213, 188, 0.08) 52%, rgba(120, 167, 255, 0.12)),
+                #15171c;
+            background-size: 34px 34px, 34px 34px, auto, auto;
+            overflow: hidden;
+        }
+
+        h1 {
+            margin: 0;
+            max-width: 780px;
+            font-size: clamp(40px, 6vw, 76px);
+            line-height: 0.96;
+            letter-spacing: 0;
+        }
+
+        .lede {
+            max-width: 620px;
+            margin: 20px 0 0;
+            color: #d2d7df;
+            font-size: 18px;
+            line-height: 1.65;
+        }
+
+        .render-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(90px, 1fr));
+            gap: 10px;
+        }
+
+        .tile {
+            min-height: 112px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background:
+                radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.18), transparent 18%),
+                linear-gradient(145deg, rgba(255, 138, 61, 0.34), rgba(120, 167, 255, 0.2)),
+                #1a1d23;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .tile::after {
+            content: "";
+            position: absolute;
+            inset: auto 12px 12px;
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        .tile:nth-child(2) {
+            background:
+                radial-gradient(circle at 66% 32%, rgba(50, 213, 188, 0.35), transparent 18%),
+                linear-gradient(145deg, rgba(50, 213, 188, 0.18), rgba(255, 255, 255, 0.08)),
+                #1a1d23;
+        }
+
+        .tile:nth-child(3) {
+            background:
+                linear-gradient(45deg, transparent 44%, rgba(255, 255, 255, 0.18) 45%, rgba(255, 255, 255, 0.18) 55%, transparent 56%),
+                linear-gradient(145deg, rgba(120, 167, 255, 0.28), rgba(255, 138, 61, 0.18)),
+                #1a1d23;
+        }
+
+        .tile:nth-child(4) {
+            background:
+                repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0 8px, transparent 8px 18px),
+                linear-gradient(145deg, rgba(255, 138, 61, 0.22), rgba(50, 213, 188, 0.2)),
+                #1a1d23;
+        }
+
+        .panel {
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 8px;
+            background: rgba(25, 27, 32, 0.95);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.26);
+        }
+
+        .auth-panel {
+            padding: 24px;
+        }
+
+        .panel-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        h2,
+        h3 {
+            margin: 0;
+            letter-spacing: 0;
+        }
+
+        h2 {
+            font-size: 24px;
+        }
+
+        h3 {
+            font-size: 16px;
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        .subtle {
+            color: var(--subtle);
+        }
+
+        .tabs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+            padding: 4px;
+            border-radius: 8px;
+            background: #111318;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            border: 0;
+            border-radius: 6px;
+            padding: 10px 12px;
+            color: var(--muted);
+            background: transparent;
+        }
+
+        .tab.active {
+            color: var(--text);
+            background: var(--panel-soft);
+        }
+
+        .form {
+            display: grid;
+            gap: 14px;
+        }
+
+        label {
+            display: grid;
+            gap: 7px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        input {
+            width: 100%;
+            min-height: 46px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 0 13px;
+            color: var(--text);
+            background: #111318;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px rgba(120, 167, 255, 0.16);
+        }
+
+        .button {
+            min-height: 44px;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            padding: 0 16px;
+            color: #15110d;
+            background: var(--accent);
+            font-weight: 750;
+        }
+
+        .button:hover {
+            background: #ffa25d;
+        }
+
+        .button.secondary {
+            color: var(--text);
+            border-color: var(--line);
+            background: var(--panel-soft);
+        }
+
+        .button.secondary:hover {
+            border-color: #4b5563;
+            background: #29303a;
+        }
+
+        .button.danger {
+            color: white;
+            background: #a93249;
+        }
+
+        .status {
+            min-height: 22px;
+            color: var(--teal);
+            font-size: 13px;
+        }
+
+        .status.error {
+            color: var(--danger);
+        }
+
+        .dashboard {
+            display: none;
+            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+            gap: 18px;
+        }
+
+        .dashboard.active {
+            display: grid;
+        }
+
+        .full {
+            grid-column: 1 / -1;
+        }
+
+        .section {
+            padding: 20px;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .metric {
+            min-height: 92px;
+            padding: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 8px;
+            background: #15181d;
+        }
+
+        .metric strong {
+            display: block;
+            margin-top: 8px;
+            color: var(--text);
+            font-size: 22px;
+        }
+
+        .link-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+
+        .link-row a {
+            display: inline-flex;
+            align-items: center;
+            min-height: 36px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 0 12px;
+            color: var(--text);
+            text-decoration: none;
+            background: var(--panel-soft);
+            font-size: 14px;
+        }
+
+        .keybox {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .keybox input {
+            font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+            font-size: 13px;
+        }
+
+        .job-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .job-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 8px;
+            background: #15181d;
+        }
+
+        .job-id {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+            font-size: 13px;
+        }
+
+        .pill {
+            border-radius: 999px;
+            padding: 5px 9px;
+            color: #111;
+            background: var(--teal);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .pill.pending {
+            background: var(--blue);
+        }
+
+        .pill.failed {
+            color: white;
+            background: var(--danger);
+        }
+
+        @media (max-width: 920px) {
+            .hero,
+            .dashboard.active {
+                grid-template-columns: 1fr;
+            }
+
+            .hero {
+                min-height: auto;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .topbar-inner {
+                align-items: flex-start;
+                flex-direction: column;
+                padding: 14px 0;
+            }
+
+            .workbench,
+            .auth-panel {
+                padding: 20px;
+            }
+
+            .render-strip {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .metric-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .keybox {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="shell topbar-inner">
+            <div class="brand">
+                <div class="mark" aria-hidden="true"><div class="cube"></div></div>
+                <div>RenderSphere</div>
+            </div>
+            <div class="nav-actions">
+                <span id="accountLabel">Not signed in</span>
+                <button id="logoutButton" class="button secondary" hidden>Sign out</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="shell page">
+        <section id="signedOutView" class="hero">
+            <div class="workbench">
+                <div>
+                    <h1>RenderSphere</h1>
+                    <p class="lede">A Blender cloud render gateway with account-owned jobs, protected downloads, and API keys built for the add-on workflow.</p>
+                </div>
+                <div class="render-strip" aria-hidden="true">
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                </div>
+            </div>
+
+            <aside class="panel auth-panel">
+                <div class="panel-head">
+                    <div>
+                        <h2 id="authTitle">Create account</h2>
+                        <div class="muted">Use this account for the web dashboard and Blender add-on.</div>
+                    </div>
+                </div>
+
+                <div class="tabs" role="tablist" aria-label="Authentication">
+                    <button id="registerTab" class="tab active" type="button">Register</button>
+                    <button id="loginTab" class="tab" type="button">Log in</button>
+                </div>
+
+                <form id="authForm" class="form">
+                    <label>
+                        Email
+                        <input id="email" type="email" autocomplete="email" required />
+                    </label>
+                    <label>
+                        Password
+                        <input id="password" type="password" autocomplete="current-password" minlength="10" required />
+                    </label>
+                    <button id="authSubmit" class="button" type="submit">Create account</button>
+                    <div id="authStatus" class="status" role="status"></div>
+                </form>
+            </aside>
+        </section>
+
+        <section id="dashboardView" class="dashboard">
+            <div class="panel section full">
+                <div class="panel-head">
+                    <div>
+                        <h2>Usage</h2>
+                        <div class="muted">Starter MVP limits are intentionally small while the service is being tested.</div>
+                    </div>
+                </div>
+                <div class="metric-grid">
+                    <div class="metric">
+                        <div class="subtle">Credits</div>
+                        <strong id="creditsRemaining">-</strong>
+                    </div>
+                    <div class="metric">
+                        <div class="subtle">Upload max</div>
+                        <strong id="maxUpload">-</strong>
+                    </div>
+                    <div class="metric">
+                        <div class="subtle">Frame max</div>
+                        <strong id="maxFrames">-</strong>
+                    </div>
+                    <div class="metric">
+                        <div class="subtle">Active jobs</div>
+                        <strong id="maxActiveJobs">-</strong>
+                    </div>
+                </div>
+                <div class="link-row">
+                    <a href="/downloads/rendersphere-blender-addon.zip">Download add-on</a>
+                    <a id="supportLink" href="mailto:support@rendersphere.app">Support</a>
+                    <a href="/terms.html">Terms</a>
+                    <a href="/privacy.html">Privacy</a>
+                </div>
+            </div>
+
+            <div class="panel section">
+                <div class="panel-head">
+                    <div>
+                        <h2>API key</h2>
+                        <div class="muted">Paste this into the Blender add-on preferences.</div>
+                    </div>
+                </div>
+
+                <div class="keybox">
+                    <input id="apiKey" type="password" readonly placeholder="Generate a key to connect Blender" />
+                    <button id="copyKeyButton" class="button secondary" type="button">Copy</button>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap">
+                    <button id="showKeyButton" class="button secondary" type="button">Show</button>
+                    <button id="newKeyButton" class="button" type="button">New key</button>
+                </div>
+                <div id="keyStatus" class="status" role="status"></div>
+            </div>
+
+            <div class="panel section">
+                <div class="panel-head">
+                    <div>
+                        <h2>Recent jobs</h2>
+                        <div class="muted">Only jobs submitted by this account appear here.</div>
+                    </div>
+                    <button id="refreshJobsButton" class="button secondary" type="button">Refresh</button>
+                </div>
+                <div id="jobs" class="job-list"></div>
+                <div id="jobsStatus" class="status" role="status"></div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const state = {
+            mode: 'register',
+            token: localStorage.getItem('rendersphere_token') || '',
+            user: null,
+            config: null,
+            apiKeyVisible: false,
+        };
+
+        const els = {
+            signedOutView: document.querySelector('#signedOutView'),
+            dashboardView: document.querySelector('#dashboardView'),
+            accountLabel: document.querySelector('#accountLabel'),
+            logoutButton: document.querySelector('#logoutButton'),
+            registerTab: document.querySelector('#registerTab'),
+            loginTab: document.querySelector('#loginTab'),
+            authTitle: document.querySelector('#authTitle'),
+            authForm: document.querySelector('#authForm'),
+            authSubmit: document.querySelector('#authSubmit'),
+            authStatus: document.querySelector('#authStatus'),
+            email: document.querySelector('#email'),
+            password: document.querySelector('#password'),
+            apiKey: document.querySelector('#apiKey'),
+            copyKeyButton: document.querySelector('#copyKeyButton'),
+            showKeyButton: document.querySelector('#showKeyButton'),
+            newKeyButton: document.querySelector('#newKeyButton'),
+            keyStatus: document.querySelector('#keyStatus'),
+            creditsRemaining: document.querySelector('#creditsRemaining'),
+            maxUpload: document.querySelector('#maxUpload'),
+            maxFrames: document.querySelector('#maxFrames'),
+            maxActiveJobs: document.querySelector('#maxActiveJobs'),
+            supportLink: document.querySelector('#supportLink'),
+            refreshJobsButton: document.querySelector('#refreshJobsButton'),
+            jobs: document.querySelector('#jobs'),
+            jobsStatus: document.querySelector('#jobsStatus'),
+        };
+
+        function setStatus(el, message, isError = false) {
+            el.textContent = message || '';
+            el.classList.toggle('error', Boolean(isError));
+        }
+
+        async function api(path, options = {}) {
+            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+            if (state.token) headers.Authorization = `Bearer ${state.token}`;
+
+            const response = await fetch(path, { ...options, headers });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || 'Request failed');
+            return data;
+        }
+
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes)) return '-';
+            const mb = bytes / (1024 * 1024);
+            return `${Math.round(mb)} MB`;
+        }
+
+        function renderUsage() {
+            const limits = state.config?.limits || {};
+            els.creditsRemaining.textContent = state.user?.creditsRemaining ?? '-';
+            els.maxUpload.textContent = formatBytes(limits.maxUploadBytes);
+            els.maxFrames.textContent = limits.maxAnimationFrames ?? '-';
+            els.maxActiveJobs.textContent = limits.maxConcurrentJobsPerUser ?? '-';
+
+            const supportEmail = state.config?.supportEmail || 'support@rendersphere.app';
+            els.supportLink.href = `mailto:${supportEmail}`;
+        }
+
+        function setMode(mode) {
+            state.mode = mode;
+            const isRegister = mode === 'register';
+            els.registerTab.classList.toggle('active', isRegister);
+            els.loginTab.classList.toggle('active', !isRegister);
+            els.authTitle.textContent = isRegister ? 'Create account' : 'Log in';
+            els.authSubmit.textContent = isRegister ? 'Create account' : 'Log in';
+            els.password.autocomplete = isRegister ? 'new-password' : 'current-password';
+            setStatus(els.authStatus, '');
+        }
+
+        function renderAuth() {
+            const signedIn = Boolean(state.user);
+            els.signedOutView.style.display = signedIn ? 'none' : 'grid';
+            els.dashboardView.classList.toggle('active', signedIn);
+            els.logoutButton.hidden = !signedIn;
+            els.accountLabel.textContent = signedIn ? state.user.email : 'Not signed in';
+            if (signedIn) renderUsage();
+        }
+
+        function saveSession(token, user) {
+            state.token = token;
+            state.user = user;
+            localStorage.setItem('rendersphere_token', token);
+            renderAuth();
+        }
+
+        function clearSession() {
+            state.token = '';
+            state.user = null;
+            state.apiKeyVisible = false;
+            els.apiKey.value = '';
+            localStorage.removeItem('rendersphere_token');
+            renderAuth();
+        }
+
+        async function loadMe() {
+            if (!state.token) {
+                renderAuth();
+                return;
+            }
+
+            try {
+                if (!state.config) state.config = await api('/api/config');
+                const data = await api('/api/auth/me');
+                state.user = data.user;
+                renderAuth();
+                await loadJobs();
+            } catch {
+                clearSession();
+            }
+        }
+
+        async function loadJobs() {
+            setStatus(els.jobsStatus, 'Loading jobs...');
+            try {
+                const data = await api('/api/jobs');
+                els.jobs.innerHTML = '';
+                if (!data.jobs.length) {
+                    els.jobs.innerHTML = '<div class="muted">No jobs yet.</div>';
+                } else {
+                    for (const job of data.jobs) {
+                        const row = document.createElement('div');
+                        row.className = 'job-row';
+
+                        const left = document.createElement('div');
+                        const id = document.createElement('div');
+                        id.className = 'job-id';
+                        id.textContent = job.jobId;
+                        const meta = document.createElement('div');
+                        meta.className = 'subtle';
+                        meta.style.fontSize = '12px';
+                        meta.textContent = new Date(job.createdAt).toLocaleString();
+                        left.append(id, meta);
+
+                        const pill = document.createElement('div');
+                        pill.className = `pill ${job.status === 'FAILED' ? 'failed' : job.status === 'COMPLETED' || job.status === 'CANCELLED' ? '' : 'pending'}`;
+                        pill.textContent = job.status || 'SUBMITTED';
+
+                        row.append(left, pill);
+                        els.jobs.append(row);
+                    }
+                }
+                setStatus(els.jobsStatus, '');
+            } catch (error) {
+                setStatus(els.jobsStatus, error.message, true);
+            }
+        }
+
+        els.registerTab.addEventListener('click', () => setMode('register'));
+        els.loginTab.addEventListener('click', () => setMode('login'));
+
+        els.authForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setStatus(els.authStatus, state.mode === 'register' ? 'Creating account...' : 'Signing in...');
+
+            try {
+                const data = await api(`/api/auth/${state.mode}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        email: els.email.value,
+                        password: els.password.value,
+                    }),
+                });
+                saveSession(data.token, data.user);
+                els.email.value = '';
+                els.password.value = '';
+                if (data.apiKey) {
+                    els.apiKey.value = data.apiKey;
+                    state.apiKeyVisible = true;
+                    els.apiKey.type = 'text';
+                    els.showKeyButton.textContent = 'Hide';
+                    setStatus(els.keyStatus, 'API key generated.');
+                }
+                await loadMe();
+            } catch (error) {
+                setStatus(els.authStatus, error.message, true);
+            }
+        });
+
+        els.logoutButton.addEventListener('click', async () => {
+            try {
+                await api('/api/auth/logout', { method: 'POST', body: '{}' });
+            } catch {
+                // Local logout still clears the browser session.
+            }
+            clearSession();
+        });
+
+        els.newKeyButton.addEventListener('click', async () => {
+            setStatus(els.keyStatus, 'Generating key...');
+            try {
+                const data = await api('/api/auth/api-key', { method: 'POST', body: '{}' });
+                els.apiKey.value = data.apiKey;
+                els.apiKey.type = 'text';
+                state.apiKeyVisible = true;
+                els.showKeyButton.textContent = 'Hide';
+                setStatus(els.keyStatus, 'New API key generated.');
+            } catch (error) {
+                setStatus(els.keyStatus, error.message, true);
+            }
+        });
+
+        els.copyKeyButton.addEventListener('click', async () => {
+            if (!els.apiKey.value) return;
+            await navigator.clipboard.writeText(els.apiKey.value);
+            setStatus(els.keyStatus, 'Copied.');
+        });
+
+        els.showKeyButton.addEventListener('click', () => {
+            state.apiKeyVisible = !state.apiKeyVisible;
+            els.apiKey.type = state.apiKeyVisible ? 'text' : 'password';
+            els.showKeyButton.textContent = state.apiKeyVisible ? 'Hide' : 'Show';
+        });
+
+        els.refreshJobsButton.addEventListener('click', loadJobs);
+
+        setMode('register');
+        loadMe();
+    </script>
+</body>
+</html>

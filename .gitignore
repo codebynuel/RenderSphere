@@ -1,2 +1,5 @@
 node_modules/
 .env
+.data/
+prompt.md
+__pycache__/

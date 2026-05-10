@@ -6,8 +6,37 @@ import shutil
 import re
 import time
 import glob
+import select
 
-s3 = boto3.client('s3',
+REQUIRED_ENV_VARS = [
+    'R2_ENDPOINT',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_NAME',
+]
+
+def positive_int_env(name, default):
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+RENDER_TIMEOUT_SECONDS = positive_int_env('RENDER_TIMEOUT_SECONDS', 21600)
+MIN_TMP_FREE_MB = positive_int_env('RENDER_MIN_TMP_FREE_MB', 1024)
+
+
+def validate_required_env():
+    missing = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+
+
+validate_required_env()
+
+s3 = boto3.client(
+    's3',
     endpoint_url=os.environ.get('R2_ENDPOINT'),
     aws_access_key_id=os.environ.get('R2_ACCESS_KEY_ID'),
     aws_secret_access_key=os.environ.get('R2_SECRET_ACCESS_KEY'),
@@ -51,6 +80,17 @@ def get_first(job_input, *keys, default=None):
 
 def normalize_choice(value, valid_values, default):
     return value if value in valid_values else default
+
+
+def ensure_tmp_space(stage):
+    usage = shutil.disk_usage('/tmp')
+    free_mb = usage.free // (1024 * 1024)
+    if free_mb < MIN_TMP_FREE_MB:
+        raise RuntimeError(
+            f"Not enough /tmp disk space before {stage}: {free_mb} MB free, "
+            f"{MIN_TMP_FREE_MB} MB required"
+        )
+    print(f"/tmp free before {stage}: {free_mb} MB")
 
 
 def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold):
@@ -131,6 +171,51 @@ def find_rendered_frame(output_dir, start_frame, extension):
     raise FileNotFoundError(f"Rendered frame not found for frame {frame_str}")
 
 
+def stream_blender_process(process, job, start_frame):
+    deadline = time.time() + RENDER_TIMEOUT_SECONDS
+    last_update_time = 0
+    current_frame_val = start_frame
+    current_sample_val = 0
+
+    while True:
+        if time.time() > deadline:
+            process.kill()
+            raise TimeoutError(f"Blender render exceeded {RENDER_TIMEOUT_SECONDS} seconds")
+
+        ready, _, _ = select.select([process.stdout], [], [], 0.5)
+        if ready:
+            line = process.stdout.readline()
+            if line:
+                print(line, end='')
+
+                frame_match = re.search(r'Fra:(\d+)', line)
+                sample_match = re.search(r'Sample (\d+)/', line)
+
+                changed = False
+                if frame_match:
+                    current_frame_val = int(frame_match.group(1))
+                    changed = True
+                if sample_match:
+                    current_sample_val = int(sample_match.group(1))
+                    changed = True
+
+                now = time.time()
+                if changed and (now - last_update_time > 2.0):
+                    runpod.serverless.progress_update(job, {
+                        "current_frame": current_frame_val,
+                        "current_sample": current_sample_val
+                    })
+                    last_update_time = now
+
+        if process.poll() is not None:
+            for line in process.stdout:
+                print(line, end='')
+            break
+
+    if process.returncode != 0:
+        raise RuntimeError(f"Blender crashed with exit code {process.returncode}")
+
+
 def render_job(job):
     job_input = job['input']
 
@@ -161,6 +246,7 @@ def render_job(job):
         0.0
     )
     output_extension = OUTPUT_EXTENSIONS[output_format]
+    frame_count = end_frame - start_frame + 1 if is_animation else 1
 
     local_blend_path = '/tmp/scene.blend'
     output_dir = '/tmp/renders'
@@ -169,9 +255,24 @@ def render_job(job):
     upload_file = None
 
     try:
+        ensure_tmp_space('download')
         os.makedirs(output_dir, exist_ok=True)
 
-        print(f"Downloading {file_key} from R2...")
+        print(
+            "Render settings: "
+            f"job_id={job.get('id')} "
+            f"engine={engine} "
+            f"samples={samples} "
+            f"frames={start_frame}-{end_frame} "
+            f"frame_count={frame_count} "
+            f"animation={is_animation} "
+            f"format={output_format} "
+            f"resolution_pct={resolution_pct} "
+            f"denoiser={denoiser} "
+            f"timeout_seconds={RENDER_TIMEOUT_SECONDS}"
+        )
+
+        print(f"Downloading source blend from R2 key {file_key}...")
         s3.download_file(BUCKET_NAME, file_key, local_blend_path)
         print(f"Starting headless {engine} render...")
 
@@ -200,39 +301,10 @@ def render_job(job):
             render_command.extend(['-f', str(start_frame)])
 
         process = subprocess.Popen(render_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-
-        last_update_time = 0
-        current_frame_val = start_frame
-        current_sample_val = 0
-
-        for line in process.stdout:
-            print(line, end='')
-
-            frame_match = re.search(r'Fra:(\d+)', line)
-            sample_match = re.search(r'Sample (\d+)/', line)
-
-            changed = False
-            if frame_match:
-                current_frame_val = int(frame_match.group(1))
-                changed = True
-            if sample_match:
-                current_sample_val = int(sample_match.group(1))
-                changed = True
-
-            now = time.time()
-            if changed and (now - last_update_time > 2.0):
-                runpod.serverless.progress_update(job, {
-                    "current_frame": current_frame_val,
-                    "current_sample": current_sample_val
-                })
-                last_update_time = now
-
-        process.wait()
-
-        if process.returncode != 0:
-            raise RuntimeError(f"Blender crashed with exit code {process.returncode}")
+        stream_blender_process(process, job, start_frame)
 
         if is_animation:
+            ensure_tmp_space('zipping animation output')
             print("Zipping image sequence...")
             zip_base_path = '/tmp/render_output'
             shutil.make_archive(zip_base_path, 'zip', output_dir)
@@ -243,7 +315,8 @@ def render_job(job):
             upload_file = find_rendered_frame(output_dir, start_frame, output_extension)
             result_key = f"finished_renders/{job['id']}.{output_extension}"
 
-        print(f"Uploading {result_key} back to R2...")
+        ensure_tmp_space('upload')
+        print(f"Uploading render output to R2 key {result_key}...")
         s3.upload_file(upload_file, BUCKET_NAME, result_key)
 
         return {

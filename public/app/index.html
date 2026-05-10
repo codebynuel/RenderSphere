@@ -365,13 +365,24 @@
 
         els.refreshFilesButton.addEventListener('click', loadFiles);
         els.refreshJobsButton.addEventListener('click', loadJobs);
-        els.confirmCancel.addEventListener('click', () => closeConfirm(false));
-        els.confirmAccept.addEventListener('click', () => closeConfirm(true));
+        els.confirmCancel.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeConfirm(false);
+        });
+        els.confirmAccept.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeConfirm(true);
+        });
         els.confirmOverlay.addEventListener('click', (event) => {
-            if (event.target === els.confirmOverlay) closeConfirm(false);
+            if (event.target === els.confirmOverlay || event.target === els.confirmOverlay.querySelector('.confirm-box')) {
+                closeConfirm(false);
+            }
         });
         document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && !els.confirmOverlay.hidden) closeConfirm(false);
+            if (event.key === 'Escape' && !els.confirmOverlay.hidden) {
+                event.preventDefault();
+                closeConfirm(false);
+            }
         });
 
         loadMe();

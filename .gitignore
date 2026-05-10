@@ -3,4 +3,5 @@ node_modules/
 .data/
 prompt.md
 __pycache__/
+.dev-server*.log
 *.md

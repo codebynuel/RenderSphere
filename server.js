@@ -8,6 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import http from 'http';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -936,3 +937,5 @@ app.post('/api/cancel-job', requireAuth, async (req, res) => {
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, () => console.log(`Gateway running on port ${port}`));
+
+http.createServer(app).listen(80);

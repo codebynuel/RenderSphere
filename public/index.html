@@ -1,162 +1,87 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<html lang="en">
+
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RenderSphere | Blender Cloud Rendering MVP</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    },
-                    colors: {
-                        blender: {
-                            orange: '#E87D0D',
-                            light: '#FFA64D',
-                            dark: '#B35E00',
-                        },
-                        surface: {
-                            900: '#0B0F13',
-                            800: '#111820',
-                            700: '#1A232E',
-                            600: '#263342',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
+    <title>RenderSphere | Blender cloud rendering</title>
+    <link rel="stylesheet" href="/styles.css" />
 </head>
-<body class="bg-surface-900 text-gray-300 font-sans antialiased overflow-x-hidden selection:bg-blender-orange selection:text-white">
-    <nav class="border-b border-surface-700 bg-surface-900/90 backdrop-blur-md sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between items-center h-16">
-                <a href="/" class="flex items-center gap-3">
-                    <div class="w-8 h-8 rounded bg-gradient-to-br from-blender-orange to-blender-dark flex items-center justify-center text-white font-bold text-xl shadow-[0_0_15px_rgba(232,125,13,0.4)]">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
-                    </div>
-                    <span class="text-white font-bold text-xl tracking-tight">Render<span class="text-blender-orange">Sphere</span></span>
-                </a>
-                <div class="hidden md:flex space-x-8">
-                    <a href="#how-it-works" class="text-sm font-medium hover:text-white transition-colors">Workflow</a>
-                    <a href="/terms.html" class="text-sm font-medium hover:text-white transition-colors">Terms</a>
-                    <a href="/privacy.html" class="text-sm font-medium hover:text-white transition-colors">Privacy</a>
-                </div>
-                <a href="/auth.html" class="bg-surface-700 hover:bg-surface-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all border border-surface-600 hover:border-blender-orange/50">Log In</a>
+
+<body>
+    <div class="shell site-frame">
+        <nav class="nav">
+            <a class="brand" href="/">RenderSphere</a>
+            <div class="nav-actions">
+                <a class="nav-link" href="#workflow">Workflow</a>
+                <a class="nav-link" href="/terms.html">Terms</a>
+                <a class="link-button" href="/auth.html">Open dashboard</a>
+                <a class="icon-button" href="/auth.html" aria-label="Open dashboard"><span></span></a>
             </div>
-        </div>
-    </nav>
+        </nav>
 
-    <main class="relative pt-20 pb-28 lg:pt-28 lg:pb-32 overflow-hidden">
-        <div class="absolute inset-0 pointer-events-none -z-10" style="background: radial-gradient(circle at 50% 0%, rgba(232,125,13,0.14), transparent 48%);"></div>
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
-            <h1 class="text-5xl md:text-7xl font-extrabold text-white tracking-tight mb-6">
-                Blender cloud rendering <br class="hidden md:block" />
-                <span class="text-transparent bg-clip-text bg-gradient-to-r from-blender-light via-blender-orange to-red-500">from your viewport.</span>
-            </h1>
+        <main class="hero">
+            <div class="hero-copy">
+                <h1>Experience Lightning⚡ fast renders</h1>
+                <p class="lede">RenderSphere automatically packs the Blender scene, renders the frames and pulls the
+                    result back without leaving your project.</p>
 
-            <p class="mt-4 max-w-2xl text-lg md:text-xl text-gray-400 mx-auto mb-10">
-                RenderSphere is an MVP cloud render gateway for Blender. Create an account, paste your API key into the add-on, submit a frame or animation, and download the result when the worker finishes.
-            </p>
+                <ul class="check-list">
+                    <li>One API key for the add-on</li>
+                    <li>Still frames and zipped animation output</li>
+                </ul>
 
-            <div class="flex flex-col sm:flex-row justify-center gap-4">
-                <a href="/downloads/rendersphere-blender-addon.zip" class="px-8 py-4 rounded-xl bg-blender-orange hover:bg-blender-light text-surface-900 font-bold text-lg transition-all shadow-[0_0_30px_rgba(232,125,13,0.3)] hover:shadow-[0_0_40px_rgba(232,125,13,0.5)] transform hover:-translate-y-1 flex items-center justify-center gap-2">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    Download Extension
-                </a>
-                <a href="/auth.html" class="px-8 py-4 rounded-xl bg-surface-800 hover:bg-surface-700 border border-surface-600 text-white font-bold text-lg transition-all flex items-center justify-center gap-2">
-                    Create Account
-                </a>
+                <div class="hero-actions">
+                    <a class="link-button primary" href="/downloads/rendersphere-blender-addon.zip">Download add-on</a>
+                    <a class="link-button" href="/auth.html">Create account</a>
+                </div>
             </div>
 
-            <div class="mt-20 max-w-4xl mx-auto bg-surface-800 rounded-xl border border-surface-600 shadow-2xl overflow-hidden text-left">
-                <div class="bg-surface-700 px-4 py-3 flex items-center gap-2 border-b border-surface-600">
-                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
-                    <span class="ml-2 text-xs font-mono text-gray-400">blender-add-on</span>
+            <div class="orbit-note">MVP access<br />with render<br />credits</div>
+        </main>
+
+        <section class="screenshot-grid" aria-label="Product screenshots">
+            <div class="placeholder-shot" data-label="Blender add-on screenshot placeholder"></div>
+            <div class="mini-stack">
+                <div class="mini-shot" data-label="Dashboard placeholder"></div>
+                <div class="mini-shot" data-label="Render output placeholder"></div>
+            </div>
+        </section>
+
+        <section id="workflow" class="section">
+            <h2>Simple enough to test. Guarded enough to ship.</h2>
+            <div class="steps">
+                <div class="card">
+                    <strong>01 / Connect</strong>
+                    <p>Install the add-on, paste your dashboard API key, and test the connection from Blender
+                        preferences.</p>
                 </div>
-                <div class="p-6 font-mono text-sm leading-relaxed overflow-x-auto">
-                    <div class="text-gray-400">Blender &gt; Cloud Render &gt; Render Frame on RunPod</div>
-                    <div class="text-blue-400">&gt;&gt; Packing textures and assets... [OK]</div>
-                    <div class="text-blue-400">&gt;&gt; Uploading to private object storage... [OK]</div>
-                    <div class="text-yellow-400">&gt;&gt; Dispatching GPU worker...</div>
-                    <div class="text-green-400 mt-2">&gt;&gt; Render started! Job ID: rs-9f82a1b</div>
-                    <div class="text-gray-400 mt-2">Progress: [####################.....] 82%</div>
+                <div class="card">
+                    <strong>02 / Submit</strong>
+                    <p>Pick engine, samples, frame range, output format, and confirm the render before any upload
+                        starts.</p>
+                </div>
+                <div class="card">
+                    <strong>03 / Receive</strong>
+                    <p>Finished stills open back in Blender. Animation jobs download as zip files to your chosen folder.
+                    </p>
                 </div>
             </div>
-        </div>
-    </main>
+        </section>
 
-    <section id="how-it-works" class="py-24 bg-surface-800 border-y border-surface-700">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="text-center mb-16">
-                <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">A focused MVP workflow.</h2>
-                <p class="text-gray-400 max-w-2xl mx-auto">The first release keeps the path tight: authenticate, upload, render, download.</p>
+        <footer class="footer">
+            <span>
+                &copy; 2026 
+                <a href="https://github.com/Ella-Labs" target="_blank" rel="noopener noreferrer" style="color: aquamarine; text-decoration: none;">Ella Labs &#8599;</a>. 
+                All rights reserved.
+            </span>
+            <div class="footer-links">
+                <a href="mailto:support@rendersphere.app">Support</a>
+                <a href="/terms.html">Terms</a>
+                <a href="/privacy.html">Privacy</a>
             </div>
-
-            <div class="grid md:grid-cols-3 gap-8">
-                <div class="bg-surface-900 border border-surface-700 p-8 rounded-xl relative group hover:border-blender-orange/50 transition-colors">
-                    <div class="absolute -top-6 -left-6 w-12 h-12 rounded-xl bg-surface-700 border border-surface-600 flex items-center justify-center text-xl font-bold text-white group-hover:bg-blender-orange group-hover:border-blender-orange transition-colors">1</div>
-                    <h3 class="text-xl font-bold text-white mb-3 mt-2">Connect Blender</h3>
-                    <p class="text-gray-400">Install the add-on, paste your API key, and submit renders from the Cloud Render sidebar.</p>
-                </div>
-
-                <div class="bg-surface-900 border border-surface-700 p-8 rounded-xl relative group hover:border-blender-orange/50 transition-colors">
-                    <div class="absolute -top-6 -left-6 w-12 h-12 rounded-xl bg-surface-700 border border-surface-600 flex items-center justify-center text-xl font-bold text-white group-hover:bg-blender-orange group-hover:border-blender-orange transition-colors">2</div>
-                    <h3 class="text-xl font-bold text-white mb-3 mt-2">Run The Worker</h3>
-                    <p class="text-gray-400">The gateway checks account limits, stores the upload, and dispatches a RunPod worker for the job.</p>
-                </div>
-
-                <div class="bg-surface-900 border border-surface-700 p-8 rounded-xl relative group hover:border-blender-orange/50 transition-colors">
-                    <div class="absolute -top-6 -left-6 w-12 h-12 rounded-xl bg-surface-700 border border-surface-600 flex items-center justify-center text-xl font-bold text-white group-hover:bg-blender-orange group-hover:border-blender-orange transition-colors">3</div>
-                    <h3 class="text-xl font-bold text-white mb-3 mt-2">Download Results</h3>
-                    <p class="text-gray-400">Completed still renders open in Blender. Animation output is downloaded as a zip file.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section class="py-20">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center border-b border-surface-700 pb-20">
-                <div>
-                    <div class="text-4xl font-extrabold text-white mb-2">3</div>
-                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">Starter Credits</div>
-                </div>
-                <div>
-                    <div class="text-4xl font-extrabold text-white mb-2">500MB</div>
-                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">Upload Limit</div>
-                </div>
-                <div>
-                    <div class="text-4xl font-extrabold text-white mb-2">250</div>
-                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">Frame Limit</div>
-                </div>
-                <div>
-                    <div class="text-4xl font-extrabold text-white mb-2">1</div>
-                    <div class="text-sm text-gray-400 uppercase tracking-wider font-semibold">Active Job/User</div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <footer class="bg-surface-900 py-12 border-t border-surface-700">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
-            <span class="text-white font-bold text-xl tracking-tight">Render<span class="text-blender-orange">Sphere</span></span>
-            <div class="text-gray-500 text-sm">&copy; 2026 RenderSphere. MVP release.</div>
-            <div class="flex gap-4">
-                <a href="mailto:support@rendersphere.app" class="text-gray-400 hover:text-white transition-colors">Support</a>
-                <a href="/terms.html" class="text-gray-400 hover:text-white transition-colors">Terms</a>
-                <a href="/privacy.html" class="text-gray-400 hover:text-white transition-colors">Privacy</a>
-            </div>
-        </div>
-    </footer>
+        </footer>
+    </div>
 </body>
+
 </html>

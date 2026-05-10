@@ -17,7 +17,7 @@ import time
 from urllib.parse import urlparse
 
 DEFAULT_SERVER_URL = "http://localhost:3000"
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 ADDON_VERSION = ".".join(str(part) for part in bl_info["version"])
 
 OUTPUT_EXTENSIONS = {
@@ -129,6 +129,20 @@ def describe_url_error(error):
         return f"{error.code}: {message}"
 
     return str(error)
+
+
+def get_gateway_max_upload_bytes(context=None):
+    try:
+        req = urllib.request.Request(f"{get_server_url(context)}/api/config")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            max_upload_bytes = data.get("limits", {}).get("maxUploadBytes")
+            if isinstance(max_upload_bytes, int) and max_upload_bytes > 0:
+                return max_upload_bytes
+    except Exception as exc:
+        print(f"Could not fetch gateway upload limit: {exc}")
+
+    return DEFAULT_MAX_UPLOAD_BYTES
 
 
 def remove_temp_payload(temp_path):
@@ -411,9 +425,10 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         temp_path = os.path.join(bpy.app.tempdir, "runpod_payload.blend")
         bpy.ops.wm.save_as_mainfile(filepath=temp_path, copy=True)
         file_size = os.path.getsize(temp_path)
+        max_upload_bytes = get_gateway_max_upload_bytes(context)
 
-        if file_size > MAX_UPLOAD_BYTES:
-            current_error_msg = f"Packed file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+        if file_size > max_upload_bytes:
+            current_error_msg = f"Packed file is larger than {max_upload_bytes // (1024 * 1024)} MB."
             set_status("Render Failed")
             remove_temp_payload(temp_path)
             return {'CANCELLED'}

@@ -9,6 +9,26 @@
       "apiKeyUpdatedAt": "2026-05-10T17:54:35.425Z",
       "creditsRemaining": 3,
       "createdAt": "2026-05-10T17:54:35.423Z"
+    },
+    {
+      "id": "73671527-a4e3-43cf-80c8-3a4d3cd2eb88",
+      "email": "copilot+1778436113781@example.com",
+      "passwordHash": "0bebecfec5085fa1446fd1ac6328f58fd146e8c2255c0e646df1353fcb53b35386ff76aad43fa27ca67fc4a862d2b30fabd49651bcaec03f2f6f0f4322784395",
+      "passwordSalt": "7f1d48d5826b5501d2131ae24b155bed",
+      "apiKeyHash": "f26a05c682e5d4ae75864b78298060fb05c97d831370d6b986a55191c5e24de5",
+      "apiKeyUpdatedAt": "2026-05-10T18:01:53.966Z",
+      "creditsRemaining": 3,
+      "createdAt": "2026-05-10T18:01:53.966Z"
+    },
+    {
+      "id": "7d8ab8e1-55aa-4ec3-8efa-2012212cc5f4",
+      "email": "test1778436462634@example.com",
+      "passwordHash": "3b6d8f0316d5b36db13249024ca466e707b7a1b2b43a43b4f4bc891b81d7ac40c5f149ec0ffb8e92df5380b880497855550548f46f155f2e59d08297831a99aa",
+      "passwordSalt": "c8e3e14d00c272b208f2e495fe9d604a",
+      "apiKeyHash": "98462dca039249494fa384630414c4b0fa579024203c8080db63c247f2d2072f",
+      "apiKeyUpdatedAt": "2026-05-10T18:07:42.877Z",
+      "creditsRemaining": 3,
+      "createdAt": "2026-05-10T18:07:42.876Z"
     }
   ],
   "sessions": [
@@ -18,6 +38,20 @@
       "tokenHash": "4832b9d7515d4c0c5f55566f5d279adab5a6974d908a6c3c315745bd89e68fe0",
       "createdAt": "2026-05-10T17:54:35.425Z",
       "expiresAt": "2026-05-24T17:54:35.425Z"
+    },
+    {
+      "id": "3a1cf971-da13-40e9-9b3b-2eb957654b8c",
+      "userId": "73671527-a4e3-43cf-80c8-3a4d3cd2eb88",
+      "tokenHash": "3340abfbec734364e25ca03fea34d093d7d6e88ec5fea77caec45ed4d9e0abcc",
+      "createdAt": "2026-05-10T18:01:53.966Z",
+      "expiresAt": "2026-05-24T18:01:53.966Z"
+    },
+    {
+      "id": "f6a9310a-245e-491e-9778-145d9f9a74c5",
+      "userId": "7d8ab8e1-55aa-4ec3-8efa-2012212cc5f4",
+      "tokenHash": "bcfcdc623b475171ae9ffb3bfaa8c591fcf14347728fa3d0ff1756e2afa07d97",
+      "createdAt": "2026-05-10T18:07:42.879Z",
+      "expiresAt": "2026-05-24T18:07:42.879Z"
     }
   ],
   "uploads": [],

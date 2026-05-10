@@ -48,10 +48,10 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
     - `RUNPOD_ENDPOINT_ID`
     - `RUNPOD_API_KEY`
 
-- [x] Decide what to do with JSON file storage.
+- [x] Move persistence to MongoDB.
   - File: `server.js`
-  - MVP decision documented in `docs/production.md`: use `RENDERSPHERE_DATA_DIR` on a persistent mounted volume.
-  - Better: move users, sessions, uploads, and jobs to Postgres/Supabase/Neon before public launch.
+  - Users, sessions, uploads, and jobs are persisted in MongoDB collections.
+  - Configure `MONGODB_URI` and optionally `MONGODB_DB_NAME`.
 
 ## Absolutely Necessary MVP Features
 
@@ -105,7 +105,7 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - Removed unsupported claims and replaced them with MVP limits.
 
 - [x] Consider replacing `localStorage` session storage later.
-  - File: `public/auth.html`
+  - File: `public/auth/index.html`
   - Web dashboard sessions now use an HTTP-only `rs_session` cookie.
   - Bearer tokens remain supported for the Blender add-on API key and admin endpoints.
 
@@ -214,7 +214,7 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
 
 - [ ] Deploy the Express gateway to a production host with HTTPS.
 - [ ] Set production R2 and RunPod environment variables.
-- [ ] Set `RENDERSPHERE_DATA_DIR` to persistent storage if keeping JSON storage.
+- [ ] Set `MONGODB_URI` and `MONGODB_DB_NAME` in production.
 - [x] Package `extension/v1.py` as an installable Blender add-on zip.
 - [x] Publish the add-on zip somewhere the landing page can link to.
   - Current path: `public/downloads/rendersphere-blender-addon.zip`
@@ -223,7 +223,7 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - It now supports manual runs and pushes `latest` plus the commit SHA tag.
 - [x] Add `__pycache__/` to `.gitignore`.
   - A local `__pycache__/` directory is currently untracked.
-- [x] Decide whether `public/auth.html` should be committed.
+- [x] Decide whether `public/auth/index.html` should be committed.
   - It is part of the MVP account dashboard and should be committed.
 
 ## Verified During Review

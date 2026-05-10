@@ -15,6 +15,7 @@ const ACTIVE_JOB_STATUSES = new Set(['SUBMITTED', 'IN_QUEUE', 'IN_PROGRESS', 'RU
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const SESSION_COOKIE_NAME = 'rs_session';
 const MB = 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_MB = 10 * 1024;
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'rendersphere';
@@ -32,13 +33,13 @@ function parseNonNegativeIntegerEnv(name, fallback) {
 }
 
 const config = {
-  maxUploadBytes: parsePositiveIntegerEnv('RENDERSPHERE_MAX_UPLOAD_MB', 500) * MB,
+  maxUploadBytes: parsePositiveIntegerEnv('RENDERSPHERE_MAX_UPLOAD_MB', DEFAULT_MAX_UPLOAD_MB) * MB,
   maxRenderSamples: parsePositiveIntegerEnv('RENDERSPHERE_MAX_RENDER_SAMPLES', 2048),
   maxResolutionPct: parsePositiveIntegerEnv('RENDERSPHERE_MAX_RESOLUTION_PCT', 150),
   maxAnimationFrames: parsePositiveIntegerEnv('RENDERSPHERE_MAX_ANIMATION_FRAMES', 250),
   maxConcurrentJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_CONCURRENT_JOBS', 1),
   maxQueuedJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_QUEUED_JOBS', 3),
-  freeRenderCredits: parseNonNegativeIntegerEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 3),
+  freeRenderCredits: parseNonNegativeIntegerEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 0),
   supportEmail: process.env.RENDERSPHERE_SUPPORT_EMAIL || 'support@rendersphere.app',
   inviteCode: process.env.RENDERSPHERE_INVITE_CODE || '',
   adminToken: process.env.RENDERSPHERE_ADMIN_TOKEN || '',

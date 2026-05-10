@@ -644,4 +644,9 @@ app.post('/api/cancel-job', requireAuth, async (req, res) => {
 const port = Number(process.env.PORT || 3000);
 app.listen(port, () => console.log(`Gateway running on port ${port}`));
 
-http.createServer(app).listen(80);
+const publicHttpPort = Number(process.env.PUBLIC_HTTP_PORT || 0);
+if (Number.isInteger(publicHttpPort) && publicHttpPort > 0) {
+  http.createServer(app).listen(publicHttpPort, () => {
+    console.log(`Public HTTP listener running on port ${publicHttpPort}`);
+  });
+}

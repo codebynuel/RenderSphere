@@ -1,0 +1,25 @@
+{
+  "users": [
+    {
+      "id": "9f825563-531b-4c33-ba8b-8af22afb1413",
+      "email": "onasogaemmanuel02@gmail.com",
+      "passwordHash": "66f181c2cdbbdf280850af58fb797c6cb8f803232d2fa61cf0241d9b24268487ba2074cadbcfdf93510e74cb7fce6b1788826d176b322cec8fcc7e05ea8b21e3",
+      "passwordSalt": "d34b7e9f08457d8797f4efb4658f4910",
+      "apiKeyHash": "378a9bca01737dbef7fda43cdcfca26dc906b63335172bcd22bbe21be757f36b",
+      "apiKeyUpdatedAt": "2026-05-10T17:54:35.425Z",
+      "creditsRemaining": 3,
+      "createdAt": "2026-05-10T17:54:35.423Z"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "c27fe8af-2f0f-4370-96e2-58a44df9b033",
+      "userId": "9f825563-531b-4c33-ba8b-8af22afb1413",
+      "tokenHash": "4832b9d7515d4c0c5f55566f5d279adab5a6974d908a6c3c315745bd89e68fe0",
+      "createdAt": "2026-05-10T17:54:35.425Z",
+      "expiresAt": "2026-05-24T17:54:35.425Z"
+    }
+  ],
+  "uploads": [],
+  "jobs": []
+}

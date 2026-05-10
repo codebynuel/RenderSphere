@@ -7,8 +7,33 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { MongoClient } from 'mongodb';
 import http from 'http';
+
+import {
+  ACTIVE_JOB_STATUSES,
+  MB,
+  MONGODB_DB_NAME,
+  MONGODB_URI,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
+  VALID_DENOISERS,
+  VALID_ENGINES,
+  VALID_OUTPUT_FORMATS,
+  config,
+  validateRequiredEnv,
+} from './helpers/config.js';
+import { readResponseJson } from './helpers/http.js';
+import { createRateLimiter, securityHeaders } from './helpers/security.js';
+import {
+  connectStore,
+  getStoreDbName,
+  pingStore,
+  readStore,
+  updateStore,
+} from './helpers/store.js';
+import { createAdminRouter } from './routes/admin.js';
+import { createAuthRouter } from './routes/auth.js';
+import { createSystemRouter } from './routes/system.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -16,96 +41,9 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-function securityHeaders(req, res, next) {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  next();
-}
-
 app.use(securityHeaders);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-
-const REQUIRED_ENV_VARS = [
-  'CLOUDFLARE_ACCOUNT_ID',
-  'R2_ACCESS_KEY_ID',
-  'R2_SECRET_ACCESS_KEY',
-  'R2_BUCKET_NAME',
-  'RUNPOD_ENDPOINT_ID',
-  'RUNPOD_API_KEY',
-];
-const VALID_ENGINES = new Set(['CYCLES', 'BLENDER_EEVEE_NEXT']);
-const VALID_OUTPUT_FORMATS = new Set(['PNG', 'JPEG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER']);
-const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
-const ACTIVE_JOB_STATUSES = new Set(['SUBMITTED', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING']);
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
-const SESSION_COOKIE_NAME = 'rs_session';
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
-const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'rendersphere';
-const STORE_COLLECTIONS = ['users', 'sessions', 'uploads', 'jobs'];
-const MB = 1024 * 1024;
-
-let writeQueue = Promise.resolve();
-const rateLimitBuckets = new Map();
-let mongoClient;
-let mongoDb;
-
-function parsePositiveIntegerEnv(name, fallback) {
-  const value = Number(process.env[name]);
-  if (!Number.isInteger(value) || value <= 0) return fallback;
-  return value;
-}
-
-function parseNonNegativeIntegerEnv(name, fallback) {
-  const value = Number(process.env[name]);
-  if (!Number.isInteger(value) || value < 0) return fallback;
-  return value;
-}
-
-const config = {
-  maxUploadBytes: parsePositiveIntegerEnv('RENDERSPHERE_MAX_UPLOAD_MB', 500) * MB,
-  maxRenderSamples: parsePositiveIntegerEnv('RENDERSPHERE_MAX_RENDER_SAMPLES', 2048),
-  maxResolutionPct: parsePositiveIntegerEnv('RENDERSPHERE_MAX_RESOLUTION_PCT', 150),
-  maxAnimationFrames: parsePositiveIntegerEnv('RENDERSPHERE_MAX_ANIMATION_FRAMES', 250),
-  maxConcurrentJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_CONCURRENT_JOBS', 1),
-  maxQueuedJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_QUEUED_JOBS', 3),
-  freeRenderCredits: parseNonNegativeIntegerEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 3),
-  supportEmail: process.env.RENDERSPHERE_SUPPORT_EMAIL || 'support@rendersphere.app',
-  inviteCode: process.env.RENDERSPHERE_INVITE_CODE || '',
-  adminToken: process.env.RENDERSPHERE_ADMIN_TOKEN || '',
-  jobRecordRetentionDays: parsePositiveIntegerEnv('RENDERSPHERE_JOB_RECORD_RETENTION_DAYS', 30),
-  secureCookies: process.env.RENDERSPHERE_SECURE_COOKIES === 'true' || process.env.NODE_ENV === 'production',
-};
-
-function validateRequiredEnv() {
-  const missing = REQUIRED_ENV_VARS.filter((name) => !process.env[name]);
-  if (missing.length) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
-  }
-}
-
-function createRateLimiter({ windowMs, max, message }) {
-  return (req, res, next) => {
-    const now = Date.now();
-    const key = `${req.ip}:${req.method}:${req.path}`;
-    const bucket = rateLimitBuckets.get(key);
-
-    if (!bucket || bucket.resetAt <= now) {
-      rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
-      return next();
-    }
-
-    bucket.count += 1;
-    if (bucket.count > max) {
-      res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
-      return res.status(429).json({ error: message });
-    }
-
-    next();
-  };
-}
 
 const authRateLimit = createRateLimiter({
   windowMs: 15 * 60 * 1000,
@@ -123,75 +61,8 @@ const renderRateLimit = createRateLimiter({
   message: 'Too many render requests. Please slow down and try again.',
 });
 
-function createEmptyStore() {
-  return {
-    users: [],
-    sessions: [],
-    uploads: [],
-    jobs: [],
-  };
-}
-
 function nowIso() {
   return new Date().toISOString();
-}
-
-function collection(name) {
-  if (!mongoDb) throw new Error('MongoDB is not connected');
-  return mongoDb.collection(name);
-}
-
-async function connectStore() {
-  mongoClient = new MongoClient(MONGODB_URI);
-  await mongoClient.connect();
-  mongoDb = mongoClient.db(MONGODB_DB_NAME);
-
-  await Promise.all([
-    collection('users').createIndex({ id: 1 }, { unique: true }),
-    collection('users').createIndex({ email: 1 }, { unique: true }),
-    collection('users').createIndex({ apiKeyHash: 1 }, { sparse: true }),
-    collection('sessions').createIndex({ id: 1 }, { unique: true }),
-    collection('sessions').createIndex({ tokenHash: 1 }, { unique: true }),
-    collection('sessions').createIndex({ expiresAt: 1 }),
-    collection('uploads').createIndex({ key: 1 }, { unique: true }),
-    collection('jobs').createIndex({ jobId: 1 }, { unique: true }),
-  ]);
-}
-
-async function readStore() {
-  const [users, sessions, uploads, jobs] = await Promise.all(
-    STORE_COLLECTIONS.map((name) => collection(name).find({}, { projection: { _id: 0 } }).toArray())
-  );
-
-  return {
-    users,
-    sessions,
-    uploads,
-    jobs,
-  };
-}
-
-async function writeStore(store) {
-  const normalizedStore = { ...createEmptyStore(), ...store };
-
-  await Promise.all(STORE_COLLECTIONS.map(async (name) => {
-    const docs = normalizedStore[name] || [];
-    const targetCollection = collection(name);
-    await targetCollection.deleteMany({});
-    if (docs.length > 0) {
-      await targetCollection.insertMany(docs, { ordered: true });
-    }
-  }));
-}
-
-async function updateStore(mutator) {
-  writeQueue = writeQueue.then(async () => {
-    const store = await readStore();
-    const result = await mutator(store);
-    await writeStore(store);
-    return result;
-  });
-  return writeQueue;
 }
 
 function hashToken(token) {
@@ -414,14 +285,6 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-async function readResponseJson(response) {
-  try {
-    return await response.json();
-  } catch {
-    return {};
-  }
-}
-
 async function createSessionForUser(store, userId) {
   const token = randomToken('rs_session');
   const session = {
@@ -444,7 +307,7 @@ async function createApiKeyForUser(store, user) {
 }
 
 validateRequiredEnv();
-await connectStore();
+await connectStore({ uri: MONGODB_URI, dbName: MONGODB_DB_NAME });
 
 const s3Client = new S3Client({
   region: "auto",
@@ -455,232 +318,40 @@ const s3Client = new S3Client({
   },
 });
 
-app.get('/healthz', async (req, res) => {
-  try {
-    await mongoDb.command({ ping: 1 });
-    res.json({
-      status: 'ok',
-      database: MONGODB_DB_NAME,
-      limits: {
-        maxUploadBytes: config.maxUploadBytes,
-        maxRenderSamples: config.maxRenderSamples,
-        maxResolutionPct: config.maxResolutionPct,
-        maxAnimationFrames: config.maxAnimationFrames,
-        maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
-        maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ status: 'error', error: 'MongoDB is not reachable' });
-  }
-});
+app.use(createSystemRouter({
+  config,
+  getStoreDbName,
+  pingStore,
+}));
 
-app.get('/api/config', (req, res) => {
-  res.json({
-    supportEmail: config.supportEmail,
-    freeRenderCredits: config.freeRenderCredits,
-    inviteRequired: Boolean(config.inviteCode),
-    limits: {
-      maxUploadBytes: config.maxUploadBytes,
-      maxRenderSamples: config.maxRenderSamples,
-      maxResolutionPct: config.maxResolutionPct,
-      maxAnimationFrames: config.maxAnimationFrames,
-      maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
-      maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
-    },
-  });
-});
+app.use('/api/admin', createAdminRouter({
+  ACTIVE_JOB_STATUSES,
+  adminUser,
+  config,
+  getStoreDbName,
+  readStore,
+  requireAdmin,
+  updateStore,
+}));
 
-app.get('/api/admin/summary', requireAdmin, async (req, res) => {
-  const store = await readStore();
-  const activeJobs = store.jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status));
-  const failedJobs = store.jobs.filter((job) => job.status === 'FAILED');
-  const completedJobs = store.jobs.filter((job) => job.status === 'COMPLETED');
-
-  res.json({
-    users: store.users.length,
-    uploads: store.uploads.length,
-    jobs: store.jobs.length,
-    activeJobs: activeJobs.length,
-    failedJobs: failedJobs.length,
-    completedJobs: completedJobs.length,
-    database: MONGODB_DB_NAME,
-    limits: {
-      maxUploadBytes: config.maxUploadBytes,
-      maxRenderSamples: config.maxRenderSamples,
-      maxResolutionPct: config.maxResolutionPct,
-      maxAnimationFrames: config.maxAnimationFrames,
-      maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
-      maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
-      freeRenderCredits: config.freeRenderCredits,
-      jobRecordRetentionDays: config.jobRecordRetentionDays,
-    },
-  });
-});
-
-app.get('/api/admin/users', requireAdmin, async (req, res) => {
-  const store = await readStore();
-  const users = store.users
-    .map((user) => {
-      const jobs = store.jobs.filter((job) => job.userId === user.id);
-      return {
-        ...adminUser(user),
-        jobs: jobs.length,
-        activeJobs: jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status)).length,
-      };
-    })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  res.json({ users });
-});
-
-app.get('/api/admin/jobs', requireAdmin, async (req, res) => {
-  const store = await readStore();
-  const jobs = store.jobs
-    .slice()
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 100)
-    .map((job) => ({
-      jobId: job.jobId,
-      userId: job.userId,
-      fileKey: job.fileKey,
-      status: job.status,
-      frameCount: job.frameCount,
-      creditsCharged: job.creditsCharged,
-      resultKey: job.resultKey,
-      error: job.error,
-      createdAt: job.createdAt,
-      completedAt: job.completedAt,
-      failedAt: job.failedAt,
-      cancelledAt: job.cancelledAt,
-      settings: job.settings,
-    }));
-
-  res.json({ jobs });
-});
-
-app.post('/api/admin/cleanup-records', requireAdmin, async (req, res) => {
-  const cutoff = Date.now() - config.jobRecordRetentionDays * 24 * 60 * 60 * 1000;
-  const result = await updateStore(async (store) => {
-    const before = {
-      sessions: store.sessions.length,
-      uploads: store.uploads.length,
-      jobs: store.jobs.length,
-    };
-
-    store.sessions = store.sessions.filter((session) => new Date(session.expiresAt).getTime() > Date.now());
-    store.uploads = store.uploads.filter((upload) => new Date(upload.createdAt).getTime() >= cutoff);
-    store.jobs = store.jobs.filter((job) => {
-      if (ACTIVE_JOB_STATUSES.has(job.status)) return true;
-      return new Date(job.createdAt).getTime() >= cutoff;
-    });
-
-    return {
-      removed: {
-        sessions: before.sessions - store.sessions.length,
-        uploads: before.uploads - store.uploads.length,
-        jobs: before.jobs - store.jobs.length,
-      },
-    };
-  });
-
-  res.json(result);
-});
-
-app.post('/api/auth/register', authRateLimit, async (req, res) => {
-  const email = normalizeEmail(req.body.email);
-  const password = String(req.body.password || '');
-  const inviteCode = String(req.body.inviteCode || '');
-
-  if (!email || !email.includes('@')) {
-    return res.status(400).json({ error: 'A valid email is required' });
-  }
-
-  if (password.length < 10) {
-    return res.status(400).json({ error: 'Password must be at least 10 characters' });
-  }
-
-  if (config.inviteCode && inviteCode !== config.inviteCode) {
-    return res.status(403).json({ error: 'A valid invite code is required' });
-  }
-
-  try {
-    const result = await updateStore(async (store) => {
-      if (store.users.some((user) => user.email === email)) {
-        return { error: 'An account with this email already exists' };
-      }
-
-      const passwordHash = await hashPassword(password);
-      const user = {
-        id: crypto.randomUUID(),
-        email,
-        passwordHash: passwordHash.hash,
-        passwordSalt: passwordHash.salt,
-        apiKeyHash: null,
-        apiKeyUpdatedAt: null,
-        creditsRemaining: config.freeRenderCredits,
-        createdAt: nowIso(),
-      };
-      const apiKey = await createApiKeyForUser(store, user);
-      const token = await createSessionForUser(store, user.id);
-      store.users.push(user);
-
-      return { user: publicUser(user), token, apiKey };
-    });
-
-    if (result.error) return res.status(409).json({ error: result.error });
-    setSessionCookie(req, res, result.token);
-    res.status(201).json(result);
-  } catch (error) {
-    console.error("Register Error:", error);
-    res.status(500).json({ error: 'Failed to create account' });
-  }
-});
-
-app.post('/api/auth/login', authRateLimit, async (req, res) => {
-  const email = normalizeEmail(req.body.email);
-  const password = String(req.body.password || '');
-
-  try {
-    const store = await readStore();
-    const user = store.users.find((item) => item.email === email);
-    if (!user || !(await verifyPassword(password, user))) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    const token = await updateStore(async (nextStore) => createSessionForUser(nextStore, user.id));
-    setSessionCookie(req, res, token);
-    res.json({ user: publicUser(user), token });
-  } catch (error) {
-    console.error("Login Error:", error);
-    res.status(500).json({ error: 'Failed to log in' });
-  }
-});
-
-app.post('/api/auth/logout', requireAuth, async (req, res) => {
-  const tokenHash = hashToken(req.authToken);
-  await updateStore(async (store) => {
-    store.sessions = store.sessions.filter((session) => session.tokenHash !== tokenHash);
-  });
-  clearSessionCookie(req, res);
-  res.json({ success: true });
-});
-
-app.get('/api/auth/me', requireAuth, (req, res) => {
-  res.json({ user: publicUser(req.user), authType: req.authType });
-});
-
-app.post('/api/auth/api-key', accountRateLimit, requireAuth, async (req, res) => {
-  const result = await updateStore(async (store) => {
-    const user = store.users.find((item) => item.id === req.user.id);
-    if (!user) return null;
-    const apiKey = await createApiKeyForUser(store, user);
-    return { apiKey, updatedAt: user.apiKeyUpdatedAt };
-  });
-
-  if (!result) return res.status(404).json({ error: 'User not found' });
-  res.json(result);
-});
+app.use('/api/auth', createAuthRouter({
+  accountRateLimit,
+  authRateLimit,
+  clearSessionCookie,
+  config,
+  createApiKeyForUser,
+  createSessionForUser,
+  hashPassword,
+  hashToken,
+  normalizeEmail,
+  nowIso,
+  publicUser,
+  readStore,
+  requireAuth,
+  setSessionCookie,
+  updateStore,
+  verifyPassword,
+}));
 
 app.get('/api/jobs', requireAuth, async (req, res) => {
   const store = await readStore();

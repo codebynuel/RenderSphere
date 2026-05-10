@@ -19,6 +19,8 @@ const server = spawn(process.execPath, ['server.js'], {
     R2_BUCKET_NAME: 'smoke-bucket',
     RUNPOD_ENDPOINT_ID: 'smoke-endpoint',
     RUNPOD_API_KEY: 'smoke-runpod-key',
+    RENDERSPHERE_INVITE_CODE: 'smoke-invite',
+    RENDERSPHERE_ADMIN_TOKEN: 'smoke-admin',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -66,7 +68,7 @@ try {
   const email = `smoke-${Date.now()}@example.com`;
   const registered = await request('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password: 'longenoughpassword' }),
+    body: JSON.stringify({ email, password: 'longenoughpassword', inviteCode: 'smoke-invite' }),
   });
 
   if (!registered.token || !registered.apiKey || registered.user.email !== email) {
@@ -88,6 +90,11 @@ try {
   if (oversized.status !== 413) {
     throw new Error(`Expected oversized upload to return 413, got ${oversized.status}.`);
   }
+
+  const summary = await request('/api/admin/summary', {
+    headers: { Authorization: 'Bearer smoke-admin' },
+  });
+  if (summary.users !== 1) throw new Error(`Expected admin summary to report one user, got ${summary.users}.`);
 
   console.log('Smoke test passed.');
 } finally {

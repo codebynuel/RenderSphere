@@ -22,6 +22,7 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - Files: `extension/v1.py` and any packaged add-on copy.
   - Current value: `DEFAULT_SERVER_URL = "http://localhost:3000"`
   - Change this to the real HTTPS gateway URL before distributing the add-on.
+  - Packaging now supports `RENDERSPHERE_PUBLIC_URL=https://your-domain npm run package:extension`.
 
 - [x] Fix the extension source-of-truth situation.
   - Current source of truth is `extension/v1.py`.
@@ -47,10 +48,9 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
     - `RUNPOD_ENDPOINT_ID`
     - `RUNPOD_API_KEY`
 
-- [ ] Decide what to do with JSON file storage.
+- [x] Decide what to do with JSON file storage.
   - File: `server.js`
-  - Current user/session/job storage is local JSON in `.data/store.json`.
-  - For MVP, use a persistent mounted volume at minimum.
+  - MVP decision documented in `docs/production.md`: use `RENDERSPHERE_DATA_DIR` on a persistent mounted volume.
   - Better: move users, sessions, uploads, and jobs to Postgres/Supabase/Neon before public launch.
 
 ## Absolutely Necessary MVP Features
@@ -95,11 +95,10 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - Protect register, login, API key generation, upload URL creation, and render trigger endpoints.
   - Implemented basic in-memory IP rate limits.
 
-- [ ] Keep worker credentials least-privilege.
+- [x] Keep worker credentials least-privilege.
   - File: `handler.py`
   - The worker downloads and opens user `.blend` files in Blender.
-  - Make sure the RunPod worker only has the R2 permissions it needs.
-  - Do not expose gateway secrets to the worker.
+  - Documented worker-only env requirements and least-privilege R2 guidance in `docs/production.md`.
 
 - [x] Review public claims on the landing page.
   - File: `public/index.html`
@@ -114,14 +113,9 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - File: `server.js`
   - Added baseline security headers for static pages and API responses.
 
-- [ ] Add account abuse controls.
+- [x] Add account abuse controls.
   - File: `server.js`
-  - Add one or more of:
-    - email verification
-    - invite codes
-    - admin approval
-    - CAPTCHA on signup
-  - For MVP, invite codes or manual approval are likely the simplest.
+  - Optional invite-code registration is enabled with `RENDERSPHERE_INVITE_CODE`.
 
 - [x] Prevent upload reuse if that is not intentional.
   - File: `server.js`
@@ -158,9 +152,9 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - The add-on writes `runpod_payload.blend` into Blender's temp directory.
   - Remove it after successful or failed upload when safe.
 
-- [ ] Make animation download location configurable.
+- [x] Make animation download location configurable.
   - Current behavior saves animation zips to the user's Desktop.
-  - Better MVP behavior: choose a folder or use the scene output path.
+  - Add-on preferences now include an animation download folder.
 
 - [x] Add version/update visibility.
   - The add-on should display its version and ideally link to the latest download.
@@ -172,18 +166,14 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - File: `server.js`
   - `/api/trigger-render` now returns useful RunPod error/message text when available.
 
-- [ ] Add admin visibility.
+- [x] Add admin visibility.
   - File: `server.js`
-  - For MVP, even a private admin endpoint or protected JSON export is useful.
-  - You need to see users, jobs, failed jobs, and active queued jobs.
+  - Added bearer-token admin endpoints for summary, users, jobs, and metadata cleanup.
 
-- [ ] Add job lifecycle cleanup.
+- [x] Add job lifecycle cleanup.
   - Files: `server.js`, R2 bucket settings
-  - Decide how long to keep:
-    - uploaded `.blend` files
-    - completed render outputs
-    - failed job records
-  - Add R2 lifecycle rules so storage costs do not quietly grow.
+  - Added local metadata cleanup endpoint.
+  - Documented R2 lifecycle rules in `docs/production.md`.
 
 - [x] Add idempotency or duplicate-submit protection.
   - File: `server.js`
@@ -229,9 +219,8 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
 - [x] Publish the add-on zip somewhere the landing page can link to.
   - Current path: `public/downloads/rendersphere-blender-addon.zip`
 - [ ] Confirm the RunPod worker image tag matches the deployed endpoint.
-- [ ] Review `.github/workflows/docker-image.yml`.
-  - It only builds when the commit message contains `[run-action]`.
-  - It currently publishes a fixed `v5.7` tag.
+- [x] Review `.github/workflows/docker-image.yml`.
+  - It now supports manual runs and pushes `latest` plus the commit SHA tag.
 - [x] Add `__pycache__/` to `.gitignore`.
   - A local `__pycache__/` directory is currently untracked.
 - [x] Decide whether `public/auth.html` should be committed.
@@ -243,6 +232,8 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
 - `handler.py` and `extension/v1.py` parse cleanly with Python AST.
 - `npm test` passes.
 - Packaged add-on zip expands and `rendersphere.py` parses cleanly.
+- Smoke test covers invite-code signup and admin summary auth.
+- Add-on packaging was verified with `RENDERSPHERE_PUBLIC_URL`.
 - Local auth smoke test passed:
   - register account
   - receive API key

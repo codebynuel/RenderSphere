@@ -108,13 +108,23 @@ function createZip(entries) {
   return Buffer.concat([...localParts, centralDirectory, end]);
 }
 
-const addonSource = await readFile(sourcePath);
+let addonSourceText = await readFile(sourcePath, 'utf8');
+const publicUrl = process.env.RENDERSPHERE_PUBLIC_URL?.replace(/\/+$/, '');
+if (publicUrl) {
+  addonSourceText = addonSourceText.replace(
+    /DEFAULT_SERVER_URL = ".*?"/,
+    `DEFAULT_SERVER_URL = ${JSON.stringify(publicUrl)}`
+  );
+}
+
+const addonSource = Buffer.from(addonSourceText);
 const readme = Buffer.from(
   [
     'RenderSphere Blender Add-on',
     '',
     'Install this zip from Blender: Edit > Preferences > Add-ons > Install.',
     'After enabling it, paste your RenderSphere API key into the add-on preferences.',
+    publicUrl ? `Default gateway URL in this package: ${publicUrl}` : 'Default gateway URL in this package: http://localhost:3000',
     '',
   ].join('\n')
 );

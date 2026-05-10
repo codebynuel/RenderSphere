@@ -68,6 +68,9 @@ const config = {
   maxQueuedJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_QUEUED_JOBS', 3),
   freeRenderCredits: parseNonNegativeIntegerEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 3),
   supportEmail: process.env.RENDERSPHERE_SUPPORT_EMAIL || 'support@rendersphere.app',
+  inviteCode: process.env.RENDERSPHERE_INVITE_CODE || '',
+  adminToken: process.env.RENDERSPHERE_ADMIN_TOKEN || '',
+  jobRecordRetentionDays: parsePositiveIntegerEnv('RENDERSPHERE_JOB_RECORD_RETENTION_DAYS', 30),
 };
 
 function validateRequiredEnv() {
@@ -189,6 +192,16 @@ function publicUser(user) {
   };
 }
 
+function adminUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    creditsRemaining: typeof user.creditsRemaining === 'number' ? user.creditsRemaining : config.freeRenderCredits,
+    apiKeyUpdatedAt: user.apiKeyUpdatedAt || null,
+    createdAt: user.createdAt,
+  };
+}
+
 function clampNumber(value, min, max, fallback) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return fallback;
@@ -299,6 +312,13 @@ async function requireAuth(req, res, next) {
   }
 }
 
+function requireAdmin(req, res, next) {
+  const token = getBearerToken(req);
+  if (!config.adminToken) return res.status(404).json({ error: 'Not found' });
+  if (!token || token !== config.adminToken) return res.status(401).json({ error: 'Admin authentication required' });
+  next();
+}
+
 async function readResponseJson(response) {
   try {
     return await response.json();
@@ -363,6 +383,7 @@ app.get('/api/config', (req, res) => {
   res.json({
     supportEmail: config.supportEmail,
     freeRenderCredits: config.freeRenderCredits,
+    inviteRequired: Boolean(config.inviteCode),
     limits: {
       maxUploadBytes: config.maxUploadBytes,
       maxRenderSamples: config.maxRenderSamples,
@@ -374,9 +395,106 @@ app.get('/api/config', (req, res) => {
   });
 });
 
+app.get('/api/admin/summary', requireAdmin, async (req, res) => {
+  const store = await readStore();
+  const activeJobs = store.jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status));
+  const failedJobs = store.jobs.filter((job) => job.status === 'FAILED');
+  const completedJobs = store.jobs.filter((job) => job.status === 'COMPLETED');
+
+  res.json({
+    users: store.users.length,
+    uploads: store.uploads.length,
+    jobs: store.jobs.length,
+    activeJobs: activeJobs.length,
+    failedJobs: failedJobs.length,
+    completedJobs: completedJobs.length,
+    dataDir: DATA_DIR,
+    limits: {
+      maxUploadBytes: config.maxUploadBytes,
+      maxRenderSamples: config.maxRenderSamples,
+      maxResolutionPct: config.maxResolutionPct,
+      maxAnimationFrames: config.maxAnimationFrames,
+      maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
+      maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
+      freeRenderCredits: config.freeRenderCredits,
+      jobRecordRetentionDays: config.jobRecordRetentionDays,
+    },
+  });
+});
+
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  const store = await readStore();
+  const users = store.users
+    .map((user) => {
+      const jobs = store.jobs.filter((job) => job.userId === user.id);
+      return {
+        ...adminUser(user),
+        jobs: jobs.length,
+        activeJobs: jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status)).length,
+      };
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  res.json({ users });
+});
+
+app.get('/api/admin/jobs', requireAdmin, async (req, res) => {
+  const store = await readStore();
+  const jobs = store.jobs
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 100)
+    .map((job) => ({
+      jobId: job.jobId,
+      userId: job.userId,
+      fileKey: job.fileKey,
+      status: job.status,
+      frameCount: job.frameCount,
+      creditsCharged: job.creditsCharged,
+      resultKey: job.resultKey,
+      error: job.error,
+      createdAt: job.createdAt,
+      completedAt: job.completedAt,
+      failedAt: job.failedAt,
+      cancelledAt: job.cancelledAt,
+      settings: job.settings,
+    }));
+
+  res.json({ jobs });
+});
+
+app.post('/api/admin/cleanup-records', requireAdmin, async (req, res) => {
+  const cutoff = Date.now() - config.jobRecordRetentionDays * 24 * 60 * 60 * 1000;
+  const result = await updateStore(async (store) => {
+    const before = {
+      sessions: store.sessions.length,
+      uploads: store.uploads.length,
+      jobs: store.jobs.length,
+    };
+
+    store.sessions = store.sessions.filter((session) => new Date(session.expiresAt).getTime() > Date.now());
+    store.uploads = store.uploads.filter((upload) => new Date(upload.createdAt).getTime() >= cutoff);
+    store.jobs = store.jobs.filter((job) => {
+      if (ACTIVE_JOB_STATUSES.has(job.status)) return true;
+      return new Date(job.createdAt).getTime() >= cutoff;
+    });
+
+    return {
+      removed: {
+        sessions: before.sessions - store.sessions.length,
+        uploads: before.uploads - store.uploads.length,
+        jobs: before.jobs - store.jobs.length,
+      },
+    };
+  });
+
+  res.json(result);
+});
+
 app.post('/api/auth/register', authRateLimit, async (req, res) => {
   const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || '');
+  const inviteCode = String(req.body.inviteCode || '');
 
   if (!email || !email.includes('@')) {
     return res.status(400).json({ error: 'A valid email is required' });
@@ -384,6 +502,10 @@ app.post('/api/auth/register', authRateLimit, async (req, res) => {
 
   if (password.length < 10) {
     return res.status(400).json({ error: 'Password must be at least 10 characters' });
+  }
+
+  if (config.inviteCode && inviteCode !== config.inviteCode) {
+    return res.status(403).json({ error: 'A valid invite code is required' });
   }
 
   try {

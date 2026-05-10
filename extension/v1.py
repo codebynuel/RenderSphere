@@ -96,6 +96,18 @@ def get_api_key(context=None):
     return ""
 
 
+def get_animation_output_dir(context=None):
+    addon_keys = [key for key in {__package__, __name__} if key]
+    context = context or bpy.context
+
+    for addon_key in addon_keys:
+        addon = context.preferences.addons.get(addon_key)
+        if addon and addon.preferences.animation_output_dir:
+            return bpy.path.abspath(addon.preferences.animation_output_dir)
+
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
 def auth_headers(context=None, content_type=None):
     headers = {}
     api_key = get_api_key(context)
@@ -220,9 +232,11 @@ def check_job_status():
                     download_url = data.get("downloadUrl")
 
                     if is_current_job_animation:
-                        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", f"animation_{current_job_id[:6]}.zip")
-                        urllib.request.urlretrieve(download_url, desktop_path)
-                        current_status = "Zip saved to Desktop."
+                        output_dir = get_animation_output_dir()
+                        os.makedirs(output_dir, exist_ok=True)
+                        zip_path = os.path.join(output_dir, f"animation_{current_job_id[:6]}.zip")
+                        urllib.request.urlretrieve(download_url, zip_path)
+                        current_status = "Zip saved."
                     else:
                         save_path = os.path.join(bpy.app.tempdir, f"cloud_render_final.{current_download_extension}")
                         urllib.request.urlretrieve(download_url, save_path)
@@ -271,12 +285,19 @@ class RENDERSPHERE_AddonPreferences(bpy.types.AddonPreferences):
         default="",
         subtype='PASSWORD',
     )
+    animation_output_dir: bpy.props.StringProperty(
+        name="Animation Download Folder",
+        description="Folder used for completed animation zip downloads",
+        default="",
+        subtype='DIR_PATH',
+    )
 
     def draw(self, context):
         layout = self.layout
         layout.label(text=f"RenderSphere Add-on v{ADDON_VERSION}")
         layout.prop(self, "server_url")
         layout.prop(self, "api_key")
+        layout.prop(self, "animation_output_dir")
         layout.operator("rendersphere.test_connection", icon='URL')
 
 
@@ -554,7 +575,7 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
         row.enabled = current_job_id is None and current_status in [
             "Idle",
             "Render Complete.",
-            "Zip saved to Desktop.",
+            "Zip saved.",
             "Render Failed",
             "Connection OK",
             "Error",
@@ -575,7 +596,7 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
                 box.label(text=current_status, icon='ERROR')
                 box.label(text=f"Error: {current_error_msg}")
             else:
-                icon = 'CHECKMARK' if current_status in ["Render Complete.", "Zip saved to Desktop.", "Connection OK"] else 'TIME'
+                icon = 'CHECKMARK' if current_status in ["Render Complete.", "Zip saved.", "Connection OK"] else 'TIME'
                 box.label(text=f"Status: {current_status}", icon=icon)
 
                 if current_status in ["In Queue...", "Rendering Animation...", "Rendering Frame..."]:
@@ -596,7 +617,7 @@ class RENDER_PT_cloud_panel(bpy.types.Panel):
                     box.label(text=f"Samples: {ui_sample_current} / {target_samples}")
                     box.label(text=f"Percentage Done: {pct}%")
 
-                elif current_status in ["Render Complete.", "Zip saved to Desktop."]:
+                elif current_status in ["Render Complete.", "Zip saved."]:
                     box.label(text=f"Elapsed time: {current_elapsed_str}")
 
 

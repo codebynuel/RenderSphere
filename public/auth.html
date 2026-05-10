@@ -534,6 +534,10 @@
                         Password
                         <input id="password" type="password" autocomplete="current-password" minlength="10" required />
                     </label>
+                    <label id="inviteLabel" hidden>
+                        Invite code
+                        <input id="inviteCode" type="password" autocomplete="off" />
+                    </label>
                     <button id="authSubmit" class="button" type="submit">Create account</button>
                     <div id="authStatus" class="status" role="status"></div>
                 </form>
@@ -629,6 +633,8 @@
             authStatus: document.querySelector('#authStatus'),
             email: document.querySelector('#email'),
             password: document.querySelector('#password'),
+            inviteLabel: document.querySelector('#inviteLabel'),
+            inviteCode: document.querySelector('#inviteCode'),
             apiKey: document.querySelector('#apiKey'),
             copyKeyButton: document.querySelector('#copyKeyButton'),
             showKeyButton: document.querySelector('#showKeyButton'),
@@ -659,6 +665,12 @@
             return data;
         }
 
+        async function loadConfig() {
+            if (state.config) return state.config;
+            state.config = await api('/api/config');
+            return state.config;
+        }
+
         function formatBytes(bytes) {
             if (!Number.isFinite(bytes)) return '-';
             const mb = bytes / (1024 * 1024);
@@ -684,6 +696,8 @@
             els.authTitle.textContent = isRegister ? 'Create account' : 'Log in';
             els.authSubmit.textContent = isRegister ? 'Create account' : 'Log in';
             els.password.autocomplete = isRegister ? 'new-password' : 'current-password';
+            els.inviteLabel.hidden = !(isRegister && state.config?.inviteRequired);
+            els.inviteCode.required = isRegister && Boolean(state.config?.inviteRequired);
             setStatus(els.authStatus, '');
         }
 
@@ -719,7 +733,7 @@
             }
 
             try {
-                if (!state.config) state.config = await api('/api/config');
+                await loadConfig();
                 const data = await api('/api/auth/me');
                 state.user = data.user;
                 renderAuth();
@@ -773,16 +787,22 @@
             setStatus(els.authStatus, state.mode === 'register' ? 'Creating account...' : 'Signing in...');
 
             try {
+                const body = {
+                    email: els.email.value,
+                    password: els.password.value,
+                };
+                if (state.mode === 'register' && state.config?.inviteRequired) {
+                    body.inviteCode = els.inviteCode.value;
+                }
+
                 const data = await api(`/api/auth/${state.mode}`, {
                     method: 'POST',
-                    body: JSON.stringify({
-                        email: els.email.value,
-                        password: els.password.value,
-                    }),
+                    body: JSON.stringify(body),
                 });
                 saveSession(data.token, data.user);
                 els.email.value = '';
                 els.password.value = '';
+                els.inviteCode.value = '';
                 if (data.apiKey) {
                     els.apiKey.value = data.apiKey;
                     state.apiKeyVisible = true;
@@ -833,8 +853,12 @@
 
         els.refreshJobsButton.addEventListener('click', loadJobs);
 
-        setMode('register');
-        loadMe();
+        loadConfig()
+            .catch(() => null)
+            .finally(() => {
+                setMode('register');
+                loadMe();
+            });
     </script>
 </body>
 </html>

@@ -22,6 +22,7 @@ Recommended gateway environment variables:
 - `RENDERSPHERE_SUPPORT_EMAIL`
 - `RENDERSPHERE_INVITE_CODE`
 - `RENDERSPHERE_ADMIN_TOKEN`
+- `RENDERSPHERE_SECURE_COOKIES`
 - `RENDERSPHERE_FREE_RENDER_CREDITS`
 - `RENDERSPHERE_MAX_UPLOAD_MB`
 - `RENDERSPHERE_MAX_RENDER_SAMPLES`
@@ -41,6 +42,14 @@ Set `RENDERSPHERE_ADMIN_TOKEN` to enable admin endpoints. Use it as a bearer tok
 - `POST /api/admin/cleanup-records`
 
 These endpoints are intentionally JSON-only for the MVP.
+
+## Web Sessions
+
+The web dashboard uses an HTTP-only `rs_session` cookie. The browser no longer stores session tokens in `localStorage`.
+
+Set `NODE_ENV=production` or `RENDERSPHERE_SECURE_COOKIES=true` in production so session cookies include the `Secure` attribute.
+
+Bearer tokens are still supported for the Blender add-on API key and admin endpoints.
 
 ## Worker Environment
 
@@ -79,4 +88,3 @@ RENDERSPHERE_PUBLIC_URL=https://your-production-domain.example npm run package:e
 ```
 
 If `RENDERSPHERE_PUBLIC_URL` is omitted, the packaged add-on keeps the local development gateway URL.
-

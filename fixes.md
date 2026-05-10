@@ -104,10 +104,10 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - File: `public/index.html`
   - Removed unsupported claims and replaced them with MVP limits.
 
-- [ ] Consider replacing `localStorage` session storage later.
+- [x] Consider replacing `localStorage` session storage later.
   - File: `public/auth.html`
-  - Current token storage is acceptable for a fast MVP.
-  - For a more serious public launch, use secure HTTP-only cookies.
+  - Web dashboard sessions now use an HTTP-only `rs_session` cookie.
+  - Bearer tokens remain supported for the Blender add-on API key and admin endpoints.
 
 - [x] Add security headers.
   - File: `server.js`

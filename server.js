@@ -40,6 +40,7 @@ const VALID_OUTPUT_FORMATS = new Set(['PNG', 'JPEG', 'OPEN_EXR', 'OPEN_EXR_MULTI
 const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
 const ACTIVE_JOB_STATUSES = new Set(['SUBMITTED', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING']);
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
+const SESSION_COOKIE_NAME = 'rs_session';
 const DATA_DIR = process.env.RENDERSPHERE_DATA_DIR || path.join(__dirname, '.data');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
 const MB = 1024 * 1024;
@@ -71,6 +72,7 @@ const config = {
   inviteCode: process.env.RENDERSPHERE_INVITE_CODE || '',
   adminToken: process.env.RENDERSPHERE_ADMIN_TOKEN || '',
   jobRecordRetentionDays: parsePositiveIntegerEnv('RENDERSPHERE_JOB_RECORD_RETENTION_DAYS', 30),
+  secureCookies: process.env.RENDERSPHERE_SECURE_COOKIES === 'true' || process.env.NODE_ENV === 'production',
 };
 
 function validateRequiredEnv() {
@@ -281,6 +283,61 @@ function getBearerToken(req) {
   return match ? match[1].trim() : null;
 }
 
+function parseCookies(req) {
+  const rawCookie = req.get('cookie') || '';
+  const cookies = new Map();
+
+  for (const part of rawCookie.split(';')) {
+    const separatorIndex = part.indexOf('=');
+    if (separatorIndex === -1) continue;
+
+    const name = part.slice(0, separatorIndex).trim();
+    const value = part.slice(separatorIndex + 1).trim();
+    if (!name) continue;
+
+    try {
+      cookies.set(name, decodeURIComponent(value));
+    } catch {
+      cookies.set(name, value);
+    }
+  }
+
+  return cookies;
+}
+
+function getSessionCookie(req) {
+  return parseCookies(req).get(SESSION_COOKIE_NAME) || null;
+}
+
+function getRequestToken(req) {
+  const bearerToken = getBearerToken(req);
+  if (bearerToken) return { token: bearerToken, source: 'bearer' };
+
+  const cookieToken = getSessionCookie(req);
+  if (cookieToken) return { token: cookieToken, source: 'cookie' };
+
+  return { token: null, source: null };
+}
+
+function sessionCookieOptions(req, maxAgeSeconds = Math.floor(SESSION_TTL_MS / 1000)) {
+  const secure = config.secureCookies || req.secure || req.get('x-forwarded-proto') === 'https';
+  return [
+    `Path=/`,
+    `Max-Age=${maxAgeSeconds}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    secure ? 'Secure' : '',
+  ].filter(Boolean).join('; ');
+}
+
+function setSessionCookie(req, res, token) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; ${sessionCookieOptions(req)}`);
+}
+
+function clearSessionCookie(req, res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=; ${sessionCookieOptions(req, 0)}`);
+}
+
 async function authenticateToken(token) {
   if (!token) return null;
 
@@ -300,11 +357,14 @@ async function authenticateToken(token) {
 
 async function requireAuth(req, res, next) {
   try {
-    const auth = await authenticateToken(getBearerToken(req));
+    const requestToken = getRequestToken(req);
+    const auth = await authenticateToken(requestToken.token);
     if (!auth) return res.status(401).json({ error: 'Authentication required' });
 
     req.user = auth.user;
     req.authType = auth.authType;
+    req.authToken = requestToken.token;
+    req.authSource = requestToken.source;
     next();
   } catch (error) {
     console.error("Auth Error:", error);
@@ -533,6 +593,7 @@ app.post('/api/auth/register', authRateLimit, async (req, res) => {
     });
 
     if (result.error) return res.status(409).json({ error: result.error });
+    setSessionCookie(req, res, result.token);
     res.status(201).json(result);
   } catch (error) {
     console.error("Register Error:", error);
@@ -552,6 +613,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     }
 
     const token = await updateStore(async (nextStore) => createSessionForUser(nextStore, user.id));
+    setSessionCookie(req, res, token);
     res.json({ user: publicUser(user), token });
   } catch (error) {
     console.error("Login Error:", error);
@@ -560,10 +622,11 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
 });
 
 app.post('/api/auth/logout', requireAuth, async (req, res) => {
-  const tokenHash = hashToken(getBearerToken(req));
+  const tokenHash = hashToken(req.authToken);
   await updateStore(async (store) => {
     store.sessions = store.sessions.filter((session) => session.tokenHash !== tokenHash);
   });
+  clearSessionCookie(req, res);
   res.json({ success: true });
 });
 

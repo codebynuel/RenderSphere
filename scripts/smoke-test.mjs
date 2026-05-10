@@ -48,6 +48,18 @@ async function request(pathname, options = {}) {
   return data;
 }
 
+async function rawRequest(pathname, options = {}) {
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  return { response, data };
+}
+
 async function waitForServer() {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -66,22 +78,31 @@ try {
   await waitForServer();
 
   const email = `smoke-${Date.now()}@example.com`;
-  const registered = await request('/api/auth/register', {
+  const registerResult = await rawRequest('/api/auth/register', {
     method: 'POST',
     body: JSON.stringify({ email, password: 'longenoughpassword', inviteCode: 'smoke-invite' }),
   });
+  if (!registerResult.response.ok) {
+    throw new Error(`POST /api/auth/register failed: ${registerResult.response.status} ${registerResult.data.error || ''}`);
+  }
 
+  const registered = registerResult.data;
   if (!registered.token || !registered.apiKey || registered.user.email !== email) {
     throw new Error('Register response did not include the expected session, API key, and user.');
   }
 
-  const authHeaders = { Authorization: `Bearer ${registered.token}` };
-  const me = await request('/api/auth/me', { headers: authHeaders });
+  const sessionCookie = registerResult.response.headers.get('set-cookie')?.split(';')[0];
+  if (!sessionCookie?.startsWith('rs_session=')) {
+    throw new Error('Register response did not set the HTTP-only session cookie.');
+  }
+
+  const cookieHeaders = { Cookie: sessionCookie };
+  const me = await request('/api/auth/me', { headers: cookieHeaders });
   if (me.user.email !== email) throw new Error('/api/auth/me returned the wrong user.');
 
   const oversized = await fetch(`${baseUrl}/api/get-upload-url`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    headers: { 'Content-Type': 'application/json', ...cookieHeaders },
     body: JSON.stringify({
       fileName: 'too-big.blend',
       fileSizeBytes: 501 * 1024 * 1024,
@@ -95,6 +116,15 @@ try {
     headers: { Authorization: 'Bearer smoke-admin' },
   });
   if (summary.users !== 1) throw new Error(`Expected admin summary to report one user, got ${summary.users}.`);
+
+  const logout = await rawRequest('/api/auth/logout', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: '{}',
+  });
+  if (!logout.response.ok) throw new Error(`Expected logout to succeed, got ${logout.response.status}.`);
+  const clearedCookie = logout.response.headers.get('set-cookie') || '';
+  if (!clearedCookie.includes('Max-Age=0')) throw new Error('Logout did not clear the session cookie.');
 
   console.log('Smoke test passed.');
 } finally {

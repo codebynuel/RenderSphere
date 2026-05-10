@@ -614,7 +614,6 @@
     <script>
         const state = {
             mode: 'register',
-            token: localStorage.getItem('rendersphere_token') || '',
             user: null,
             config: null,
             apiKeyVisible: false,
@@ -657,9 +656,8 @@
 
         async function api(path, options = {}) {
             const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-            if (state.token) headers.Authorization = `Bearer ${state.token}`;
 
-            const response = await fetch(path, { ...options, headers });
+            const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.error || 'Request failed');
             return data;
@@ -710,28 +708,19 @@
             if (signedIn) renderUsage();
         }
 
-        function saveSession(token, user) {
-            state.token = token;
+        function saveSession(user) {
             state.user = user;
-            localStorage.setItem('rendersphere_token', token);
             renderAuth();
         }
 
         function clearSession() {
-            state.token = '';
             state.user = null;
             state.apiKeyVisible = false;
             els.apiKey.value = '';
-            localStorage.removeItem('rendersphere_token');
             renderAuth();
         }
 
         async function loadMe() {
-            if (!state.token) {
-                renderAuth();
-                return;
-            }
-
             try {
                 await loadConfig();
                 const data = await api('/api/auth/me');
@@ -799,7 +788,7 @@
                     method: 'POST',
                     body: JSON.stringify(body),
                 });
-                saveSession(data.token, data.user);
+                saveSession(data.user);
                 els.email.value = '';
                 els.password.value = '';
                 els.inviteCode.value = '';

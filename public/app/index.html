@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RenderSphere App</title>
+    <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+    <div class="shell site-frame">
+        <header class="nav">
+            <a class="brand" href="/">RenderSphere</a>
+            <div class="nav-actions">
+                <span class="route-chip">/app</span>
+                <span id="balanceBadge" class="balance-chip" hidden>$0.00</span>
+                <span id="accountLabel" class="account-label">Not signed in</span>
+                <button id="logoutButton" class="button">Sign out</button>
+            </div>
+        </header>
+
+        <main class="page">
+            <section id="dashboardView" class="dashboard app-dashboard active">
+                <div class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Access keys</h2>
+                            <p class="muted">Create, reveal, copy, and delete keys for Blender and automation.</p>
+                        </div>
+                    </div>
+                    <form id="accessKeyForm" class="inline-form">
+                        <input id="accessKeyName" type="text" maxlength="80" placeholder="Key name, for example Blender workstation" />
+                        <button id="createAccessKeyButton" class="button primary" type="submit">Create access key</button>
+                    </form>
+                    <div id="accessKeys" class="stack-list"></div>
+                    <div id="accessKeyStatus" class="status" role="status"></div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Rendered files</h2>
+                            <p class="muted">Open completed outputs directly from the workspace.</p>
+                        </div>
+                        <button id="refreshFilesButton" class="button" type="button">Refresh</button>
+                    </div>
+                    <div id="renderedFiles" class="stack-list"></div>
+                    <div id="filesStatus" class="status" role="status"></div>
+                </div>
+
+                <div class="panel full">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Recent jobs</h2>
+                            <p class="muted">Track queue, render, completion, and failure states here.</p>
+                        </div>
+                        <button id="refreshJobsButton" class="button" type="button">Refresh</button>
+                    </div>
+                    <div id="jobs" class="job-list"></div>
+                    <div id="jobsStatus" class="status" role="status"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div id="confirmOverlay" class="confirm-overlay" hidden>
+        <div class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+            <h3 id="confirmTitle">Delete access key?</h3>
+            <p id="confirmText" class="muted">This action cannot be undone.</p>
+            <div class="button-row compact-row">
+                <button id="confirmCancel" type="button" class="button">Cancel</button>
+                <button id="confirmAccept" type="button" class="button danger">Delete key</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const state = {
+            user: null,
+            accessKeys: [],
+            files: [],
+            visibleAccessKeyIds: new Set(),
+        };
+
+        const els = {
+            dashboardView: document.querySelector('#dashboardView'),
+            accountLabel: document.querySelector('#accountLabel'),
+            balanceBadge: document.querySelector('#balanceBadge'),
+            logoutButton: document.querySelector('#logoutButton'),
+            accessKeyForm: document.querySelector('#accessKeyForm'),
+            accessKeyName: document.querySelector('#accessKeyName'),
+            accessKeys: document.querySelector('#accessKeys'),
+            accessKeyStatus: document.querySelector('#accessKeyStatus'),
+            renderedFiles: document.querySelector('#renderedFiles'),
+            filesStatus: document.querySelector('#filesStatus'),
+            refreshFilesButton: document.querySelector('#refreshFilesButton'),
+            refreshJobsButton: document.querySelector('#refreshJobsButton'),
+            jobs: document.querySelector('#jobs'),
+            jobsStatus: document.querySelector('#jobsStatus'),
+            confirmOverlay: document.querySelector('#confirmOverlay'),
+            confirmText: document.querySelector('#confirmText'),
+            confirmCancel: document.querySelector('#confirmCancel'),
+            confirmAccept: document.querySelector('#confirmAccept'),
+        };
+
+        let confirmResolver = null;
+
+        function setStatus(el, message, isError = false) {
+            el.textContent = message || '';
+            el.classList.toggle('error', Boolean(isError));
+        }
+
+        async function api(path, options = {}) {
+            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+            const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || 'Request failed');
+            return data;
+        }
+
+        function formatDate(value) {
+            if (!value) return 'Unknown date';
+            return new Date(value).toLocaleString();
+        }
+
+        function formatBalance(value) {
+            const amount = Number(value || 0);
+            return `$${amount.toFixed(2)}`;
+        }
+
+        function renderHeader() {
+            els.accountLabel.textContent = state.user?.email || 'Not signed in';
+            if (state.user) {
+                els.balanceBadge.hidden = false;
+                els.balanceBadge.textContent = `Balance ${formatBalance(state.user.starterBalanceUsd)}`;
+            } else {
+                els.balanceBadge.hidden = true;
+            }
+        }
+
+        function showConfirm(message) {
+            return new Promise((resolve) => {
+                confirmResolver = resolve;
+                els.confirmText.textContent = message;
+                els.confirmOverlay.hidden = false;
+            });
+        }
+
+        function closeConfirm(result) {
+            els.confirmOverlay.hidden = true;
+            if (confirmResolver) {
+                confirmResolver(result);
+                confirmResolver = null;
+            }
+        }
+
+        function renderAccessKeys() {
+            els.accessKeys.innerHTML = '';
+            if (!state.accessKeys.length) {
+                els.accessKeys.innerHTML = '<div class="muted">No access keys yet.</div>';
+                return;
+            }
+
+            for (const accessKey of state.accessKeys) {
+                const row = document.createElement('div');
+                row.className = 'stack-item';
+
+                const meta = document.createElement('div');
+                meta.className = 'stack-meta';
+                meta.innerHTML = `
+                    <strong>${accessKey.name || 'Access key'}</strong>
+                    <div class="subtle">Created ${formatDate(accessKey.createdAt)}</div>
+                `;
+
+                const input = document.createElement('input');
+                input.readOnly = true;
+                input.value = state.visibleAccessKeyIds.has(accessKey.id) ? (accessKey.token || accessKey.preview) : accessKey.preview;
+                input.type = state.visibleAccessKeyIds.has(accessKey.id) ? 'text' : 'password';
+
+                const actions = document.createElement('div');
+                actions.className = 'button-row compact-row';
+
+                const showButton = document.createElement('button');
+                showButton.className = 'button';
+                showButton.type = 'button';
+                showButton.textContent = state.visibleAccessKeyIds.has(accessKey.id) ? 'Hide' : 'Show';
+                showButton.disabled = !accessKey.token;
+                showButton.addEventListener('click', () => {
+                    if (!accessKey.token) return;
+                    if (state.visibleAccessKeyIds.has(accessKey.id)) state.visibleAccessKeyIds.delete(accessKey.id);
+                    else state.visibleAccessKeyIds.add(accessKey.id);
+                    renderAccessKeys();
+                });
+
+                const copyButton = document.createElement('button');
+                copyButton.className = 'button';
+                copyButton.type = 'button';
+                copyButton.textContent = 'Copy';
+                copyButton.disabled = !accessKey.token;
+                copyButton.addEventListener('click', async () => {
+                    if (!accessKey.token) return;
+                    await navigator.clipboard.writeText(accessKey.token);
+                    setStatus(els.accessKeyStatus, `Copied ${accessKey.name || 'access key'}.`);
+                });
+
+                const deleteButton = document.createElement('button');
+                deleteButton.className = 'button danger';
+                deleteButton.type = 'button';
+                deleteButton.textContent = 'Delete';
+                deleteButton.addEventListener('click', async () => {
+                    const confirmed = await showConfirm(`Delete \"${accessKey.name || 'Access key'}\"?`);
+                    if (!confirmed) return;
+
+                    try {
+                        await api(`/api/auth/access-keys/${accessKey.id}`, { method: 'DELETE', body: '{}' });
+                        state.visibleAccessKeyIds.delete(accessKey.id);
+                        await loadAccessKeys();
+                        setStatus(els.accessKeyStatus, 'Access key deleted.');
+                    } catch (error) {
+                        setStatus(els.accessKeyStatus, error.message, true);
+                    }
+                });
+
+                actions.append(showButton, copyButton, deleteButton);
+                row.append(meta, input, actions);
+                els.accessKeys.append(row);
+            }
+        }
+
+        function renderFiles() {
+            els.renderedFiles.innerHTML = '';
+            if (!state.files.length) {
+                els.renderedFiles.innerHTML = '<div class="muted">No rendered files yet.</div>';
+                return;
+            }
+
+            for (const file of state.files) {
+                const row = document.createElement('div');
+                row.className = 'stack-item';
+                row.innerHTML = `
+                    <div class="stack-meta">
+                        <strong>${file.fileName || file.resultKey}</strong>
+                        <div class="subtle">Completed ${formatDate(file.completedAt || file.createdAt)}</div>
+                    </div>
+                `;
+
+                const actions = document.createElement('div');
+                actions.className = 'button-row compact-row';
+
+                const openLink = document.createElement('a');
+                openLink.className = 'link-button';
+                openLink.href = file.downloadUrl;
+                openLink.target = '_blank';
+                openLink.rel = 'noopener noreferrer';
+                openLink.textContent = 'Open file';
+
+                const copyLinkButton = document.createElement('button');
+                copyLinkButton.className = 'button';
+                copyLinkButton.type = 'button';
+                copyLinkButton.textContent = 'Copy link';
+                copyLinkButton.addEventListener('click', async () => {
+                    await navigator.clipboard.writeText(file.downloadUrl);
+                    setStatus(els.filesStatus, `Copied link for ${file.fileName || 'file'}.`);
+                });
+
+                actions.append(openLink, copyLinkButton);
+                row.append(actions);
+                els.renderedFiles.append(row);
+            }
+        }
+
+        function renderJobs(jobs) {
+            els.jobs.innerHTML = '';
+            if (!jobs.length) {
+                els.jobs.innerHTML = '<div class="muted">No jobs yet.</div>';
+                return;
+            }
+
+            for (const job of jobs) {
+                const row = document.createElement('div');
+                row.className = 'job-row';
+
+                const left = document.createElement('div');
+                const id = document.createElement('div');
+                id.className = 'job-id';
+                id.textContent = job.jobId;
+                const meta = document.createElement('div');
+                meta.className = 'subtle';
+                meta.style.fontSize = '12px';
+                meta.textContent = formatDate(job.createdAt);
+                left.append(id, meta);
+
+                const pill = document.createElement('div');
+                pill.className = `pill ${job.status === 'FAILED' ? 'failed' : job.status === 'COMPLETED' || job.status === 'CANCELLED' ? '' : 'pending'}`;
+                pill.textContent = job.status || 'SUBMITTED';
+
+                row.append(left, pill);
+                els.jobs.append(row);
+            }
+        }
+
+        async function loadAccessKeys() {
+            const data = await api('/api/auth/access-keys');
+            state.accessKeys = data.accessKeys || [];
+            renderAccessKeys();
+        }
+
+        async function loadFiles() {
+            setStatus(els.filesStatus, 'Loading files...');
+            try {
+                const data = await api('/api/rendered-files');
+                state.files = data.files || [];
+                renderFiles();
+                setStatus(els.filesStatus, '');
+            } catch (error) {
+                setStatus(els.filesStatus, error.message, true);
+            }
+        }
+
+        async function loadJobs() {
+            setStatus(els.jobsStatus, 'Loading jobs...');
+            try {
+                const data = await api('/api/jobs');
+                renderJobs(data.jobs || []);
+                setStatus(els.jobsStatus, '');
+            } catch (error) {
+                setStatus(els.jobsStatus, error.message, true);
+            }
+        }
+
+        async function loadMe() {
+            try {
+                const data = await api('/api/auth/me');
+                state.user = data.user;
+                renderHeader();
+                await Promise.all([loadAccessKeys(), loadFiles(), loadJobs()]);
+            } catch {
+                window.location.replace('/auth');
+            }
+        }
+
+        els.logoutButton.addEventListener('click', async () => {
+            try {
+                await api('/api/auth/logout', { method: 'POST', body: '{}' });
+            } catch {
+                // Ignore logout failures and proceed to auth page.
+            }
+            window.location.replace('/auth');
+        });
+
+        els.accessKeyForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setStatus(els.accessKeyStatus, 'Creating access key...');
+            try {
+                await api('/api/auth/access-keys', {
+                    method: 'POST',
+                    body: JSON.stringify({ name: els.accessKeyName.value.trim() }),
+                });
+                els.accessKeyName.value = '';
+                await loadAccessKeys();
+                setStatus(els.accessKeyStatus, 'Access key created.');
+            } catch (error) {
+                setStatus(els.accessKeyStatus, error.message, true);
+            }
+        });
+
+        els.refreshFilesButton.addEventListener('click', loadFiles);
+        els.refreshJobsButton.addEventListener('click', loadJobs);
+        els.confirmCancel.addEventListener('click', () => closeConfirm(false));
+        els.confirmAccept.addEventListener('click', () => closeConfirm(true));
+        els.confirmOverlay.addEventListener('click', (event) => {
+            if (event.target === els.confirmOverlay) closeConfirm(false);
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && !els.confirmOverlay.hidden) closeConfirm(false);
+        });
+
+        loadMe();
+    </script>
+</body>
+</html>

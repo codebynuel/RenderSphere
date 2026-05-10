@@ -96,7 +96,7 @@ function publicUser(user) {
     id: user.id,
     email: user.email,
     createdAt: user.createdAt,
-    creditsRemaining: typeof user.creditsRemaining === 'number' ? user.creditsRemaining : config.freeRenderCredits,
+    starterBalanceUsd: typeof user.starterBalanceUsd === 'number' ? user.starterBalanceUsd : 0,
   };
 }
 
@@ -104,9 +104,41 @@ function adminUser(user) {
   return {
     id: user.id,
     email: user.email,
-    creditsRemaining: typeof user.creditsRemaining === 'number' ? user.creditsRemaining : config.freeRenderCredits,
-    apiKeyUpdatedAt: user.apiKeyUpdatedAt || null,
+    starterBalanceUsd: typeof user.starterBalanceUsd === 'number' ? user.starterBalanceUsd : 0,
+    accessKeyCount: Array.isArray(user.accessKeys) ? user.accessKeys.length : 0,
     createdAt: user.createdAt,
+  };
+}
+
+function normalizeAccessKeys(user) {
+  if (Array.isArray(user.accessKeys) && user.accessKeys.length > 0) {
+    return user.accessKeys;
+  }
+
+  if (user.apiKeyHash) {
+    return [
+      {
+        id: crypto.randomUUID(),
+        name: 'Legacy access key',
+        tokenHash: user.apiKeyHash,
+        tokenValue: null,
+        createdAt: user.apiKeyUpdatedAt || user.createdAt || nowIso(),
+        lastUsedAt: null,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function publicAccessKey(accessKey) {
+  return {
+    id: accessKey.id,
+    name: accessKey.name,
+    token: accessKey.tokenValue || null,
+    preview: accessKey.tokenValue ? `${accessKey.tokenValue.slice(0, 10)}...${accessKey.tokenValue.slice(-6)}` : 'Unavailable',
+    createdAt: accessKey.createdAt,
+    lastUsedAt: accessKey.lastUsedAt || null,
   };
 }
 
@@ -161,7 +193,7 @@ function normalizeRenderSettings(body) {
 
   const frameCount = isAnimation ? endFrame - startFrame + 1 : 1;
   if (frameCount > config.maxAnimationFrames) {
-    return { error: `Animation frame count exceeds the MVP limit of ${config.maxAnimationFrames}` };
+    return { error: `Animation frame count exceeds the limit of ${config.maxAnimationFrames}` };
   }
 
   if (samples < 1 || samples > config.maxRenderSamples) {
@@ -257,8 +289,10 @@ async function authenticateToken(token) {
     return user ? { user, authType: 'session' } : null;
   }
 
-  const user = store.users.find((item) => item.apiKeyHash === tokenHash);
-  return user ? { user, authType: 'apiKey' } : null;
+  const user = store.users.find((item) => normalizeAccessKeys(item).some((accessKey) => accessKey.tokenHash === tokenHash));
+  if (!user) return null;
+
+  return { user, authType: 'accessKey' };
 }
 
 async function requireAuth(req, res, next) {
@@ -300,10 +334,19 @@ async function createSessionForUser(store, userId) {
 }
 
 async function createApiKeyForUser(store, user) {
-  const apiKey = randomToken('rs_live');
-  user.apiKeyHash = hashToken(apiKey);
-  user.apiKeyUpdatedAt = nowIso();
-  return apiKey;
+  const accessKey = randomToken('rs_live');
+  user.accessKeys = normalizeAccessKeys(user);
+  user.accessKeys.push({
+    id: crypto.randomUUID(),
+    name: `Access key ${user.accessKeys.length + 1}`,
+    tokenHash: hashToken(accessKey),
+    tokenValue: accessKey,
+    createdAt: nowIso(),
+    lastUsedAt: null,
+  });
+  user.apiKeyHash = null;
+  user.apiKeyUpdatedAt = null;
+  return accessKey;
 }
 
 validateRequiredEnv();
@@ -343,8 +386,10 @@ app.use('/api/auth', createAuthRouter({
   createSessionForUser,
   hashPassword,
   hashToken,
+  normalizeAccessKeys,
   normalizeEmail,
   nowIso,
+  publicAccessKey,
   publicUser,
   readStore,
   requireAuth,
@@ -360,6 +405,33 @@ app.get('/api/jobs', requireAuth, async (req, res) => {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .map(({ runpodPayload, ...job }) => job);
   res.json({ jobs });
+});
+
+app.get('/api/rendered-files', requireAuth, async (req, res) => {
+  const store = await readStore();
+  const completedJobs = store.jobs
+    .filter((job) => job.userId === req.user.id && job.status === 'COMPLETED' && job.resultKey)
+    .sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
+
+  const files = await Promise.all(completedJobs.map(async (job) => {
+    const command = new GetObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: job.resultKey,
+    });
+    const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+
+    return {
+      jobId: job.jobId,
+      resultKey: job.resultKey,
+      fileName: job.resultKey.split('/').pop(),
+      createdAt: job.createdAt,
+      completedAt: job.completedAt || null,
+      outputFormat: job.settings?.outputFormat || job.settings?.output_format || null,
+      downloadUrl,
+    };
+  }));
+
+  res.json({ files });
 });
 
 app.get('/api/job-status/:jobId', requireAuth, async (req, res) => {
@@ -439,16 +511,11 @@ app.post('/api/get-upload-url', renderRateLimit, requireAuth, async (req, res) =
 
   if (fileSizeBytes > config.maxUploadBytes) {
     return res.status(413).json({
-      error: `Packed .blend file exceeds the MVP upload limit of ${Math.round(config.maxUploadBytes / MB)} MB`,
+      error: `Packed .blend file exceeds the upload limit of ${Math.round(config.maxUploadBytes / MB)} MB`,
     });
   }
 
   const store = await readStore();
-  const user = store.users.find((item) => item.id === req.user.id);
-  const creditsRemaining = typeof user?.creditsRemaining === 'number' ? user.creditsRemaining : config.freeRenderCredits;
-  if (creditsRemaining <= 0) {
-    return res.status(402).json({ error: "This account has no render credits remaining" });
-  }
 
   const key = `renders/${req.user.id}/${Date.now()}-${fileName}`;
 
@@ -498,12 +565,6 @@ app.post('/api/trigger-render', renderRateLimit, requireAuth, async (req, res) =
 
   if (upload.used) {
     return res.status(409).json({ error: "This upload has already been used for a render job" });
-  }
-
-  const user = store.users.find((item) => item.id === req.user.id);
-  const creditsRemaining = typeof user?.creditsRemaining === 'number' ? user.creditsRemaining : config.freeRenderCredits;
-  if (creditsRemaining <= 0) {
-    return res.status(402).json({ error: "This account has no render credits remaining" });
   }
 
   const activeJobs = activeJobCount(store, req.user.id);
@@ -569,13 +630,6 @@ app.post('/api/trigger-render', renderRateLimit, requireAuth, async (req, res) =
       await updateStore(async (nextStore) => {
         const nextUpload = nextStore.uploads.find((item) => item.key === fileKey && item.userId === req.user.id);
         if (nextUpload) nextUpload.used = true;
-        const nextUser = nextStore.users.find((item) => item.id === req.user.id);
-        if (nextUser) {
-          nextUser.creditsRemaining = Math.max(
-            0,
-            (typeof nextUser.creditsRemaining === 'number' ? nextUser.creditsRemaining : config.freeRenderCredits) - 1
-          );
-        }
         nextStore.jobs.push({
           jobId: data.id,
           userId: req.user.id,
@@ -583,7 +637,7 @@ app.post('/api/trigger-render', renderRateLimit, requireAuth, async (req, res) =
           status: data.status || 'SUBMITTED',
           settings: runpodPayload.input,
           frameCount: normalizedSettings.frameCount,
-          creditsCharged: 1,
+          billableSeconds: 0,
           createdAt: nowIso(),
         });
       });

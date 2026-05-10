@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RenderSphere Dashboard</title>
+    <title>RenderSphere Auth</title>
     <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -11,28 +11,27 @@
         <header class="nav">
             <a class="brand" href="/">RenderSphere</a>
             <div class="nav-actions">
-                <span id="accountLabel" class="nav-link">Not signed in</span>
-                <button id="logoutButton" class="button" hidden>Sign out</button>
-                <a class="icon-button" href="/" aria-label="Back home"><span></span></a>
+                <span class="route-chip">/auth</span>
+                <a class="link-button" href="/">Home</a>
             </div>
         </header>
 
         <main class="page">
-            <section id="signedOutView" class="auth-layout">
+            <section class="auth-layout">
                 <div class="workbench">
                     <div>
                         <p class="eyebrow">RenderSphere account</p>
-                        <h1 class="page-title">Access for your Blender renders.</h1>
-                        <p class="lede">Create an account, copy your API key, and connect the add-on from Blender preferences.</p>
+                        <h1 class="page-title">Sign in and continue to your render dashboard.</h1>
+                        <p class="lede">Use your account to manage access keys, submit renders from Blender, and track completed files.</p>
                     </div>
-                    <div class="placeholder-shot" data-label="Dashboard screenshot placeholder"></div>
+                    <div class="placeholder-shot" data-label="Account access"></div>
                 </div>
 
                 <aside class="panel auth-panel">
                     <div class="panel-head">
                         <div>
                             <h2 id="authTitle">Create account</h2>
-                            <p class="muted">Use this account for the dashboard and add-on.</p>
+                            <p class="muted">After sign in you will be taken to /app.</p>
                         </div>
                     </div>
 
@@ -59,87 +58,16 @@
                     </form>
                 </aside>
             </section>
-
-            <section id="dashboardView" class="dashboard">
-                <div class="panel full">
-                    <div class="panel-head">
-                        <div>
-                            <h2>Usage</h2>
-                            <p class="muted">Starter MVP limits are intentionally small while the service is being tested.</p>
-                        </div>
-                    </div>
-                    <div class="metric-grid">
-                        <div class="metric">
-                            <span>Credits</span>
-                            <strong id="creditsRemaining">-</strong>
-                        </div>
-                        <div class="metric">
-                            <span>Upload max</span>
-                            <strong id="maxUpload">-</strong>
-                        </div>
-                        <div class="metric">
-                            <span>Frame max</span>
-                            <strong id="maxFrames">-</strong>
-                        </div>
-                        <div class="metric">
-                            <span>Active jobs</span>
-                            <strong id="maxActiveJobs">-</strong>
-                        </div>
-                    </div>
-                    <div class="link-row">
-                        <a class="link-button" href="/downloads/rendersphere-blender-addon.zip">Download add-on</a>
-                        <a id="supportLink" class="link-button" href="mailto:support@rendersphere.app">Support</a>
-                        <a class="link-button" href="/legal/terms">Terms</a>
-                        <a class="link-button" href="/legal/privacy">Privacy</a>
-                    </div>
-                </div>
-
-                <div class="panel">
-                    <div class="panel-head">
-                        <div>
-                            <h2>API key</h2>
-                            <p class="muted">Paste this into the Blender add-on preferences.</p>
-                        </div>
-                    </div>
-                    <div class="keybox">
-                        <input id="apiKey" type="password" readonly placeholder="Generate a key to connect Blender" />
-                        <button id="copyKeyButton" class="button" type="button">Copy</button>
-                    </div>
-                    <div class="button-row">
-                        <button id="showKeyButton" class="button" type="button">Show</button>
-                        <button id="newKeyButton" class="button primary" type="button">New key</button>
-                    </div>
-                    <div id="keyStatus" class="status" role="status"></div>
-                </div>
-
-                <div class="panel">
-                    <div class="panel-head">
-                        <div>
-                            <h2>Recent jobs</h2>
-                            <p class="muted">Only jobs submitted by this account appear here.</p>
-                        </div>
-                        <button id="refreshJobsButton" class="button" type="button">Refresh</button>
-                    </div>
-                    <div id="jobs" class="job-list"></div>
-                    <div id="jobsStatus" class="status" role="status"></div>
-                </div>
-            </section>
         </main>
     </div>
 
     <script>
         const state = {
             mode: 'register',
-            user: null,
             config: null,
-            apiKeyVisible: false,
         };
 
         const els = {
-            signedOutView: document.querySelector('#signedOutView'),
-            dashboardView: document.querySelector('#dashboardView'),
-            accountLabel: document.querySelector('#accountLabel'),
-            logoutButton: document.querySelector('#logoutButton'),
             registerTab: document.querySelector('#registerTab'),
             loginTab: document.querySelector('#loginTab'),
             authTitle: document.querySelector('#authTitle'),
@@ -150,24 +78,11 @@
             password: document.querySelector('#password'),
             inviteLabel: document.querySelector('#inviteLabel'),
             inviteCode: document.querySelector('#inviteCode'),
-            apiKey: document.querySelector('#apiKey'),
-            copyKeyButton: document.querySelector('#copyKeyButton'),
-            showKeyButton: document.querySelector('#showKeyButton'),
-            newKeyButton: document.querySelector('#newKeyButton'),
-            keyStatus: document.querySelector('#keyStatus'),
-            creditsRemaining: document.querySelector('#creditsRemaining'),
-            maxUpload: document.querySelector('#maxUpload'),
-            maxFrames: document.querySelector('#maxFrames'),
-            maxActiveJobs: document.querySelector('#maxActiveJobs'),
-            supportLink: document.querySelector('#supportLink'),
-            refreshJobsButton: document.querySelector('#refreshJobsButton'),
-            jobs: document.querySelector('#jobs'),
-            jobsStatus: document.querySelector('#jobsStatus'),
         };
 
-        function setStatus(el, message, isError = false) {
-            el.textContent = message || '';
-            el.classList.toggle('error', Boolean(isError));
+        function setStatus(message, isError = false) {
+            els.authStatus.textContent = message || '';
+            els.authStatus.classList.toggle('error', Boolean(isError));
         }
 
         async function api(path, options = {}) {
@@ -176,30 +91,6 @@
             const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.error || 'Request failed');
             return data;
-        }
-
-        async function loadConfig() {
-            if (state.config) return state.config;
-            state.config = await api('/api/config');
-            return state.config;
-        }
-
-        function formatBytes(bytes) {
-            if (!Number.isFinite(bytes)) return '-';
-            if (bytes >= 1024 * 1024 * 1024) {
-                return `${Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10} GB`;
-            }
-            return `${Math.round(bytes / (1024 * 1024))} MB`;
-        }
-
-        function renderUsage() {
-            const limits = state.config?.limits || {};
-            els.creditsRemaining.textContent = state.user?.creditsRemaining ?? '-';
-            els.maxUpload.textContent = formatBytes(limits.maxUploadBytes);
-            els.maxFrames.textContent = limits.maxAnimationFrames ?? '-';
-            els.maxActiveJobs.textContent = limits.maxConcurrentJobsPerUser ?? '-';
-            const supportEmail = state.config?.supportEmail || 'support@rendersphere.app';
-            els.supportLink.href = `mailto:${supportEmail}`;
         }
 
         function setMode(mode) {
@@ -212,76 +103,25 @@
             els.password.autocomplete = isRegister ? 'new-password' : 'current-password';
             els.inviteLabel.hidden = !(isRegister && state.config?.inviteRequired);
             els.inviteCode.required = isRegister && Boolean(state.config?.inviteRequired);
-            setStatus(els.authStatus, '');
+            setStatus('');
         }
 
-        function renderAuth() {
-            const signedIn = Boolean(state.user);
-            els.signedOutView.style.display = signedIn ? 'none' : 'grid';
-            els.dashboardView.classList.toggle('active', signedIn);
-            els.logoutButton.hidden = !signedIn;
-            els.accountLabel.textContent = signedIn ? state.user.email : 'Not signed in';
-            if (signedIn) renderUsage();
-        }
-
-        function saveSession(user) {
-            state.user = user;
-            renderAuth();
-        }
-
-        function clearSession() {
-            state.user = null;
-            state.apiKeyVisible = false;
-            els.apiKey.value = '';
-            renderAuth();
-        }
-
-        async function loadMe() {
+        async function init() {
             try {
-                await loadConfig();
-                const data = await api('/api/auth/me');
-                state.user = data.user;
-                renderAuth();
-                await loadJobs();
+                await api('/api/auth/me');
+                window.location.replace('/app');
+                return;
             } catch {
-                clearSession();
+                // Continue in signed-out state.
             }
-        }
 
-        async function loadJobs() {
-            setStatus(els.jobsStatus, 'Loading jobs...');
             try {
-                const data = await api('/api/jobs');
-                els.jobs.innerHTML = '';
-                if (!data.jobs.length) {
-                    els.jobs.innerHTML = '<div class="muted">No jobs yet.</div>';
-                } else {
-                    for (const job of data.jobs) {
-                        const row = document.createElement('div');
-                        row.className = 'job-row';
-
-                        const left = document.createElement('div');
-                        const id = document.createElement('div');
-                        id.className = 'job-id';
-                        id.textContent = job.jobId;
-                        const meta = document.createElement('div');
-                        meta.className = 'subtle';
-                        meta.style.fontSize = '12px';
-                        meta.textContent = new Date(job.createdAt).toLocaleString();
-                        left.append(id, meta);
-
-                        const pill = document.createElement('div');
-                        pill.className = `pill ${job.status === 'FAILED' ? 'failed' : job.status === 'COMPLETED' || job.status === 'CANCELLED' ? '' : 'pending'}`;
-                        pill.textContent = job.status || 'SUBMITTED';
-
-                        row.append(left, pill);
-                        els.jobs.append(row);
-                    }
-                }
-                setStatus(els.jobsStatus, '');
-            } catch (error) {
-                setStatus(els.jobsStatus, error.message, true);
+                state.config = await api('/api/config');
+            } catch {
+                state.config = null;
             }
+
+            setMode('register');
         }
 
         els.registerTab.addEventListener('click', () => setMode('register'));
@@ -289,81 +129,30 @@
 
         els.authForm.addEventListener('submit', async (event) => {
             event.preventDefault();
-            setStatus(els.authStatus, state.mode === 'register' ? 'Creating account...' : 'Signing in...');
+            setStatus(state.mode === 'register' ? 'Creating account...' : 'Signing in...');
 
             try {
                 const body = {
                     email: els.email.value,
                     password: els.password.value,
                 };
+
                 if (state.mode === 'register' && state.config?.inviteRequired) {
                     body.inviteCode = els.inviteCode.value;
                 }
 
-                const data = await api(`/api/auth/${state.mode}`, {
+                await api(`/api/auth/${state.mode}`, {
                     method: 'POST',
                     body: JSON.stringify(body),
                 });
-                saveSession(data.user);
-                els.email.value = '';
-                els.password.value = '';
-                els.inviteCode.value = '';
-                if (data.apiKey) {
-                    els.apiKey.value = data.apiKey;
-                    state.apiKeyVisible = true;
-                    els.apiKey.type = 'text';
-                    els.showKeyButton.textContent = 'Hide';
-                    setStatus(els.keyStatus, 'API key generated.');
-                }
-                await loadMe();
+
+                window.location.replace('/app');
             } catch (error) {
-                setStatus(els.authStatus, error.message, true);
+                setStatus(error.message, true);
             }
         });
 
-        els.logoutButton.addEventListener('click', async () => {
-            try {
-                await api('/api/auth/logout', { method: 'POST', body: '{}' });
-            } catch {
-                // Local logout still clears the browser session.
-            }
-            clearSession();
-        });
-
-        els.newKeyButton.addEventListener('click', async () => {
-            setStatus(els.keyStatus, 'Generating key...');
-            try {
-                const data = await api('/api/auth/api-key', { method: 'POST', body: '{}' });
-                els.apiKey.value = data.apiKey;
-                els.apiKey.type = 'text';
-                state.apiKeyVisible = true;
-                els.showKeyButton.textContent = 'Hide';
-                setStatus(els.keyStatus, 'New API key generated.');
-            } catch (error) {
-                setStatus(els.keyStatus, error.message, true);
-            }
-        });
-
-        els.copyKeyButton.addEventListener('click', async () => {
-            if (!els.apiKey.value) return;
-            await navigator.clipboard.writeText(els.apiKey.value);
-            setStatus(els.keyStatus, 'Copied.');
-        });
-
-        els.showKeyButton.addEventListener('click', () => {
-            state.apiKeyVisible = !state.apiKeyVisible;
-            els.apiKey.type = state.apiKeyVisible ? 'text' : 'password';
-            els.showKeyButton.textContent = state.apiKeyVisible ? 'Hide' : 'Show';
-        });
-
-        els.refreshJobsButton.addEventListener('click', loadJobs);
-
-        loadConfig()
-            .catch(() => null)
-            .finally(() => {
-                setMode('register');
-                loadMe();
-            });
+        init();
     </script>
 </body>
 </html>

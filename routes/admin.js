@@ -34,7 +34,7 @@ function createAdminRouter({
         maxAnimationFrames: config.maxAnimationFrames,
         maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
         maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
-        freeRenderCredits: config.freeRenderCredits,
+        starterBalanceUsd: 0,
         jobRecordRetentionDays: config.jobRecordRetentionDays,
       },
     });
@@ -68,7 +68,7 @@ function createAdminRouter({
         fileKey: job.fileKey,
         status: job.status,
         frameCount: job.frameCount,
-        creditsCharged: job.creditsCharged,
+        billableSeconds: job.billableSeconds || 0,
         resultKey: job.resultKey,
         error: job.error,
         createdAt: job.createdAt,

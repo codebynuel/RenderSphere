@@ -10,7 +10,9 @@ function createAuthRouter({
   createSessionForUser,
   hashPassword,
   hashToken,
+  normalizeAccessKeys,
   normalizeEmail,
+  publicAccessKey,
   publicUser,
   readStore,
   requireAuth,
@@ -52,14 +54,16 @@ function createAuthRouter({
           passwordSalt: passwordHash.salt,
           apiKeyHash: null,
           apiKeyUpdatedAt: null,
-          creditsRemaining: config.freeRenderCredits,
+          accessKeys: [],
+          starterBalanceUsd: 0,
           createdAt: nowIso(),
         };
-        const apiKey = await createApiKeyForUser(store, user);
+        await createApiKeyForUser(store, user);
+        const createdAccessKey = publicAccessKey(normalizeAccessKeys(user).at(-1));
         const token = await createSessionForUser(store, user.id);
         store.users.push(user);
 
-        return { user: publicUser(user), token, apiKey };
+        return { user: publicUser(user), token, accessKey: createdAccessKey };
       });
 
       if (result.error) return res.status(409).json({ error: result.error });
@@ -104,12 +108,62 @@ function createAuthRouter({
     res.json({ user: publicUser(req.user), authType: req.authType });
   });
 
+  router.get('/access-keys', requireAuth, async (req, res) => {
+    const store = await readStore();
+    const user = store.users.find((item) => item.id === req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    res.json({ accessKeys: normalizeAccessKeys(user).map(publicAccessKey) });
+  });
+
+  router.post('/access-keys', accountRateLimit, requireAuth, async (req, res) => {
+    const requestedName = String(req.body.name || '').trim();
+    const result = await updateStore(async (store) => {
+      const user = store.users.find((item) => item.id === req.user.id);
+      if (!user) return null;
+      const accessKey = await createApiKeyForUser(store, user);
+      const created = normalizeAccessKeys(user).at(-1);
+      if (created && requestedName) {
+        created.name = requestedName.slice(0, 80);
+      }
+      return { accessKey: publicAccessKey(created) };
+    });
+
+    if (!result) return res.status(404).json({ error: 'User not found' });
+    res.json(result);
+  });
+
+  router.delete('/access-keys/:accessKeyId', accountRateLimit, requireAuth, async (req, res) => {
+    const { accessKeyId } = req.params;
+    const result = await updateStore(async (store) => {
+      const user = store.users.find((item) => item.id === req.user.id);
+      if (!user) return null;
+
+      const accessKeys = normalizeAccessKeys(user);
+      const nextAccessKeys = accessKeys.filter((accessKey) => accessKey.id !== accessKeyId);
+      if (nextAccessKeys.length === accessKeys.length) {
+        return { notFound: true };
+      }
+
+      user.accessKeys = nextAccessKeys;
+      return { success: true };
+    });
+
+    if (!result) return res.status(404).json({ error: 'User not found' });
+    if (result.notFound) return res.status(404).json({ error: 'Access key not found' });
+    res.json({ success: true });
+  });
+
   router.post('/api-key', accountRateLimit, requireAuth, async (req, res) => {
     const result = await updateStore(async (store) => {
       const user = store.users.find((item) => item.id === req.user.id);
       if (!user) return null;
-      const apiKey = await createApiKeyForUser(store, user);
-      return { apiKey, updatedAt: user.apiKeyUpdatedAt };
+      const accessKey = await createApiKeyForUser(store, user);
+      const created = normalizeAccessKeys(user).at(-1);
+      return {
+        apiKey: accessKey,
+        accessKey: publicAccessKey(created),
+      };
     });
 
     if (!result) return res.status(404).json({ error: 'User not found' });

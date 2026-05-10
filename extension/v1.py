@@ -294,8 +294,8 @@ class RENDERSPHERE_AddonPreferences(bpy.types.AddonPreferences):
         default=DEFAULT_SERVER_URL,
     )
     api_key: bpy.props.StringProperty(
-        name="API Key",
-        description="RenderSphere API key from your account dashboard",
+        name="Access Key",
+        description="RenderSphere access key from your dashboard",
         default="",
         subtype='PASSWORD',
     )
@@ -324,7 +324,7 @@ class RENDERSPHERE_OT_test_connection(bpy.types.Operator):
         global current_error_msg
 
         if not get_api_key(context):
-            current_error_msg = "Add your RenderSphere API key before testing."
+            current_error_msg = "Add your RenderSphere access key before testing."
             self.report({'ERROR'}, current_error_msg)
             set_status("Render Failed")
             return {'CANCELLED'}
@@ -392,7 +392,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         scene = context.scene
         server_url = get_server_url(context)
         if not get_api_key(context):
-            current_error_msg = "Add your RenderSphere API key in the add-on preferences."
+            current_error_msg = "Add your RenderSphere access key in the add-on preferences."
             set_status("Render Failed")
             return {'CANCELLED'}
 

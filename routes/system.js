@@ -26,7 +26,7 @@ function createSystemRouter({ config, getStoreDbName, pingStore }) {
   router.get('/api/config', (req, res) => {
     res.json({
       supportEmail: config.supportEmail,
-      freeRenderCredits: config.freeRenderCredits,
+      starterBalanceUsd: 0,
       inviteRequired: Boolean(config.inviteCode),
       limits: {
         maxUploadBytes: config.maxUploadBytes,

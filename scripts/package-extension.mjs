@@ -123,7 +123,7 @@ const readme = Buffer.from(
     'RenderSphere Blender Add-on',
     '',
     'Install this zip from Blender: Edit > Preferences > Add-ons > Install.',
-    'After enabling it, paste your RenderSphere API key into the add-on preferences.',
+    'After enabling it, paste your RenderSphere access key into the add-on preferences.',
     publicUrl ? `Default gateway URL in this package: ${publicUrl}` : 'Default gateway URL in this package: http://localhost:3000',
     '',
   ].join('\n')

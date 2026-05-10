@@ -84,8 +84,8 @@ try {
   }
 
   const registered = registerResult.data;
-  if (!registered.token || !registered.apiKey || registered.user.email !== email) {
-    throw new Error('Register response did not include the expected session, API key, and user.');
+  if (!registered.token || !registered.accessKey || registered.user.email !== email) {
+    throw new Error('Register response did not include the expected session, access key, and user.');
   }
 
   const sessionCookie = registerResult.response.headers.get('set-cookie')?.split(';')[0];
@@ -102,7 +102,7 @@ try {
     headers: { 'Content-Type': 'application/json', ...cookieHeaders },
     body: JSON.stringify({
       fileName: 'too-big.blend',
-      fileSizeBytes: 501 * 1024 * 1024,
+      fileSizeBytes: 11 * 1024 * 1024 * 1024,
     }),
   });
   if (oversized.status !== 413) {

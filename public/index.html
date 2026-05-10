@@ -13,10 +13,7 @@
         <nav class="nav">
             <a class="brand" href="/">RenderSphere</a>
             <div class="nav-actions">
-                <a class="nav-link" href="#workflow">Workflow</a>
-                <a class="nav-link" href="/legal/terms">Terms</a>
-                <a class="link-button" href="/auth">Open dashboard</a>
-                <a class="icon-button" href="/auth" aria-label="Open dashboard"><span></span></a>
+                <a id="dashboardLink" class="link-button" href="/auth">Login/Register</a>
             </div>
         </nav>
 
@@ -27,17 +24,17 @@
                     result back without leaving your project.</p>
 
                 <ul class="check-list">
-                    <li>One API key for the add-on</li>
+                    <li>Access keys for Blender and automation</li>
                     <li>Still frames and zipped animation output</li>
                 </ul>
 
                 <div class="hero-actions">
                     <a class="link-button primary" href="/downloads/rendersphere-blender-addon.zip">Download add-on</a>
-                    <a class="link-button" href="/auth">Create account</a>
+                    <a id="heroAccountLink" class="link-button" href="/auth">Login/Register</a>
                 </div>
             </div>
 
-            <div class="orbit-note">MVP access<br />with render<br />credits</div>
+            <div class="orbit-note">Direct R2<br />uploads and<br />cloud renders</div>
         </main>
 
         <section class="screenshot-grid" aria-label="Product screenshots">
@@ -49,11 +46,11 @@
         </section>
 
         <section id="workflow" class="section">
-            <h2>Simple enough to test. Guarded enough to ship.</h2>
+            <h2>Built for direct uploads, fast dispatch, and clean delivery.</h2>
             <div class="steps">
                 <div class="card">
                     <strong>01 / Connect</strong>
-                    <p>Install the add-on, paste your dashboard API key, and test the connection from Blender
+                    <p>Install the add-on, paste your dashboard access key, and test the connection from Blender
                         preferences.</p>
                 </div>
                 <div class="card">
@@ -82,6 +79,32 @@
             </div>
         </footer>
     </div>
+
+    <script>
+        const dashboardLink = document.querySelector('#dashboardLink');
+        const heroAccountLink = document.querySelector('#heroAccountLink');
+
+        async function initAuthCta() {
+            try {
+                const response = await fetch('/api/auth/me', { credentials: 'same-origin' });
+                if (!response.ok) throw new Error('Not signed in');
+
+                dashboardLink.href = '/app';
+                dashboardLink.textContent = 'Dashboard';
+
+                heroAccountLink.href = '/app';
+                heroAccountLink.textContent = 'Open dashboard';
+            } catch {
+                dashboardLink.href = '/auth';
+                dashboardLink.textContent = 'Login/Register';
+
+                heroAccountLink.href = '/auth';
+                heroAccountLink.textContent = 'Login/Register';
+            }
+        }
+
+        initAuthCta();
+    </script>
 </body>
 
 </html>

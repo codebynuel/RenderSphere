@@ -1,0 +1,28 @@
+import { motion } from 'framer-motion';
+
+export default function Privacy() {
+    return (
+        <main className="legal">
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5 }}
+            >
+                <h1>Privacy Policy</h1>
+                <p>How we handle your data.</p>
+
+                <h2>Information Collection</h2>
+                <p>We collect your email address for account management. Render jobs generate metadata (job IDs, duration, costs) which we store to provide you with your dashboard history.</p>
+
+                <h2>File Storage</h2>
+                <p>Your uploaded .blend files and completed renders are stored in our Cloudflare R2 buckets. These files are strictly used for your render jobs and are not accessed for any other purpose.</p>
+
+                <h2>Third-Party Services</h2>
+                <p>We use RunPod to process your renders. When a job is dispatched, your file key and render settings are sent to RunPod infrastructure. No personally identifiable information (like your email) is sent to RunPod.</p>
+                
+                <h2>Data Deletion</h2>
+                <p>You can request account deletion at any time by contacting support. This will remove your account details, access keys, and associated file references from our database.</p>
+            </motion.div>
+        </main>
+    );
+}

@@ -847,6 +847,15 @@ app.post('/api/cancel-job', requireAuth, async (req, res) => {
   }
 });
 
+// SPA fallback routing
+app.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api')) {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  } else {
+    next();
+  }
+});
+
 const port = Number(process.env.PORT || 3000);
 app.listen(port, () => console.log(`Gateway running on port ${port}`));
 

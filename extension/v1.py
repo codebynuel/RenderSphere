@@ -118,6 +118,20 @@ def auth_headers(context=None, content_type=None):
     return headers
 
 
+def resolve_download_url(download_url, context=None):
+    if not download_url:
+        return ""
+    if download_url.startswith("/"):
+        return f"{get_server_url(context)}{download_url}"
+    return download_url
+
+
+def download_authenticated_file(download_url, save_path, context=None):
+    req = urllib.request.Request(resolve_download_url(download_url, context), headers=auth_headers(context))
+    with urllib.request.urlopen(req) as response, open(save_path, 'wb') as output_file:
+        output_file.write(response.read())
+
+
 def describe_url_error(error):
     if isinstance(error, urllib.error.HTTPError):
         try:
@@ -244,16 +258,22 @@ def check_job_status():
                 elif status == "COMPLETED":
                     set_status("Downloading Render...")
                     download_url = data.get("downloadUrl")
+                    if not download_url:
+                        current_status = "Render Failed"
+                        current_error_msg = "Render completed but no download URL was returned."
+                        current_job_id = None
+                        force_ui_redraw()
+                        return None
 
                     if is_current_job_animation:
                         output_dir = get_animation_output_dir()
                         os.makedirs(output_dir, exist_ok=True)
                         zip_path = os.path.join(output_dir, f"animation_{current_job_id[:6]}.zip")
-                        urllib.request.urlretrieve(download_url, zip_path)
+                        download_authenticated_file(download_url, zip_path)
                         current_status = "Zip saved."
                     else:
                         save_path = os.path.join(bpy.app.tempdir, f"cloud_render_final.{current_download_extension}")
-                        urllib.request.urlretrieve(download_url, save_path)
+                        download_authenticated_file(download_url, save_path)
                         img = bpy.data.images.load(save_path)
 
                         for window in bpy.context.window_manager.windows:

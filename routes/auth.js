@@ -16,6 +16,7 @@ function createAuthRouter({
   publicUser,
   readStore,
   requireAuth,
+  sessionCookieName,
   setSessionCookie,
   updateStore,
   verifyPassword,
@@ -95,11 +96,26 @@ function createAuthRouter({
     }
   });
 
-  router.post('/logout', requireAuth, async (req, res) => {
-    const tokenHash = hashToken(req.authToken);
-    await updateStore(async (store) => {
-      store.sessions = store.sessions.filter((session) => session.tokenHash !== tokenHash);
-    });
+  router.post('/logout', async (req, res) => {
+    const bearerToken = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+    const cookieMatch = req.headers.cookie?.match(new RegExp(`${sessionCookieName}=([^;]+)`));
+    let token = req.authToken || bearerToken || null;
+
+    if (!token && cookieMatch?.[1]) {
+      try {
+        token = decodeURIComponent(cookieMatch[1]);
+      } catch {
+        token = cookieMatch[1];
+      }
+    }
+
+    if (token) {
+      const tokenHash = hashToken(token);
+      await updateStore(async (store) => {
+        store.sessions = store.sessions.filter((session) => session.tokenHash !== tokenHash);
+      });
+    }
+
     clearSessionCookie(req, res);
     res.json({ success: true });
   });

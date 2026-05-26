@@ -180,6 +180,27 @@ function readInteger(value, fallback) {
   return numberValue;
 }
 
+function roundMoney(value) {
+  return Number(Number(value || 0).toFixed(6));
+}
+
+function contentTypeForKey(key) {
+  const extension = path.extname(key || '').toLowerCase();
+  if (extension === '.png') return 'image/png';
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
+  if (extension === '.exr') return 'image/aces';
+  if (extension === '.zip') return 'application/zip';
+  return 'application/octet-stream';
+}
+
+function attachmentFileName(key) {
+  return path.basename(key || 'render-output').replace(/[^a-zA-Z0-9._-]/g, '_') || 'render-output';
+}
+
+function renderedFileDownloadPath(jobId) {
+  return `/api/rendered-files/${encodeURIComponent(jobId)}/download`;
+}
+
 function activeJobCount(store, userId) {
   return store.jobs.filter((job) => job.userId === userId && ACTIVE_JOB_STATUSES.has(job.status)).length;
 }
@@ -278,7 +299,18 @@ function setSessionCookie(req, res, token) {
 }
 
 function clearSessionCookie(req, res) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=; ${sessionCookieOptions(req, 0)}`);
+  const baseOptions = [
+    'Path=/',
+    'Max-Age=0',
+    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    'HttpOnly',
+    'SameSite=Lax',
+  ].join('; ');
+
+  res.setHeader('Set-Cookie', [
+    `${SESSION_COOKIE_NAME}=; ${baseOptions}`,
+    `${SESSION_COOKIE_NAME}=; ${baseOptions}; Secure`,
+  ]);
 }
 
 async function authenticateToken(token) {
@@ -364,6 +396,101 @@ async function createApiKeyForUser(store, user) {
   return accessKey;
 }
 
+function getRunpodResultKey(data) {
+  return data?.output?.result_key || data?.output?.resultKey || data?.output?.key || data?.result_key || data?.resultKey || null;
+}
+
+function getRunpodExecutionSeconds(data, job) {
+  const executionMs = Number(data?.executionTime ?? data?.output?.executionTime ?? data?.output?.execution_time);
+  if (Number.isFinite(executionMs) && executionMs > 0) {
+    return Math.max(1, Math.ceil(executionMs / 1000));
+  }
+
+  const durationSeconds = Number(data?.durationSeconds ?? data?.duration_seconds ?? data?.output?.durationSeconds ?? data?.output?.duration_seconds);
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    return Math.max(1, Math.ceil(durationSeconds));
+  }
+
+  const startedAt = new Date(job.createdAt || Date.now()).getTime();
+  if (!Number.isFinite(startedAt)) return 1;
+  return Math.max(1, Math.ceil((Date.now() - startedAt) / 1000));
+}
+
+async function fetchRunpodJobStatus(jobId) {
+  const runpodUrl = `https://api.runpod.ai/v2/${process.env.RUNPOD_ENDPOINT_ID}/status/${encodeURIComponent(jobId)}`;
+  const response = await fetch(runpodUrl, {
+    headers: { 'Authorization': `Bearer ${process.env.RUNPOD_API_KEY}` },
+  });
+  const data = await readResponseJson(response);
+
+  if (!response.ok) {
+    throw new Error(data.error || data.message || `RunPod status failed with ${response.status}`);
+  }
+
+  return data;
+}
+
+async function persistRunpodStatus(userId, jobId, rpData) {
+  const status = rpData.status || 'UNKNOWN';
+  const resultKey = getRunpodResultKey(rpData);
+
+  await updateStore(async (nextStore) => {
+    const nextJob = nextStore.jobs.find((item) => item.jobId === jobId && item.userId === userId);
+    if (!nextJob) return;
+
+    const previousStatus = nextJob.status;
+    nextJob.status = status;
+    nextJob.lastCheckedAt = nowIso();
+
+    if (status === 'COMPLETED') {
+      nextJob.resultKey = resultKey || nextJob.resultKey || null;
+      nextJob.completedAt = nextJob.completedAt || nowIso();
+      nextJob.error = null;
+
+      if (nextJob.resultKey && !nextJob.billedAt) {
+        const billableSeconds = getRunpodExecutionSeconds(rpData, nextJob);
+        const priceUsd = roundMoney(billableSeconds * config.renderPricePerSecondUsd);
+        const user = nextStore.users.find((item) => item.id === userId);
+
+        nextJob.billableSeconds = billableSeconds;
+        nextJob.priceUsd = priceUsd;
+        nextJob.pricePerSecondUsd = config.renderPricePerSecondUsd;
+        nextJob.billedAt = nowIso();
+
+        if (user) {
+          const currentBalance = typeof user.starterBalanceUsd === 'number' ? user.starterBalanceUsd : 0;
+          user.starterBalanceUsd = roundMoney(currentBalance - priceUsd);
+        }
+      }
+    } else if (status === 'FAILED') {
+      nextJob.error = rpData.error || rpData.output?.message || rpData.output?.error || 'Unknown RunPod error';
+      nextJob.failedAt = nextJob.failedAt || nowIso();
+    } else if (status === 'CANCELLED') {
+      nextJob.cancelledAt = nextJob.cancelledAt || nowIso();
+    } else if (previousStatus === 'COMPLETED' && !nextJob.completedAt) {
+      nextJob.completedAt = nowIso();
+    }
+  });
+}
+
+async function syncActiveJobsForUser(userId) {
+  const store = await readStore();
+  const syncableJobs = store.jobs.filter((job) => {
+    if (job.userId !== userId || !job.jobId) return false;
+    if (ACTIVE_JOB_STATUSES.has(job.status)) return true;
+    return job.status === 'COMPLETED' && !job.resultKey;
+  });
+
+  await Promise.all(syncableJobs.map(async (job) => {
+    try {
+      const rpData = await fetchRunpodJobStatus(job.jobId);
+      await persistRunpodStatus(userId, job.jobId, rpData);
+    } catch (error) {
+      console.error(`Could not sync RunPod job ${job.jobId}:`, error);
+    }
+  }));
+}
+
 validateRequiredEnv();
 await connectStore({ uri: MONGODB_URI, dbName: MONGODB_DB_NAME });
 
@@ -408,45 +535,83 @@ app.use('/api/auth', createAuthRouter({
   publicUser,
   readStore,
   requireAuth,
+  sessionCookieName: SESSION_COOKIE_NAME,
   setSessionCookie,
   updateStore,
   verifyPassword,
 }));
 
 app.get('/api/jobs', requireAuth, async (req, res) => {
+  await syncActiveJobsForUser(req.user.id);
+
   const store = await readStore();
+  const user = store.users.find((item) => item.id === req.user.id) || req.user;
   const jobs = store.jobs
     .filter((job) => job.userId === req.user.id)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .map(({ runpodPayload, ...job }) => job);
-  res.json({ jobs });
+  res.json({ jobs, user: publicUser(user) });
 });
 
 app.get('/api/rendered-files', requireAuth, async (req, res) => {
+  await syncActiveJobsForUser(req.user.id);
+
   const store = await readStore();
+  const user = store.users.find((item) => item.id === req.user.id) || req.user;
   const completedJobs = store.jobs
     .filter((job) => job.userId === req.user.id && job.status === 'COMPLETED' && job.resultKey)
     .sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
 
-  const files = await Promise.all(completedJobs.map(async (job) => {
+  const files = completedJobs.map((job) => ({
+    jobId: job.jobId,
+    resultKey: job.resultKey,
+    fileName: job.resultKey.split('/').pop(),
+    createdAt: job.createdAt,
+    completedAt: job.completedAt || null,
+    outputFormat: job.settings?.outputFormat || job.settings?.output_format || null,
+    billableSeconds: job.billableSeconds || 0,
+    priceUsd: typeof job.priceUsd === 'number' ? job.priceUsd : 0,
+    downloadUrl: renderedFileDownloadPath(job.jobId),
+  }));
+
+  res.json({ files, user: publicUser(user) });
+});
+
+app.get('/api/rendered-files/:jobId/download', requireAuth, async (req, res) => {
+  const { jobId } = req.params;
+  const store = await readStore();
+  const job = store.jobs.find((item) => item.jobId === jobId && item.userId === req.user.id);
+
+  if (!job || job.status !== 'COMPLETED' || !job.resultKey) {
+    return res.status(404).json({ error: 'Rendered file not found' });
+  }
+
+  try {
     const command = new GetObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
       Key: job.resultKey,
     });
-    const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    const object = await s3Client.send(command);
+    const fileName = attachmentFileName(job.resultKey);
 
-    return {
-      jobId: job.jobId,
-      resultKey: job.resultKey,
-      fileName: job.resultKey.split('/').pop(),
-      createdAt: job.createdAt,
-      completedAt: job.completedAt || null,
-      outputFormat: job.settings?.outputFormat || job.settings?.output_format || null,
-      downloadUrl,
-    };
-  }));
+    res.setHeader('Content-Type', object.ContentType || contentTypeForKey(job.resultKey));
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (object.ContentLength) {
+      res.setHeader('Content-Length', String(object.ContentLength));
+    }
 
-  res.json({ files });
+    if (object.Body && typeof object.Body.pipe === 'function') {
+      object.Body.pipe(res);
+      return;
+    }
+
+    const body = object.Body?.transformToByteArray ? Buffer.from(await object.Body.transformToByteArray()) : Buffer.alloc(0);
+    res.end(body);
+  } catch (error) {
+    console.error(`Could not proxy rendered file ${job.resultKey}:`, error);
+    res.status(502).json({ error: 'Rendered file is temporarily unavailable' });
+  }
 });
 
 app.get('/api/job-status/:jobId', requireAuth, async (req, res) => {
@@ -458,49 +623,21 @@ app.get('/api/job-status/:jobId', requireAuth, async (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
 
-  const runpodUrl = `https://api.runpod.ai/v2/${process.env.RUNPOD_ENDPOINT_ID}/status/${encodeURIComponent(jobId)}`;
-
   try {
-    const rpRes = await fetch(runpodUrl, {
-      headers: { 'Authorization': `Bearer ${process.env.RUNPOD_API_KEY}` }
-    });
-    const rpData = await readResponseJson(rpRes);
+    const rpData = await fetchRunpodJobStatus(jobId);
 
     if (rpData.status === 'COMPLETED') {
-      const resultKey = rpData.output?.result_key;
+      const resultKey = getRunpodResultKey(rpData);
       if (!resultKey) return res.status(502).json({ error: 'RunPod completed without a result key' });
 
-      await updateStore(async (nextStore) => {
-        const nextJob = nextStore.jobs.find((item) => item.jobId === jobId && item.userId === req.user.id);
-        if (nextJob) {
-          nextJob.status = 'COMPLETED';
-          nextJob.resultKey = resultKey;
-          nextJob.completedAt = nowIso();
-        }
-      });
+      await persistRunpodStatus(req.user.id, jobId, rpData);
 
-      const command = new GetObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
-        Key: resultKey,
-      });
-      const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-
-      res.json({ status: 'COMPLETED', downloadUrl });
+      res.json({ status: 'COMPLETED', downloadUrl: renderedFileDownloadPath(jobId) });
     } else if (rpData.status === 'FAILED') {
-      await updateStore(async (nextStore) => {
-        const nextJob = nextStore.jobs.find((item) => item.jobId === jobId && item.userId === req.user.id);
-        if (nextJob) {
-          nextJob.status = 'FAILED';
-          nextJob.error = rpData.error || 'Unknown RunPod error';
-          nextJob.failedAt = nowIso();
-        }
-      });
+      await persistRunpodStatus(req.user.id, jobId, rpData);
       res.json({ status: 'FAILED', error: rpData.error });
     } else {
-      await updateStore(async (nextStore) => {
-        const nextJob = nextStore.jobs.find((item) => item.jobId === jobId && item.userId === req.user.id);
-        if (nextJob) nextJob.status = rpData.status || nextJob.status;
-      });
+      await persistRunpodStatus(req.user.id, jobId, rpData);
       res.json({
         status: rpData.status,
         stream: rpData.stream || []

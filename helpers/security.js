@@ -33,10 +33,13 @@ function requireSameOriginForBrowserWrites(req, res, next) {
 
   try {
     const originUrl = new URL(origin);
-    const expectedHost = req.get('x-forwarded-host') || req.get('host');
-    const expectedProtocol = req.get('x-forwarded-proto') || req.protocol;
+    const forwardedHost = req.get('x-forwarded-host');
+    const host = req.get('host');
+    const allowedHosts = [forwardedHost, host]
+      .filter(Boolean)
+      .flatMap((value) => value.split(',').map((part) => part.trim()));
 
-    if (originUrl.host === expectedHost && originUrl.protocol.replace(':', '') === expectedProtocol) {
+    if (allowedHosts.includes(originUrl.host)) {
       return next();
     }
   } catch {

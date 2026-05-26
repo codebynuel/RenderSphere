@@ -14,7 +14,7 @@
                 <span class="route-chip">/app</span>
                 <span id="balanceBadge" class="balance-chip" hidden>$0.00</span>
                 <span id="accountLabel" class="account-label">Not signed in</span>
-                <button id="logoutButton" class="button">Sign out</button>
+                <button id="logoutButton" class="button" type="button">Sign out</button>
             </div>
         </header>
 
@@ -125,6 +125,25 @@
         function formatBalance(value) {
             const amount = Number(value || 0);
             return `$${amount.toFixed(2)}`;
+        }
+
+        function formatUsd(value) {
+            const amount = Number(value || 0);
+            return amount > 0 && amount < 1 ? `$${amount.toFixed(4)}` : `$${amount.toFixed(2)}`;
+        }
+
+        function formatDuration(seconds) {
+            const totalSeconds = Math.max(0, Math.round(Number(seconds || 0)));
+            const minutes = Math.floor(totalSeconds / 60);
+            const remainingSeconds = totalSeconds % 60;
+            if (minutes <= 0) return `${remainingSeconds}s`;
+            return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`;
+        }
+
+        function applyUser(user) {
+            if (!user) return;
+            state.user = user;
+            renderHeader();
         }
 
         function setEmptyMessage(container, message) {
@@ -255,24 +274,33 @@
                 const completed = document.createElement('div');
                 completed.className = 'subtle';
                 completed.textContent = `Completed ${formatDate(file.completedAt || file.createdAt)}`;
-                meta.append(title, completed);
+                const cost = document.createElement('div');
+                cost.className = 'subtle';
+                cost.textContent = `${formatDuration(file.billableSeconds)} render time / ${formatUsd(file.priceUsd)} deducted`;
+                meta.append(title, completed, cost);
 
                 const actions = document.createElement('div');
                 actions.className = 'button-row compact-row';
 
                 const openLink = document.createElement('a');
                 openLink.className = 'link-button';
-                openLink.href = file.downloadUrl;
+                openLink.href = file.downloadUrl || '#';
                 openLink.target = '_blank';
                 openLink.rel = 'noopener noreferrer';
                 openLink.textContent = 'Open file';
+                if (!file.downloadUrl) {
+                    openLink.setAttribute('aria-disabled', 'true');
+                    openLink.addEventListener('click', (event) => event.preventDefault());
+                }
 
                 const copyLinkButton = document.createElement('button');
                 copyLinkButton.className = 'button';
                 copyLinkButton.type = 'button';
                 copyLinkButton.textContent = 'Copy link';
+                copyLinkButton.disabled = !file.downloadUrl;
                 copyLinkButton.addEventListener('click', async () => {
-                    await navigator.clipboard.writeText(file.downloadUrl);
+                    if (!file.downloadUrl) return;
+                    await navigator.clipboard.writeText(new URL(file.downloadUrl, window.location.origin).href);
                     setStatus(els.filesStatus, `Copied link for ${file.fileName || 'file'}.`);
                 });
 
@@ -300,8 +328,14 @@
                 const meta = document.createElement('div');
                 meta.className = 'subtle';
                 meta.style.fontSize = '12px';
-                meta.textContent = formatDate(job.createdAt);
-                left.append(id, meta);
+                meta.textContent = `Submitted ${formatDate(job.createdAt)}`;
+                const billing = document.createElement('div');
+                billing.className = 'subtle';
+                billing.style.fontSize = '12px';
+                billing.textContent = job.status === 'COMPLETED'
+                    ? `${formatDuration(job.billableSeconds)} / ${formatUsd(job.priceUsd)} deducted`
+                    : 'Billing appears after completion';
+                left.append(id, meta, billing);
 
                 const pill = document.createElement('div');
                 pill.className = `pill ${job.status === 'FAILED' ? 'failed' : job.status === 'COMPLETED' || job.status === 'CANCELLED' ? '' : 'pending'}`;
@@ -313,18 +347,30 @@
         }
 
         async function loadAccessKeys() {
-            const data = await api('/api/auth/access-keys');
-            state.accessKeys = data.accessKeys || [];
-            renderAccessKeys();
+            setStatus(els.accessKeyStatus, 'Loading access keys...');
+            try {
+                const data = await api('/api/auth/access-keys');
+                state.accessKeys = data.accessKeys || [];
+                renderAccessKeys();
+                setStatus(els.accessKeyStatus, '');
+            } catch (error) {
+                setStatus(els.accessKeyStatus, error.message, true);
+            }
         }
 
         async function loadFiles() {
             setStatus(els.filesStatus, 'Loading files...');
             try {
                 const data = await api('/api/rendered-files');
+                applyUser(data.user);
                 state.files = data.files || [];
                 renderFiles();
-                setStatus(els.filesStatus, '');
+                const unavailableCount = state.files.filter((file) => file.downloadError).length;
+                setStatus(
+                    els.filesStatus,
+                    unavailableCount ? `${unavailableCount} download link${unavailableCount === 1 ? ' is' : 's are'} temporarily unavailable.` : '',
+                    Boolean(unavailableCount),
+                );
             } catch (error) {
                 setStatus(els.filesStatus, error.message, true);
             }
@@ -334,6 +380,7 @@
             setStatus(els.jobsStatus, 'Loading jobs...');
             try {
                 const data = await api('/api/jobs');
+                applyUser(data.user);
                 renderJobs(data.jobs || []);
                 setStatus(els.jobsStatus, '');
             } catch (error) {
@@ -344,21 +391,24 @@
         async function loadMe() {
             try {
                 const data = await api('/api/auth/me');
-                state.user = data.user;
-                renderHeader();
-                await Promise.all([loadAccessKeys(), loadFiles(), loadJobs()]);
+                applyUser(data.user);
+                loadAccessKeys();
+                loadFiles();
+                loadJobs();
             } catch {
                 window.location.replace('/auth');
             }
         }
 
         els.logoutButton.addEventListener('click', async () => {
+            els.logoutButton.disabled = true;
+            els.logoutButton.textContent = 'Signing out...';
             try {
                 await api('/api/auth/logout', { method: 'POST', body: '{}' });
             } catch {
                 // Ignore logout failures and proceed to auth page.
             }
-            window.location.replace('/auth');
+            window.location.href = '/auth';
         });
 
         els.accessKeyForm.addEventListener('submit', async (event) => {

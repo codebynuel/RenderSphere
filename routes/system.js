@@ -16,6 +16,7 @@ function createSystemRouter({ config, getStoreDbName, pingStore }) {
           maxAnimationFrames: config.maxAnimationFrames,
           maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
           maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
+          renderPricePerSecondUsd: config.renderPricePerSecondUsd,
         },
       });
     } catch {
@@ -35,6 +36,7 @@ function createSystemRouter({ config, getStoreDbName, pingStore }) {
         maxAnimationFrames: config.maxAnimationFrames,
         maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
         maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
+        renderPricePerSecondUsd: config.renderPricePerSecondUsd,
       },
     });
   });

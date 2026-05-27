@@ -118,21 +118,38 @@ def ensure_tmp_space(stage):
     print(f"/tmp free before {stage}: {free_mb} MB")
 
 
-def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold, camera, scene_name, force_cpu, allow_cpu_fallback, gpu_device_type):
+def build_blender_setup_script(render_settings):
     return f"""
 import bpy
 
-engine = {engine!r}
-samples = {samples}
-output_format = {output_format!r}
-resolution_pct = {resolution_pct}
-denoiser = {denoiser!r}
-noise_threshold = {noise_threshold}
-camera_name = {camera!r}
-scene_name = {scene_name!r}
-force_cpu = {force_cpu!r}
-allow_cpu_fallback = {allow_cpu_fallback!r}
-requested_gpu_device_type = {gpu_device_type!r}
+engine = {render_settings['engine']!r}
+samples = {render_settings['samples']}
+output_format = {render_settings['output_format']!r}
+resolution_pct = {render_settings['resolution_pct']}
+denoiser = {render_settings['denoiser']!r}
+noise_threshold = {render_settings['noise_threshold']}
+camera_name = {render_settings['camera']!r}
+scene_name = {render_settings['scene_name']!r}
+force_cpu = {render_settings['force_cpu']!r}
+allow_cpu_fallback = {render_settings['allow_cpu_fallback']!r}
+requested_gpu_device_type = {render_settings['gpu_device_type']!r}
+advanced_mode = {render_settings['advanced_mode']!r}
+transparent_film = {render_settings['transparent_film']!r}
+use_persistent_data = {render_settings['use_persistent_data']!r}
+view_transform = {render_settings['view_transform']!r}
+look = {render_settings['look']!r}
+exposure = {render_settings['exposure']}
+gamma = {render_settings['gamma']}
+max_bounces = {render_settings['max_bounces']}
+diffuse_bounces = {render_settings['diffuse_bounces']}
+glossy_bounces = {render_settings['glossy_bounces']}
+transmission_bounces = {render_settings['transmission_bounces']}
+transparent_bounces = {render_settings['transparent_bounces']}
+caustics_reflective = {render_settings['caustics_reflective']!r}
+caustics_refractive = {render_settings['caustics_refractive']!r}
+use_simplify = {render_settings['use_simplify']!r}
+simplify_subdivisions = {render_settings['simplify_subdivisions']}
+simplify_texture_limit = {render_settings['simplify_texture_limit']!r}
 
 target_scene = bpy.data.scenes.get(scene_name) if scene_name else bpy.context.scene
 if scene_name and target_scene is None:
@@ -159,6 +176,37 @@ scene.render.engine = engine
 scene.render.image_settings.file_format = output_format
 scene.render.resolution_percentage = resolution_pct
 
+if advanced_mode:
+    scene.render.film_transparent = transparent_film
+
+    if view_transform:
+        try:
+            scene.view_settings.view_transform = view_transform
+        except Exception as exc:
+            print(f"Could not set view transform {{view_transform}}: {{exc}}")
+    if look:
+        try:
+            scene.view_settings.look = look
+        except Exception as exc:
+            print(f"Could not set look {{look}}: {{exc}}")
+    scene.view_settings.exposure = exposure
+    scene.view_settings.gamma = gamma
+
+    try:
+        scene.render.use_persistent_data = use_persistent_data
+    except Exception as exc:
+        print(f"Could not set persistent data: {{exc}}")
+
+    scene.render.use_simplify = use_simplify
+    if use_simplify:
+        scene.render.simplify_subdivision_render = simplify_subdivisions
+        if simplify_texture_limit != 'OFF':
+            try:
+                scene.render.simplify_child_particles_render = simplify_subdivisions
+                scene.render.simplify_texture_limit_render = simplify_texture_limit
+            except Exception as exc:
+                print(f"Could not set texture simplify limit {{simplify_texture_limit}}: {{exc}}")
+
 if engine == 'CYCLES':
     scene.cycles.samples = samples
     scene.cycles.use_denoising = denoiser != 'NONE'
@@ -172,6 +220,21 @@ if engine == 'CYCLES':
         scene.cycles.use_adaptive_sampling = noise_threshold > 0.0
     if hasattr(scene.cycles, 'adaptive_threshold'):
         scene.cycles.adaptive_threshold = noise_threshold
+    if advanced_mode:
+        if hasattr(scene.cycles, 'max_bounces'):
+            scene.cycles.max_bounces = max_bounces
+        if hasattr(scene.cycles, 'diffuse_bounces'):
+            scene.cycles.diffuse_bounces = diffuse_bounces
+        if hasattr(scene.cycles, 'glossy_bounces'):
+            scene.cycles.glossy_bounces = glossy_bounces
+        if hasattr(scene.cycles, 'transmission_bounces'):
+            scene.cycles.transmission_bounces = transmission_bounces
+        if hasattr(scene.cycles, 'transparent_max_bounces'):
+            scene.cycles.transparent_max_bounces = transparent_bounces
+        if hasattr(scene.cycles, 'caustics_reflective'):
+            scene.cycles.caustics_reflective = caustics_reflective
+        if hasattr(scene.cycles, 'caustics_refractive'):
+            scene.cycles.caustics_refractive = caustics_refractive
 
     def use_cpu(reason):
         if force_cpu or allow_cpu_fallback:
@@ -261,18 +324,18 @@ def find_rendered_frame(output_dir, start_frame, extension):
     raise FileNotFoundError(f"Rendered frame not found for frame {frame_str}")
 
 
-def stream_blender_process(process, job, start_frame, end_frame, samples, is_animation):
+def stream_blender_process(process, job, start_frame, end_frame, frame_step, samples, is_animation):
     deadline = time.time() + RENDER_TIMEOUT_SECONDS
     last_update_time = 0
     current_frame_val = start_frame
     current_sample_val = 0
-    frame_count = max(1, end_frame - start_frame + 1 if is_animation else 1)
+    frame_count = max(1, ((end_frame - start_frame) // max(frame_step, 1)) + 1 if is_animation else 1)
     recent_output = []
 
     def progress_percent():
         sample_ratio = min(1.0, max(0.0, current_sample_val / max(1, samples)))
         if is_animation:
-            frame_index = min(frame_count - 1, max(0, current_frame_val - start_frame))
+            frame_index = min(frame_count - 1, max(0, (current_frame_val - start_frame) // max(frame_step, 1)))
             return min(99, int(((frame_index + sample_ratio) / frame_count) * 100))
         return min(99, int(sample_ratio * 100))
 
@@ -334,8 +397,12 @@ def stream_blender_process(process, job, start_frame, end_frame, samples, is_ani
             f"{tail[-2000:]}"
         )
 
+    completed_frame = start_frame
+    if is_animation:
+        completed_frame = start_frame + ((end_frame - start_frame) // max(frame_step, 1)) * max(frame_step, 1)
+
     runpod.serverless.progress_update(job, {
-        "current_frame": end_frame if is_animation else start_frame,
+        "current_frame": completed_frame,
         "current_sample": samples,
         "percent": 100,
     })
@@ -355,6 +422,8 @@ def render_job(job):
     start_frame = clamp_int(get_first(job_input, 'startFrame', 'start_frame', default=1), 0, 1000000, 1)
     requested_end_frame = clamp_int(get_first(job_input, 'endFrame', 'end_frame', default=start_frame), 0, 1000000, start_frame)
     end_frame = requested_end_frame if is_animation else start_frame
+    advanced_mode = normalize_bool(get_first(job_input, 'advancedMode', 'advanced_mode', default=False), False)
+    frame_step = clamp_int(get_first(job_input, 'frameStep', 'frame_step', default=1), 1, 1000, 1) if is_animation and advanced_mode else 1
 
     output_format = normalize_choice(
         get_first(job_input, 'output_format', 'outputFormat', default='PNG'),
@@ -381,7 +450,7 @@ def render_job(job):
         raise ValueError("endFrame must be greater than or equal to startFrame")
 
     output_extension = OUTPUT_EXTENSIONS[output_format]
-    frame_count = end_frame - start_frame + 1 if is_animation else 1
+    frame_count = ((end_frame - start_frame) // frame_step) + 1 if is_animation else 1
 
     local_blend_path = '/tmp/scene.blend'
     output_dir = '/tmp/renders'
@@ -399,6 +468,52 @@ def render_job(job):
             print(f"Unsupported RENDER_GPU_DEVICE_TYPE={gpu_device_type}; using AUTO.")
             gpu_device_type = 'AUTO'
 
+        if advanced_mode:
+            gpu_device_type = normalize_choice(
+                get_first(job_input, 'gpuDeviceType', 'gpu_device_type', default=gpu_device_type),
+                {'AUTO', 'OPTIX', 'CUDA'},
+                gpu_device_type
+            )
+            allow_cpu_fallback = normalize_bool(
+                get_first(job_input, 'allowCpuFallback', 'allow_cpu_fallback', default=allow_cpu_fallback),
+                allow_cpu_fallback
+            )
+
+        render_settings = {
+            "engine": engine,
+            "samples": samples,
+            "output_format": output_format,
+            "resolution_pct": resolution_pct,
+            "denoiser": denoiser,
+            "noise_threshold": noise_threshold,
+            "camera": camera,
+            "scene_name": scene_name,
+            "force_cpu": force_cpu,
+            "allow_cpu_fallback": allow_cpu_fallback,
+            "gpu_device_type": gpu_device_type,
+            "advanced_mode": advanced_mode,
+            "transparent_film": normalize_bool(get_first(job_input, 'transparentFilm', 'transparent_film', default=False), False) if advanced_mode else False,
+            "use_persistent_data": normalize_bool(get_first(job_input, 'usePersistentData', 'use_persistent_data', default=True), True) if advanced_mode else True,
+            "view_transform": normalize_name(get_first(job_input, 'viewTransform', 'view_transform', default=None)) if advanced_mode else None,
+            "look": normalize_name(get_first(job_input, 'look', default=None)) if advanced_mode else None,
+            "exposure": clamp_float(get_first(job_input, 'exposure', default=0.0), -10.0, 10.0, 0.0) if advanced_mode else 0.0,
+            "gamma": clamp_float(get_first(job_input, 'gamma', default=1.0), 0.01, 5.0, 1.0) if advanced_mode else 1.0,
+            "max_bounces": clamp_int(get_first(job_input, 'maxBounces', 'max_bounces', default=12), 0, 128, 12) if advanced_mode else 12,
+            "diffuse_bounces": clamp_int(get_first(job_input, 'diffuseBounces', 'diffuse_bounces', default=4), 0, 128, 4) if advanced_mode else 4,
+            "glossy_bounces": clamp_int(get_first(job_input, 'glossyBounces', 'glossy_bounces', default=4), 0, 128, 4) if advanced_mode else 4,
+            "transmission_bounces": clamp_int(get_first(job_input, 'transmissionBounces', 'transmission_bounces', default=12), 0, 128, 12) if advanced_mode else 12,
+            "transparent_bounces": clamp_int(get_first(job_input, 'transparentBounces', 'transparent_bounces', default=8), 0, 128, 8) if advanced_mode else 8,
+            "caustics_reflective": normalize_bool(get_first(job_input, 'causticsReflective', 'caustics_reflective', default=True), True) if advanced_mode else True,
+            "caustics_refractive": normalize_bool(get_first(job_input, 'causticsRefractive', 'caustics_refractive', default=True), True) if advanced_mode else True,
+            "use_simplify": normalize_bool(get_first(job_input, 'useSimplify', 'use_simplify', default=False), False) if advanced_mode else False,
+            "simplify_subdivisions": clamp_int(get_first(job_input, 'simplifySubdivisions', 'simplify_subdivisions', default=2), 0, 12, 2) if advanced_mode else 2,
+            "simplify_texture_limit": normalize_choice(
+                get_first(job_input, 'simplifyTextureLimit', 'simplify_texture_limit', default='OFF'),
+                {'OFF', '128', '256', '512', '1024', '2048', '4096'},
+                'OFF'
+            ) if advanced_mode else 'OFF',
+        }
+
         cuda_cache_path = os.environ.get('CUDA_CACHE_PATH', '/tmp/cuda-cache')
         os.makedirs(cuda_cache_path, exist_ok=True)
 
@@ -408,6 +523,7 @@ def render_job(job):
             f"engine={engine} "
             f"samples={samples} "
             f"frames={start_frame}-{end_frame} "
+            f"frame_step={frame_step} "
             f"frame_count={frame_count} "
             f"animation={is_animation} "
             f"format={output_format} "
@@ -415,6 +531,7 @@ def render_job(job):
             f"denoiser={denoiser} "
             f"scene={scene_name or 'active'} "
             f"camera={camera or 'scene camera'} "
+            f"advanced_mode={advanced_mode} "
             f"gpu_device_type={gpu_device_type} "
             f"force_cpu={force_cpu} "
             f"allow_cpu_fallback={allow_cpu_fallback} "
@@ -425,19 +542,7 @@ def render_job(job):
         s3.download_file(BUCKET_NAME, file_key, local_blend_path)
         print(f"Starting headless {engine} render...")
 
-        gpu_script = build_blender_setup_script(
-            engine,
-            samples,
-            output_format,
-            resolution_pct,
-            denoiser,
-            noise_threshold,
-            camera,
-            scene_name,
-            force_cpu,
-            allow_cpu_fallback,
-            gpu_device_type
-        )
+        gpu_script = build_blender_setup_script(render_settings)
 
         with open(gpu_script_path, 'w') as f:
             f.write(gpu_script)
@@ -452,7 +557,7 @@ def render_job(job):
         ])
 
         if is_animation:
-            render_command.extend(['-s', str(start_frame), '-e', str(end_frame), '-a'])
+            render_command.extend(['-s', str(start_frame), '-e', str(end_frame), '-j', str(frame_step), '-a'])
         else:
             render_command.extend(['-f', str(start_frame)])
 
@@ -460,7 +565,7 @@ def render_job(job):
         render_env.setdefault('CUDA_CACHE_PATH', cuda_cache_path)
         render_env.setdefault('CUDA_MODULE_LOADING', 'LAZY')
         process = subprocess.Popen(render_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=render_env)
-        stream_blender_process(process, job, start_frame, end_frame, samples, is_animation)
+        stream_blender_process(process, job, start_frame, end_frame, frame_step, samples, is_animation)
 
         if is_animation:
             ensure_tmp_space('zipping animation output')

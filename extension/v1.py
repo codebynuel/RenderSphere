@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RenderSphere Extension",
     "author": "Ella",
-    "version": (1, 13, 0),
+    "version": (1, 14, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > RenderSphere",
     "category": "Render",
@@ -26,6 +26,11 @@ OUTPUT_EXTENSIONS = {
     "OPEN_EXR": "exr",
     "OPEN_EXR_MULTILAYER": "exr",
 }
+GPU_BACKEND_ITEMS = [
+    ('AUTO', 'Auto', 'Use the fastest compatible GPU backend'),
+    ('OPTIX', 'OptiX', 'Prefer OptiX on supported NVIDIA GPUs'),
+    ('CUDA', 'CUDA', 'Prefer CUDA on supported NVIDIA GPUs'),
+]
 
 current_job_id = None
 current_status = "Idle"
@@ -36,6 +41,7 @@ current_elapsed_str = "00:00"
 is_current_job_animation = False
 current_start_frame = 1
 current_end_frame = 1
+current_frame_step = 1
 current_download_extension = "png"
 
 ui_frame_current = 0
@@ -107,7 +113,7 @@ def set_status(text):
 
 def reset_job_state(status="Idle"):
     global current_job_id, current_status, current_error_msg, job_start_time, last_api_check
-    global current_elapsed_str, is_current_job_animation, ui_frame_current, ui_sample_current
+    global current_elapsed_str, is_current_job_animation, current_frame_step, ui_frame_current, ui_sample_current
 
     log_verbose("Resetting job state", previous_job_id=current_job_id, next_status=status)
     current_job_id = None
@@ -117,6 +123,7 @@ def reset_job_state(status="Idle"):
     last_api_check = 0.0
     current_elapsed_str = "00:00"
     is_current_job_animation = False
+    current_frame_step = 1
     ui_frame_current = 0
     ui_sample_current = 0
     force_ui_redraw()
@@ -295,6 +302,19 @@ def can_submit_render(context):
     return current_job_id is None and current_status in READY_RENDER_STATUSES and bool(get_api_key(context))
 
 
+def get_frame_step(scene):
+    if not getattr(scene, "runpod_advanced_mode", False):
+        return 1
+    return max(1, int(getattr(scene, "runpod_frame_step", 1)))
+
+
+def get_render_frame_count(scene):
+    start_frame, end_frame = get_render_frame_range(scene)
+    if not scene.runpod_is_animation:
+        return 1
+    return ((end_frame - start_frame) // get_frame_step(scene)) + 1
+
+
 def calculate_progress_percent(scene):
     target_samples = scene.runpod_samples
     if current_status not in ACTIVE_RENDER_STATUSES:
@@ -306,11 +326,11 @@ def calculate_progress_percent(scene):
         return 3
 
     if is_current_job_animation:
-        total_frames = current_end_frame - current_start_frame + 1
-        completed_frames = ui_frame_current - current_start_frame + 1
-        frame_pct = completed_frames / max(total_frames, 1)
+        total_frames = ((current_end_frame - current_start_frame) // max(current_frame_step, 1)) + 1
+        completed_frame_index = max(0, (ui_frame_current - current_start_frame) // max(current_frame_step, 1))
+        frame_pct = (completed_frame_index + 1) / max(total_frames, 1)
         sample_pct = ui_sample_current / max(target_samples, 1)
-        pct = int(((max(0, completed_frames - 1) + sample_pct) / max(total_frames, 1)) * 100) if ui_sample_current else int(frame_pct * 100)
+        pct = int(((completed_frame_index + sample_pct) / max(total_frames, 1)) * 100) if ui_sample_current else int(frame_pct * 100)
     else:
         pct = int((ui_sample_current / max(target_samples, 1)) * 100)
 
@@ -346,7 +366,7 @@ def selected_render_camera(scene):
 
 def describe_render_job(scene):
     start_frame, end_frame = get_render_frame_range(scene)
-    frame_count = end_frame - start_frame + 1
+    frame_count = get_render_frame_count(scene)
     render_type = "Animation" if scene.runpod_is_animation else "Still frame"
     target_scene = selected_render_scene(scene)
     target_camera = selected_render_camera(scene)
@@ -355,6 +375,7 @@ def describe_render_job(scene):
         "start_frame": start_frame,
         "end_frame": end_frame,
         "frame_count": frame_count,
+        "frame_step": get_frame_step(scene),
         "samples": scene.runpod_samples,
         "resolution_pct": scene.runpod_resolution_pct,
         "format": scene.runpod_output_format,
@@ -703,7 +724,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
 
     def execute(self, context):
         global current_job_id, job_start_time, last_api_check, current_error_msg
-        global is_current_job_animation, current_start_frame, current_end_frame, current_download_extension
+        global is_current_job_animation, current_start_frame, current_end_frame, current_frame_step, current_download_extension
         global ui_frame_current, ui_sample_current
 
         scene = context.scene
@@ -735,6 +756,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
 
         current_start_frame = start_frame
         current_end_frame = end_frame if scene.runpod_is_animation else start_frame
+        current_frame_step = get_frame_step(scene)
         current_download_extension = OUTPUT_EXTENSIONS.get(scene.runpod_output_format, "png")
         ui_frame_current = start_frame
         ui_sample_current = 0
@@ -807,7 +829,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                 if not project_id or project_id == "NONE":
                     project_id = None
 
-                trigger_payload = json.dumps({
+                trigger_payload = {
                     "fileKey": file_key,
                     "engine": scene.runpod_engine,
                     "samples": scene.runpod_samples,
@@ -820,8 +842,34 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                     "noiseThreshold": scene.runpod_noise_threshold,
                     "scene": target_scene.name if target_scene else "",
                     "camera": target_camera.name if target_camera else "",
-                    "projectId": project_id
-                }).encode('utf-8')
+                    "projectId": project_id,
+                    "advancedMode": scene.runpod_advanced_mode,
+                }
+
+                if scene.runpod_advanced_mode:
+                    trigger_payload.update({
+                        "gpuDeviceType": scene.runpod_gpu_device_type,
+                        "allowCpuFallback": scene.runpod_allow_cpu_fallback,
+                        "transparentFilm": scene.runpod_transparent_film,
+                        "usePersistentData": scene.runpod_use_persistent_data,
+                        "frameStep": get_frame_step(scene),
+                        "viewTransform": scene.runpod_view_transform,
+                        "look": scene.runpod_look,
+                        "exposure": scene.runpod_exposure,
+                        "gamma": scene.runpod_gamma,
+                        "maxBounces": scene.runpod_max_bounces,
+                        "diffuseBounces": scene.runpod_diffuse_bounces,
+                        "glossyBounces": scene.runpod_glossy_bounces,
+                        "transmissionBounces": scene.runpod_transmission_bounces,
+                        "transparentBounces": scene.runpod_transparent_bounces,
+                        "causticsReflective": scene.runpod_caustics_reflective,
+                        "causticsRefractive": scene.runpod_caustics_refractive,
+                        "useSimplify": scene.runpod_use_simplify,
+                        "simplifySubdivisions": scene.runpod_simplify_subdivisions,
+                        "simplifyTextureLimit": scene.runpod_simplify_texture_limit,
+                    })
+
+                trigger_payload = json.dumps(trigger_payload).encode('utf-8')
 
                 trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload, headers=auth_headers(context, 'application/json'))
 
@@ -1000,16 +1048,34 @@ def draw_auth_wall(layout, context):
         error_box.label(text=current_error_msg)
 
 
+def draw_advanced_toggle(layout, scene):
+    box = layout.box()
+    box.label(text="Power user controls", icon='PREFERENCES')
+    box.prop(scene, "runpod_advanced_mode", text="Advanced Mode")
+    if scene.runpod_advanced_mode:
+        box.label(text="Advanced settings will be sent with this render.", icon='CHECKMARK')
+    else:
+        box.label(text="Keep this off for the safest guided defaults.")
+
+
 def draw_target_wall(layout, context):
     scene = context.scene
     target_scene = selected_render_scene(scene)
     target_camera = selected_render_camera(scene)
+
+    draw_advanced_toggle(layout, scene)
 
     box = layout.box()
     box.label(text="Choose render target", icon='SCENE_DATA')
     box.prop(scene, "runpod_scene", text="Scene")
     box.prop(scene, "runpod_camera", text="Camera")
     box.prop(scene, "runpod_project", text="Project ID")
+
+    if scene.runpod_advanced_mode:
+        advanced = layout.box()
+        advanced.label(text="Advanced worker settings", icon='CONSOLE')
+        advanced.prop(scene, "runpod_gpu_device_type", text="GPU Backend")
+        advanced.prop(scene, "runpod_allow_cpu_fallback", text="Allow CPU Fallback")
 
     summary = layout.box()
     summary.label(text="Target summary", icon='INFO')
@@ -1022,10 +1088,22 @@ def draw_output_wall(layout, context):
     scene = context.scene
     prefs = get_addon_preferences(context)
 
+    draw_advanced_toggle(layout, scene)
+
     image_box = layout.box()
     image_box.label(text="Output settings", icon='OUTPUT')
     image_box.prop(scene, "runpod_output_format", text="File Format")
     image_box.prop(scene, "runpod_resolution_pct", text="Resolution %")
+
+    if scene.runpod_advanced_mode:
+        color_box = layout.box()
+        color_box.label(text="Advanced color and film", icon='IMAGE_DATA')
+        color_box.prop(scene, "runpod_transparent_film", text="Transparent Film")
+        color_box.prop(scene, "runpod_view_transform", text="View Transform")
+        color_box.prop(scene, "runpod_look", text="Look")
+        row = color_box.row(align=True)
+        row.prop(scene, "runpod_exposure", text="Exposure")
+        row.prop(scene, "runpod_gamma", text="Gamma")
 
     range_box = layout.box()
     range_box.label(text="Frame range", icon='RENDER_ANIMATION')
@@ -1036,6 +1114,8 @@ def draw_output_wall(layout, context):
         row.enabled = not scene.runpod_use_scene_frames
         row.prop(scene, "runpod_frame_start", text="Start")
         row.prop(scene, "runpod_frame_end", text="End")
+        if scene.runpod_advanced_mode:
+            range_box.prop(scene, "runpod_frame_step", text="Frame Step")
         if prefs:
             range_box.prop(prefs, "animation_output_dir", text="Download Folder")
     else:
@@ -1044,6 +1124,8 @@ def draw_output_wall(layout, context):
 
 def draw_quality_wall(layout, context):
     scene = context.scene
+
+    draw_advanced_toggle(layout, scene)
 
     box = layout.box()
     box.label(text="Render quality", icon='SETTINGS')
@@ -1054,6 +1136,28 @@ def draw_quality_wall(layout, context):
         box.separator()
         box.prop(scene, "runpod_denoiser", text="Denoiser")
         box.prop(scene, "runpod_noise_threshold", text="Noise Threshold")
+
+        if scene.runpod_advanced_mode:
+            cycles_box = layout.box()
+            cycles_box.label(text="Advanced Cycles", icon='MOD_PHYSICS')
+            cycles_box.prop(scene, "runpod_use_persistent_data", text="Persistent Data")
+            cycles_box.prop(scene, "runpod_max_bounces", text="Max Bounces")
+            row = cycles_box.row(align=True)
+            row.prop(scene, "runpod_diffuse_bounces", text="Diffuse")
+            row.prop(scene, "runpod_glossy_bounces", text="Glossy")
+            row = cycles_box.row(align=True)
+            row.prop(scene, "runpod_transmission_bounces", text="Transmission")
+            row.prop(scene, "runpod_transparent_bounces", text="Transparent")
+            cycles_box.prop(scene, "runpod_caustics_reflective", text="Reflective Caustics")
+            cycles_box.prop(scene, "runpod_caustics_refractive", text="Refractive Caustics")
+
+    if scene.runpod_advanced_mode:
+        perf_box = layout.box()
+        perf_box.label(text="Advanced performance", icon='MEMORY')
+        perf_box.prop(scene, "runpod_use_simplify", text="Use Simplify")
+        if scene.runpod_use_simplify:
+            perf_box.prop(scene, "runpod_simplify_subdivisions", text="Max Subdivision")
+            perf_box.prop(scene, "runpod_simplify_texture_limit", text="Texture Limit")
 
 
 def draw_review_wall(layout, context):
@@ -1070,6 +1174,10 @@ def draw_review_wall(layout, context):
     box.label(text=f"Samples: {summary['samples']}")
     box.label(text=f"Resolution: {summary['resolution_pct']}%")
     box.label(text=f"Format: {summary['format']}")
+    if scene.runpod_advanced_mode:
+        box.label(text=f"Frame step: {summary['frame_step']}")
+        box.label(text=f"GPU backend: {scene.runpod_gpu_device_type}")
+        box.label(text="Advanced mode: On")
 
     if missing_files:
         warning = layout.box()
@@ -1290,6 +1398,127 @@ def register():
         min=0.0,
         max=1.0
     )
+    bpy.types.Scene.runpod_advanced_mode = bpy.props.BoolProperty(
+        name="Advanced Mode",
+        description="Show power-user render controls and send them with this job",
+        default=False
+    )
+    bpy.types.Scene.runpod_gpu_device_type = bpy.props.EnumProperty(
+        name="GPU Backend",
+        description="Preferred GPU backend for Cycles on the render worker",
+        items=GPU_BACKEND_ITEMS,
+        default='AUTO'
+    )
+    bpy.types.Scene.runpod_allow_cpu_fallback = bpy.props.BoolProperty(
+        name="Allow CPU Fallback",
+        description="Allow CPU rendering if GPU setup fails. Slower, but useful for diagnostics.",
+        default=False
+    )
+    bpy.types.Scene.runpod_frame_step = bpy.props.IntProperty(
+        name="Frame Step",
+        description="Render every Nth frame for animation jobs",
+        default=1,
+        min=1,
+        max=1000
+    )
+    bpy.types.Scene.runpod_transparent_film = bpy.props.BoolProperty(
+        name="Transparent Film",
+        description="Render with transparent film/background when supported",
+        default=False
+    )
+    bpy.types.Scene.runpod_use_persistent_data = bpy.props.BoolProperty(
+        name="Persistent Data",
+        description="Keep render data in memory between frames for animation performance",
+        default=True
+    )
+    bpy.types.Scene.runpod_view_transform = bpy.props.StringProperty(
+        name="View Transform",
+        description="Optional color management view transform. Leave empty to keep scene settings.",
+        default=""
+    )
+    bpy.types.Scene.runpod_look = bpy.props.StringProperty(
+        name="Look",
+        description="Optional color management look. Leave empty to keep scene settings.",
+        default=""
+    )
+    bpy.types.Scene.runpod_exposure = bpy.props.FloatProperty(
+        name="Exposure",
+        description="Color management exposure override",
+        default=0.0,
+        min=-10.0,
+        max=10.0
+    )
+    bpy.types.Scene.runpod_gamma = bpy.props.FloatProperty(
+        name="Gamma",
+        description="Color management gamma override",
+        default=1.0,
+        min=0.01,
+        max=5.0
+    )
+    bpy.types.Scene.runpod_max_bounces = bpy.props.IntProperty(
+        name="Max Bounces",
+        description="Cycles maximum light bounces",
+        default=12,
+        min=0,
+        max=128
+    )
+    bpy.types.Scene.runpod_diffuse_bounces = bpy.props.IntProperty(
+        name="Diffuse Bounces",
+        default=4,
+        min=0,
+        max=128
+    )
+    bpy.types.Scene.runpod_glossy_bounces = bpy.props.IntProperty(
+        name="Glossy Bounces",
+        default=4,
+        min=0,
+        max=128
+    )
+    bpy.types.Scene.runpod_transmission_bounces = bpy.props.IntProperty(
+        name="Transmission Bounces",
+        default=12,
+        min=0,
+        max=128
+    )
+    bpy.types.Scene.runpod_transparent_bounces = bpy.props.IntProperty(
+        name="Transparent Bounces",
+        default=8,
+        min=0,
+        max=128
+    )
+    bpy.types.Scene.runpod_caustics_reflective = bpy.props.BoolProperty(
+        name="Reflective Caustics",
+        default=True
+    )
+    bpy.types.Scene.runpod_caustics_refractive = bpy.props.BoolProperty(
+        name="Refractive Caustics",
+        default=True
+    )
+    bpy.types.Scene.runpod_use_simplify = bpy.props.BoolProperty(
+        name="Use Simplify",
+        description="Enable Blender simplify settings on the render worker",
+        default=False
+    )
+    bpy.types.Scene.runpod_simplify_subdivisions = bpy.props.IntProperty(
+        name="Max Subdivision",
+        default=2,
+        min=0,
+        max=12
+    )
+    bpy.types.Scene.runpod_simplify_texture_limit = bpy.props.EnumProperty(
+        name="Texture Limit",
+        description="Texture limit applied when simplify is enabled",
+        items=[
+            ('OFF', 'Off', ''),
+            ('128', '128 px', ''),
+            ('256', '256 px', ''),
+            ('512', '512 px', ''),
+            ('1024', '1024 px', ''),
+            ('2048', '2048 px', ''),
+            ('4096', '4096 px', ''),
+        ],
+        default='OFF'
+    )
     
     bpy.types.Scene.runpod_scene = bpy.props.PointerProperty(
         name="Scene",
@@ -1332,6 +1561,26 @@ def unregister():
     del bpy.types.Scene.runpod_use_scene_frames
     del bpy.types.Scene.runpod_denoiser
     del bpy.types.Scene.runpod_noise_threshold
+    del bpy.types.Scene.runpod_advanced_mode
+    del bpy.types.Scene.runpod_gpu_device_type
+    del bpy.types.Scene.runpod_allow_cpu_fallback
+    del bpy.types.Scene.runpod_frame_step
+    del bpy.types.Scene.runpod_transparent_film
+    del bpy.types.Scene.runpod_use_persistent_data
+    del bpy.types.Scene.runpod_view_transform
+    del bpy.types.Scene.runpod_look
+    del bpy.types.Scene.runpod_exposure
+    del bpy.types.Scene.runpod_gamma
+    del bpy.types.Scene.runpod_max_bounces
+    del bpy.types.Scene.runpod_diffuse_bounces
+    del bpy.types.Scene.runpod_glossy_bounces
+    del bpy.types.Scene.runpod_transmission_bounces
+    del bpy.types.Scene.runpod_transparent_bounces
+    del bpy.types.Scene.runpod_caustics_reflective
+    del bpy.types.Scene.runpod_caustics_refractive
+    del bpy.types.Scene.runpod_use_simplify
+    del bpy.types.Scene.runpod_simplify_subdivisions
+    del bpy.types.Scene.runpod_simplify_texture_limit
     
     del bpy.types.Scene.runpod_scene
     del bpy.types.Scene.runpod_camera

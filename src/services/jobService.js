@@ -33,6 +33,11 @@ export function clampNumber(value, min, max, fallback) {
   return Math.min(max, Math.max(min, numberValue));
 }
 
+function clampInteger(value, min, max, fallback) {
+  const numberValue = readInteger(value, fallback);
+  return Math.min(max, Math.max(min, numberValue));
+}
+
 export function roundMoney(value) {
   return Number(Number(value || 0).toFixed(6));
 }
@@ -56,15 +61,50 @@ export function normalizeRenderSettings(body) {
   const noiseThreshold = clampNumber(body.noiseThreshold, 0, 1, 0.01);
   const camera = normalizeOptionalName(body.camera);
   const scene = normalizeOptionalName(body.scene);
+  const advancedMode = normalizeBoolean(body.advancedMode, false);
+  const frameStep = advancedMode && isAnimation ? readInteger(body.frameStep, 1) : 1;
+  const gpuDeviceType = ['AUTO', 'OPTIX', 'CUDA'].includes(String(body.gpuDeviceType || '').toUpperCase()) ? String(body.gpuDeviceType).toUpperCase() : 'AUTO';
+  const simplifyTextureLimit = ['OFF', '128', '256', '512', '1024', '2048', '4096'].includes(String(body.simplifyTextureLimit || '').toUpperCase()) ? String(body.simplifyTextureLimit).toUpperCase() : 'OFF';
 
   if (startFrame < 0 || endFrame < 0 || endFrame < startFrame) return { error: 'Invalid frame range' };
+  if (frameStep < 1 || frameStep > 1000) return { error: 'Frame step must be between 1 and 1000' };
 
-  const frameCount = isAnimation ? endFrame - startFrame + 1 : 1;
+  const frameCount = isAnimation ? Math.floor((endFrame - startFrame) / frameStep) + 1 : 1;
   if (frameCount > config.maxAnimationFrames) return { error: `Animation frame count exceeds limit of ${config.maxAnimationFrames}` };
   if (samples < 1 || samples > config.maxRenderSamples) return { error: `Samples must be between 1 and ${config.maxRenderSamples}` };
   if (resolutionPct < 1 || resolutionPct > config.maxResolutionPct) return { error: `Resolution percentage must be between 1 and ${config.maxResolutionPct}` };
 
-  return { isAnimation, startFrame, endFrame, frameCount, samples, resolutionPct, noiseThreshold, camera, scene };
+  return {
+    isAnimation,
+    startFrame,
+    endFrame,
+    frameCount,
+    frameStep,
+    samples,
+    resolutionPct,
+    noiseThreshold,
+    camera,
+    scene,
+    advancedMode,
+    gpuDeviceType,
+    allowCpuFallback: advancedMode ? normalizeBoolean(body.allowCpuFallback, false) : false,
+    transparentFilm: advancedMode ? normalizeBoolean(body.transparentFilm, false) : false,
+    usePersistentData: advancedMode ? normalizeBoolean(body.usePersistentData, true) : true,
+    viewTransform: advancedMode ? normalizeOptionalName(body.viewTransform) : null,
+    look: advancedMode ? normalizeOptionalName(body.look) : null,
+    exposure: advancedMode ? clampNumber(body.exposure, -10, 10, 0) : 0,
+    gamma: advancedMode ? clampNumber(body.gamma, 0.01, 5, 1) : 1,
+    maxBounces: advancedMode ? clampInteger(body.maxBounces, 0, 128, 12) : 12,
+    diffuseBounces: advancedMode ? clampInteger(body.diffuseBounces, 0, 128, 4) : 4,
+    glossyBounces: advancedMode ? clampInteger(body.glossyBounces, 0, 128, 4) : 4,
+    transmissionBounces: advancedMode ? clampInteger(body.transmissionBounces, 0, 128, 12) : 12,
+    transparentBounces: advancedMode ? clampInteger(body.transparentBounces, 0, 128, 8) : 8,
+    causticsReflective: advancedMode ? normalizeBoolean(body.causticsReflective, true) : true,
+    causticsRefractive: advancedMode ? normalizeBoolean(body.causticsRefractive, true) : true,
+    useSimplify: advancedMode ? normalizeBoolean(body.useSimplify, false) : false,
+    simplifySubdivisions: advancedMode ? clampInteger(body.simplifySubdivisions, 0, 12, 2) : 2,
+    simplifyTextureLimit,
+  };
 }
 
 export function validateRenderChoices({ engine, outputFormat, denoiser }) {
@@ -82,15 +122,36 @@ export function buildRunpodInput({ fileKey, engine, outputFormat, denoiser, norm
     isAnimation: normalizedSettings.isAnimation,
     startFrame: normalizedSettings.startFrame,
     endFrame: normalizedSettings.endFrame,
+    frameStep: normalizedSettings.frameStep,
     outputFormat,
     resolutionPct: normalizedSettings.resolutionPct,
     denoiser,
     noiseThreshold: normalizedSettings.noiseThreshold,
     camera: normalizedSettings.camera,
     scene: normalizedSettings.scene,
+    advancedMode: normalizedSettings.advancedMode,
+    gpuDeviceType: normalizedSettings.gpuDeviceType,
+    allowCpuFallback: normalizedSettings.allowCpuFallback,
+    transparentFilm: normalizedSettings.transparentFilm,
+    usePersistentData: normalizedSettings.usePersistentData,
+    viewTransform: normalizedSettings.viewTransform,
+    look: normalizedSettings.look,
+    exposure: normalizedSettings.exposure,
+    gamma: normalizedSettings.gamma,
+    maxBounces: normalizedSettings.maxBounces,
+    diffuseBounces: normalizedSettings.diffuseBounces,
+    glossyBounces: normalizedSettings.glossyBounces,
+    transmissionBounces: normalizedSettings.transmissionBounces,
+    transparentBounces: normalizedSettings.transparentBounces,
+    causticsReflective: normalizedSettings.causticsReflective,
+    causticsRefractive: normalizedSettings.causticsRefractive,
+    useSimplify: normalizedSettings.useSimplify,
+    simplifySubdivisions: normalizedSettings.simplifySubdivisions,
+    simplifyTextureLimit: normalizedSettings.simplifyTextureLimit,
     output_format: outputFormat,
     resolution_pct: normalizedSettings.resolutionPct,
     noise_threshold: normalizedSettings.noiseThreshold,
+    frame_step: normalizedSettings.frameStep,
   };
 }
 

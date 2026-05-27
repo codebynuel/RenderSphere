@@ -1,32 +1,33 @@
 import express from 'express';
+import { ACTIVE_JOB_STATUSES, config } from '../helpers/config.js';
+import { prisma } from '../src/db.js';
 
-function createAdminRouter({
-  ACTIVE_JOB_STATUSES,
-  adminUser,
-  config,
-  getStoreDbName,
-  readStore,
-  requireAdmin,
-  updateStore,
-}) {
+function createAdminRouter({ requireAdmin }) {
   const router = express.Router();
 
   router.use(requireAdmin);
 
   router.get('/summary', async (req, res) => {
-    const store = await readStore();
-    const activeJobs = store.jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status));
-    const failedJobs = store.jobs.filter((job) => job.status === 'FAILED');
-    const completedJobs = store.jobs.filter((job) => job.status === 'COMPLETED');
+    const [usersCount, uploadsCount, jobsCount, activeJobs, failedJobs, completedJobs, revenue] = await Promise.all([
+      prisma.user.count(),
+      prisma.upload.count(),
+      prisma.job.count(),
+      prisma.job.count({ where: { status: { in: Array.from(ACTIVE_JOB_STATUSES) } } }),
+      prisma.job.count({ where: { status: 'FAILED' } }),
+      prisma.job.count({ where: { status: 'COMPLETED' } }),
+      prisma.job.aggregate({ _sum: { priceUsd: true, billableSeconds: true } }),
+    ]);
 
     res.json({
-      users: store.users.length,
-      uploads: store.uploads.length,
-      jobs: store.jobs.length,
-      activeJobs: activeJobs.length,
-      failedJobs: failedJobs.length,
-      completedJobs: completedJobs.length,
-      database: getStoreDbName(),
+      users: usersCount,
+      uploads: uploadsCount,
+      jobs: jobsCount,
+      activeJobs,
+      failedJobs,
+      completedJobs,
+      revenueUsd: revenue._sum.priceUsd || 0,
+      billableSeconds: revenue._sum.billableSeconds || 0,
+      database: 'postgres',
       limits: {
         maxUploadBytes: config.maxUploadBytes,
         maxRenderSamples: config.maxRenderSamples,
@@ -35,81 +36,70 @@ function createAdminRouter({
         maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
         maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
         renderPricePerSecondUsd: config.renderPricePerSecondUsd,
-        starterBalanceUsd: 0,
+        starterBalanceUsd: config.freeRenderCredits,
         jobRecordRetentionDays: config.jobRecordRetentionDays,
       },
     });
   });
 
   router.get('/users', async (req, res) => {
-    const store = await readStore();
-    const users = store.users
-      .map((user) => {
-        const jobs = store.jobs.filter((job) => job.userId === user.id);
-        return {
-          ...adminUser(user),
-          jobs: jobs.length,
-          activeJobs: jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status)).length,
-        };
-      })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        jobs: { select: { status: true } },
+        accessKeys: { select: { id: true } },
+        projects: { select: { id: true } },
+      },
+    });
 
-    res.json({ users });
+    const mappedUsers = users.map((user) => ({
+      id: user.id,
+      email: user.email,
+      starterBalanceUsd: user.starterBalanceUsd,
+      accessKeyCount: user.accessKeys.length,
+      projectCount: user.projects.length,
+      createdAt: user.createdAt,
+      jobs: user.jobs.length,
+      activeJobs: user.jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status)).length,
+    }));
+
+    res.json({ users: mappedUsers });
   });
 
   router.get('/jobs', async (req, res) => {
-    const store = await readStore();
-    const jobs = store.jobs
-      .slice()
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 100)
-      .map((job) => ({
-        jobId: job.jobId,
-        userId: job.userId,
-        fileKey: job.fileKey,
-        status: job.status,
-        frameCount: job.frameCount,
-        billableSeconds: job.billableSeconds || 0,
-        priceUsd: typeof job.priceUsd === 'number' ? job.priceUsd : 0,
-        pricePerSecondUsd: typeof job.pricePerSecondUsd === 'number' ? job.pricePerSecondUsd : null,
-        resultKey: job.resultKey,
-        error: job.error,
-        createdAt: job.createdAt,
-        completedAt: job.completedAt,
-        failedAt: job.failedAt,
-        cancelledAt: job.cancelledAt,
-        settings: job.settings,
-      }));
+    const jobs = await prisma.job.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        project: true,
+        user: { select: { id: true, email: true } },
+      },
+    });
 
     res.json({ jobs });
   });
 
   router.post('/cleanup-records', async (req, res) => {
-    const cutoff = Date.now() - config.jobRecordRetentionDays * 24 * 60 * 60 * 1000;
-    const result = await updateStore(async (store) => {
-      const before = {
-        sessions: store.sessions.length,
-        uploads: store.uploads.length,
-        jobs: store.jobs.length,
-      };
+    const cutoff = new Date(Date.now() - config.jobRecordRetentionDays * 24 * 60 * 60 * 1000);
 
-      store.sessions = store.sessions.filter((session) => new Date(session.expiresAt).getTime() > Date.now());
-      store.uploads = store.uploads.filter((upload) => new Date(upload.createdAt).getTime() >= cutoff);
-      store.jobs = store.jobs.filter((job) => {
-        if (ACTIVE_JOB_STATUSES.has(job.status)) return true;
-        return new Date(job.createdAt).getTime() >= cutoff;
-      });
-
-      return {
-        removed: {
-          sessions: before.sessions - store.sessions.length,
-          uploads: before.uploads - store.uploads.length,
-          jobs: before.jobs - store.jobs.length,
+    const [deletedSessions, deletedUploads, deletedJobs] = await Promise.all([
+      prisma.session.deleteMany({ where: { expiresAt: { lt: new Date() } } }),
+      prisma.upload.deleteMany({ where: { createdAt: { lt: cutoff }, used: true } }),
+      prisma.job.deleteMany({
+        where: {
+          createdAt: { lt: cutoff },
+          status: { notIn: Array.from(ACTIVE_JOB_STATUSES) },
         },
-      };
-    });
+      }),
+    ]);
 
-    res.json(result);
+    res.json({
+      removed: {
+        sessions: deletedSessions.count,
+        uploads: deletedUploads.count,
+        jobs: deletedJobs.count,
+      },
+    });
   });
 
   return router;

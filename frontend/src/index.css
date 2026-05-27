@@ -813,3 +813,427 @@ input:focus {
     color: rgba(246, 247, 244, 0.82);
     text-shadow: 0 2px 14px rgba(0, 0, 0, 0.74);
 }
+
+.dashboard-page {
+    --dashboard-sidebar-width: 290px;
+    --dashboard-page-pad: clamp(18px, 3vw, 34px);
+    display: block;
+    min-height: 760px;
+    padding: 18px var(--dashboard-page-pad) 42px;
+    padding-left: calc(var(--dashboard-page-pad) + var(--dashboard-sidebar-width) + 18px);
+}
+
+.dashboard-sidebar,
+.dashboard-main,
+.helper-panel {
+    border: 1px solid var(--line-soft);
+    border-radius: 28px;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.dashboard-sidebar {
+    position: fixed;
+    z-index: 8;
+    top: 128px;
+    bottom: 42px;
+    left: calc((100vw - min(1180px, calc(100vw - 28px))) / 2 + var(--dashboard-page-pad));
+    width: var(--dashboard-sidebar-width);
+    display: grid;
+    gap: 14px;
+    max-height: none;
+    overflow: auto;
+    padding: 16px;
+}
+
+.sidebar-section {
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.18);
+    padding: 14px;
+}
+
+.sidebar-hero h2,
+.dashboard-titlebar h1,
+.helper-panel h2,
+.project-card h3 {
+    margin: 0;
+}
+
+.sidebar-kicker,
+.sidebar-section-head,
+.job-meta,
+.job-details span,
+.dashboard-metric span,
+.dashboard-metric small {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.sidebar-hero h2 {
+    margin-top: 8px;
+    font-size: 22px;
+    line-height: 1.08;
+}
+
+.socket-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    border: 1px solid var(--line-soft);
+    border-radius: 999px;
+    padding: 7px 10px;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.socket-state.connected {
+    border-color: rgba(183, 255, 221, 0.34);
+    color: var(--good);
+    background: rgba(183, 255, 221, 0.08);
+}
+
+.sidebar-nav,
+.sidebar-projects {
+    display: grid;
+    gap: 8px;
+}
+
+.sidebar-link,
+.project-filter {
+    width: 100%;
+    min-height: 42px;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    color: var(--muted);
+    background: transparent;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+    text-align: left;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.sidebar-link.active,
+.sidebar-link:hover,
+.project-filter.active,
+.project-filter:hover {
+    border-color: rgba(255, 255, 255, 0.14);
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.sidebar-section-head,
+.project-filter {
+    justify-content: space-between;
+}
+
+.project-filter span {
+    min-width: 26px;
+    border-radius: 999px;
+    padding: 3px 7px;
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.08);
+    text-align: center;
+    font-size: 11px;
+}
+
+.dashboard-main {
+    min-width: 0;
+    padding: clamp(18px, 3vw, 30px);
+}
+
+.dashboard-titlebar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 18px;
+    margin-bottom: 22px;
+}
+
+.dashboard-titlebar .eyebrow {
+    margin-bottom: 12px;
+}
+
+.dashboard-titlebar h1 {
+    font-size: clamp(38px, 5vw, 72px);
+    font-weight: 500;
+    line-height: 0.94;
+}
+
+.dashboard-metrics-grid,
+.dashboard-grid,
+.project-grid,
+.job-details {
+    display: grid;
+    gap: 14px;
+}
+
+.dashboard-metrics-grid {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    margin-bottom: 16px;
+}
+
+.dashboard-metric,
+.project-card,
+.job-card,
+.empty-state,
+.helper-panel {
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.20);
+    padding: 18px;
+}
+
+.dashboard-metric {
+    min-height: 146px;
+}
+
+.metric-icon {
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 18px;
+    border-radius: 12px;
+    color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.dashboard-metric strong {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    font-size: clamp(22px, 2.2vw, 28px);
+    line-height: 1.05;
+}
+
+.dashboard-metric span,
+.dashboard-metric small {
+    display: block;
+    margin-top: 10px;
+}
+
+.dashboard-metric small {
+    color: var(--subtle);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.dashboard-grid.two-col {
+    grid-template-columns: minmax(280px, 0.65fr) minmax(0, 1fr);
+}
+
+.dashboard-panel {
+    min-width: 0;
+}
+
+.project-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 18px;
+}
+
+.project-card {
+    display: grid;
+    gap: 18px;
+    align-content: space-between;
+}
+
+.project-card h3 {
+    margin-top: 12px;
+    font-size: 20px;
+}
+
+.project-card p {
+    color: var(--muted);
+}
+
+.project-card code {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--subtle);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+}
+
+.job-list.rich {
+    gap: 12px;
+}
+
+.job-card {
+    display: grid;
+    gap: 14px;
+}
+
+.job-card-main,
+.job-actions,
+.progress-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.job-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-top: 8px;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.progress-wrap span {
+    min-width: 44px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    text-align: right;
+}
+
+.progress-track {
+    position: relative;
+    flex: 1;
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.progress-fill {
+    height: 100%;
+    min-width: 4px;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(255, 107, 53, 0.95), rgba(245, 240, 231, 0.95));
+}
+
+.progress-fill.complete {
+    background: var(--good);
+}
+
+.progress-fill.failed {
+    background: var(--danger);
+}
+
+.progress-fill.cancelled {
+    background: rgba(255, 255, 255, 0.34);
+}
+
+.job-details {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-top: 1px solid var(--line-soft);
+    padding-top: 14px;
+}
+
+.job-details div {
+    display: grid;
+    gap: 5px;
+}
+
+.job-details strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+}
+
+.detail-wide {
+    grid-column: 1 / -1;
+}
+
+.pill.complete {
+    color: #07100b;
+    background: var(--good);
+}
+
+.pill.cancelled {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.file-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+}
+
+.empty-state {
+    display: grid;
+    gap: 8px;
+    color: var(--muted);
+}
+
+.empty-state strong {
+    color: var(--text);
+}
+
+.helper-panel {
+    align-self: start;
+    display: grid;
+    gap: 14px;
+}
+
+.button:disabled,
+.link-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.spin {
+    animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1100px) {
+    .dashboard-page {
+        display: grid;
+        grid-template-columns: 1fr;
+        padding-left: var(--dashboard-page-pad);
+    }
+
+    .dashboard-sidebar {
+        position: static;
+        width: auto;
+        max-height: none;
+    }
+
+    .dashboard-metrics-grid,
+    .project-grid,
+    .job-details,
+    .dashboard-grid.two-col {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 760px) {
+    .dashboard-page {
+        padding: 12px 14px 28px;
+    }
+
+    .dashboard-titlebar,
+    .job-card-main,
+    .job-actions,
+    .file-item {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-metrics-grid,
+    .project-grid,
+    .job-details,
+    .dashboard-grid.two-col {
+        grid-template-columns: 1fr;
+    }
+}

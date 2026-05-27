@@ -5,3 +5,5 @@ prompt.md
 __pycache__/
 .dev-server*.log
 *.md
+
+/generated/prisma

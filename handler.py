@@ -79,7 +79,23 @@ def get_first(job_input, *keys, default=None):
 
 
 def normalize_choice(value, valid_values, default):
-    return value if value in valid_values else default
+    normalized = str(value or default).upper()
+    return normalized if normalized in valid_values else default
+
+
+def normalize_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return default
+
+
+def normalize_name(value):
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 def ensure_tmp_space(stage):
@@ -93,7 +109,7 @@ def ensure_tmp_space(stage):
     print(f"/tmp free before {stage}: {free_mb} MB")
 
 
-def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold):
+def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold, camera, scene_name):
     return f"""
 import bpy
 
@@ -103,8 +119,30 @@ output_format = {output_format!r}
 resolution_pct = {resolution_pct}
 denoiser = {denoiser!r}
 noise_threshold = {noise_threshold}
+camera_name = {camera!r}
+scene_name = {scene_name!r}
 
-scene = bpy.context.scene
+target_scene = bpy.data.scenes.get(scene_name) if scene_name else bpy.context.scene
+if scene_name and target_scene is None:
+    raise ValueError(f"Scene '{{scene_name}}' was not found in the blend file")
+
+scene = target_scene or bpy.context.scene
+for window in bpy.context.window_manager.windows:
+    window.scene = scene
+
+if camera_name:
+    camera_object = bpy.data.objects.get(camera_name)
+    if camera_object is None:
+        raise ValueError(f"Camera '{{camera_name}}' was not found in the blend file")
+    if camera_object.type != 'CAMERA':
+        raise ValueError(f"Object '{{camera_name}}' is not a camera")
+    scene.camera = camera_object
+
+if scene.camera:
+    print(f"Rendering scene '{{scene.name}}' with camera '{{scene.camera.name}}'")
+else:
+    print(f"Rendering scene '{{scene.name}}' without an explicit camera")
+
 scene.render.engine = engine
 scene.render.image_settings.file_format = output_format
 scene.render.resolution_percentage = resolution_pct
@@ -120,7 +158,8 @@ if engine == 'CYCLES':
 
     if hasattr(scene.cycles, 'use_adaptive_sampling'):
         scene.cycles.use_adaptive_sampling = noise_threshold > 0.0
-    scene.cycles.adaptive_threshold = noise_threshold
+    if hasattr(scene.cycles, 'adaptive_threshold'):
+        scene.cycles.adaptive_threshold = noise_threshold
 
     scene.cycles.device = 'GPU'
     prefs = bpy.context.preferences
@@ -171,11 +210,19 @@ def find_rendered_frame(output_dir, start_frame, extension):
     raise FileNotFoundError(f"Rendered frame not found for frame {frame_str}")
 
 
-def stream_blender_process(process, job, start_frame):
+def stream_blender_process(process, job, start_frame, end_frame, samples, is_animation):
     deadline = time.time() + RENDER_TIMEOUT_SECONDS
     last_update_time = 0
     current_frame_val = start_frame
     current_sample_val = 0
+    frame_count = max(1, end_frame - start_frame + 1 if is_animation else 1)
+
+    def progress_percent():
+        sample_ratio = min(1.0, max(0.0, current_sample_val / max(1, samples)))
+        if is_animation:
+            frame_index = min(frame_count - 1, max(0, current_frame_val - start_frame))
+            return min(99, int(((frame_index + sample_ratio) / frame_count) * 100))
+        return min(99, int(sample_ratio * 100))
 
     while True:
         if time.time() > deadline:
@@ -203,7 +250,8 @@ def stream_blender_process(process, job, start_frame):
                 if changed and (now - last_update_time > 2.0):
                     runpod.serverless.progress_update(job, {
                         "current_frame": current_frame_val,
-                        "current_sample": current_sample_val
+                        "current_sample": current_sample_val,
+                        "percent": progress_percent(),
                     })
                     last_update_time = now
 
@@ -215,17 +263,27 @@ def stream_blender_process(process, job, start_frame):
     if process.returncode != 0:
         raise RuntimeError(f"Blender crashed with exit code {process.returncode}")
 
+    runpod.serverless.progress_update(job, {
+        "current_frame": end_frame if is_animation else start_frame,
+        "current_sample": samples,
+        "percent": 100,
+    })
+
 
 def render_job(job):
     job_input = job['input']
 
-    file_key = job_input.get('fileKey') or job_input.get('file_key')
-    engine = job_input.get('engine', 'CYCLES')
+    file_key = normalize_name(job_input.get('fileKey') or job_input.get('file_key'))
+    if not file_key:
+        raise ValueError("fileKey is required")
+
+    engine = normalize_choice(job_input.get('engine', 'CYCLES'), {'CYCLES', 'BLENDER_EEVEE_NEXT'}, 'CYCLES')
     samples = clamp_int(job_input.get('samples', 256), 1, 8192, 256)
 
-    is_animation = job_input.get('isAnimation', False)
-    start_frame = clamp_int(job_input.get('startFrame', 1), 0, 1000000, 1)
-    end_frame = clamp_int(job_input.get('endFrame', 250), 0, 1000000, 250)
+    is_animation = normalize_bool(get_first(job_input, 'isAnimation', 'is_animation', default=False), False)
+    start_frame = clamp_int(get_first(job_input, 'startFrame', 'start_frame', default=1), 0, 1000000, 1)
+    requested_end_frame = clamp_int(get_first(job_input, 'endFrame', 'end_frame', default=start_frame), 0, 1000000, start_frame)
+    end_frame = requested_end_frame if is_animation else start_frame
 
     output_format = normalize_choice(
         get_first(job_input, 'output_format', 'outputFormat', default='PNG'),
@@ -245,6 +303,12 @@ def render_job(job):
         1.0,
         0.0
     )
+    camera = normalize_name(get_first(job_input, 'camera', 'cameraName', 'useCamera', default=None))
+    scene_name = normalize_name(get_first(job_input, 'scene', 'sceneName', 'useScene', default=None))
+
+    if end_frame < start_frame:
+        raise ValueError("endFrame must be greater than or equal to startFrame")
+
     output_extension = OUTPUT_EXTENSIONS[output_format]
     frame_count = end_frame - start_frame + 1 if is_animation else 1
 
@@ -269,6 +333,8 @@ def render_job(job):
             f"format={output_format} "
             f"resolution_pct={resolution_pct} "
             f"denoiser={denoiser} "
+            f"scene={scene_name or 'active'} "
+            f"camera={camera or 'scene camera'} "
             f"timeout_seconds={RENDER_TIMEOUT_SECONDS}"
         )
 
@@ -282,18 +348,22 @@ def render_job(job):
             output_format,
             resolution_pct,
             denoiser,
-            noise_threshold
+            noise_threshold,
+            camera,
+            scene_name
         )
 
         with open(gpu_script_path, 'w') as f:
             f.write(gpu_script)
 
-        render_command = [
-            '/opt/blender/blender', '-b', local_blend_path,
+        render_command = ['/opt/blender/blender', '-b', local_blend_path]
+        if scene_name:
+            render_command.extend(['-S', scene_name])
+        render_command.extend([
             '-E', engine,
             '-P', gpu_script_path,
             '-o', output_prefix
-        ]
+        ])
 
         if is_animation:
             render_command.extend(['-s', str(start_frame), '-e', str(end_frame), '-a'])
@@ -301,7 +371,7 @@ def render_job(job):
             render_command.extend(['-f', str(start_frame)])
 
         process = subprocess.Popen(render_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        stream_blender_process(process, job, start_frame)
+        stream_blender_process(process, job, start_frame, end_frame, samples, is_animation)
 
         if is_animation:
             ensure_tmp_space('zipping animation output')
@@ -327,7 +397,7 @@ def render_job(job):
 
     except Exception as e:
         print(f"Render failed: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        raise
 
     finally:
         if os.path.exists(local_blend_path):

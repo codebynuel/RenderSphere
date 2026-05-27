@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RenderSphere Extension",
     "author": "Ella",
-    "version": (1, 11, 0),
+    "version": (1, 13, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Cloud Render",
     "category": "Render",
@@ -178,15 +178,26 @@ def get_missing_external_files():
 
 
 def get_render_frame_range(scene):
-    start_frame = scene.frame_start if scene.runpod_use_scene_frames else scene.runpod_frame_start
-    end_frame = scene.frame_end if scene.runpod_use_scene_frames else scene.runpod_frame_end
+    target_scene = scene.runpod_scene or scene
+    start_frame = target_scene.frame_start if scene.runpod_use_scene_frames else scene.runpod_frame_start
+    end_frame = target_scene.frame_end if scene.runpod_use_scene_frames else scene.runpod_frame_end
     return start_frame, end_frame if scene.runpod_is_animation else start_frame
+
+
+def selected_render_scene(scene):
+    return scene.runpod_scene or scene
+
+
+def selected_render_camera(scene):
+    return scene.runpod_camera or selected_render_scene(scene).camera
 
 
 def describe_render_job(scene):
     start_frame, end_frame = get_render_frame_range(scene)
     frame_count = end_frame - start_frame + 1
     render_type = "Animation" if scene.runpod_is_animation else "Still frame"
+    target_scene = selected_render_scene(scene)
+    target_camera = selected_render_camera(scene)
     return {
         "render_type": render_type,
         "start_frame": start_frame,
@@ -195,6 +206,8 @@ def describe_render_job(scene):
         "samples": scene.runpod_samples,
         "resolution_pct": scene.runpod_resolution_pct,
         "format": scene.runpod_output_format,
+        "scene": target_scene.name if target_scene else "Current scene",
+        "camera": target_camera.name if target_camera else "Scene camera",
     }
 
 
@@ -220,7 +233,7 @@ def check_job_status():
                 data = json.loads(response.read().decode())
                 status = data.get("status")
 
-                if status in ["IN_QUEUE", "IN_PROGRESS"]:
+                if status in ["IN_QUEUE", "IN_PROGRESS", "RUNNING"]:
                     if status == "IN_QUEUE":
                         current_status = "In Queue..."
                     else:
@@ -293,6 +306,12 @@ def check_job_status():
                     force_ui_redraw()
                     return None
 
+                elif status == "CANCELLED":
+                    current_status = "Cancelled."
+                    current_job_id = None
+                    force_ui_redraw()
+                    return None
+                    
                 else:
                     current_status = f"Error: {status}"
                     current_job_id = None
@@ -412,7 +431,7 @@ class RENDERSPHERE_OT_unlock(bpy.types.Operator):
 
 class RENDERSPHERE_OT_clear_access_key(bpy.types.Operator):
     bl_idname = "rendersphere.clear_access_key"
-    bl_label = "Sign Out of RenderSphere"
+    bl_label = "Sign Out"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -431,7 +450,7 @@ class RENDERSPHERE_OT_clear_access_key(bpy.types.Operator):
 
 class RENDER_OT_cloud_upload(bpy.types.Operator):
     bl_idname = "render.cloud_upload"
-    bl_label = "Upload & Render on RunPod"
+    bl_label = "Upload & Render"
     bl_options = {'REGISTER', 'UNDO'}
 
     ignore_missing: bpy.props.BoolProperty(default=False, options={'HIDDEN'})
@@ -460,11 +479,13 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         layout.label(text="Confirm Render Job", icon='RENDER_STILL')
         layout.label(text=f"Type: {summary['render_type']}")
         layout.label(text=f"Frames: {summary['start_frame']} - {summary['end_frame']} ({summary['frame_count']} total)")
+        layout.label(text=f"Scene: {summary['scene']}")
+        layout.label(text=f"Camera: {summary['camera']}")
         layout.label(text=f"Samples: {summary['samples']}")
         layout.label(text=f"Resolution: {summary['resolution_pct']}%")
         layout.label(text=f"Format: {summary['format']}")
         layout.separator()
-        layout.label(text="This will use one render credit if the job starts.")
+        layout.label(text="This will use render credits if the job starts.")
 
     def execute(self, context):
         global current_job_id, job_start_time, last_api_check, current_error_msg
@@ -485,6 +506,8 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
             return {'CANCELLED'}
 
         start_frame, end_frame = get_render_frame_range(scene)
+        target_scene = selected_render_scene(scene)
+        target_camera = selected_render_camera(scene)
 
         if end_frame < start_frame:
             current_error_msg = "End frame must be greater than or equal to start frame."
@@ -515,7 +538,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
             remove_temp_payload(temp_path)
             return {'CANCELLED'}
 
-        set_status("Securing Cloudflare link...")
+        set_status("Securing upload link...")
         api_endpoint = f"{server_url}/api/get-upload-url"
         payload = json.dumps({
             "fileName": "runpod_payload.blend",
@@ -535,7 +558,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
             remove_temp_payload(temp_path)
             return {'CANCELLED'}
 
-        set_status("Uploading to Cloudflare R2...")
+        set_status("Uploading to cloud...")
         try:
             parsed_url = urlparse(upload_url)
             conn = http.client.HTTPSConnection(parsed_url.netloc)
@@ -555,6 +578,10 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                 is_current_job_animation = scene.runpod_is_animation
 
                 trigger_endpoint = f"{server_url}/api/trigger-render"
+                project_id = scene.runpod_project.strip()
+                if not project_id or project_id == "NONE":
+                    project_id = None
+
                 trigger_payload = json.dumps({
                     "fileKey": file_key,
                     "engine": scene.runpod_engine,
@@ -566,6 +593,9 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                     "resolutionPct": scene.runpod_resolution_pct,
                     "denoiser": scene.runpod_denoiser,
                     "noiseThreshold": scene.runpod_noise_threshold,
+                    "scene": target_scene.name if target_scene else "",
+                    "camera": target_camera.name if target_camera else "",
+                    "projectId": project_id
                 }).encode('utf-8')
 
                 trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload, headers=auth_headers(context, 'application/json'))
@@ -581,7 +611,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                     bpy.app.timers.register(check_job_status, first_interval=1.0)
 
             else:
-                current_error_msg = f"R2 upload failed with status {upload_res.status}."
+                current_error_msg = f"Upload failed with status {upload_res.status}."
                 set_status("Render Failed")
                 remove_temp_payload(temp_path)
                 return {'CANCELLED'}
@@ -599,7 +629,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
 
 class RENDER_OT_cancel_job(bpy.types.Operator):
     bl_idname = "render.cancel_job"
-    bl_label = "Cancel RunPod Job"
+    bl_label = "Cancel Job"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -630,118 +660,166 @@ class RENDER_OT_cancel_job(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class RENDER_PT_cloud_panel(bpy.types.Panel):
-    bl_label = "Cloud Render Gateway"
-    bl_idname = "RENDER_PT_cloud_panel"
+class RENDER_PT_main_panel(bpy.types.Panel):
+    bl_label = "RenderSphere Gateway"
+    bl_idname = "RENDER_PT_main_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Cloud Render'
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
         prefs = get_addon_preferences(context)
 
         if not get_api_key(context):
-            layout.label(text="Connect RenderSphere", icon='LOCKED')
-            layout.label(text="Enter your access key to start cloud rendering.")
-
+            layout.label(text="Connect Account", icon='LOCKED')
+            layout.label(text="Enter access key to start.")
             if prefs:
-                layout.separator()
                 layout.prop(prefs, "server_url")
                 layout.prop(prefs, "api_key")
-                layout.operator("rendersphere.unlock", text="Continue", icon='KEY_HLT')
-            else:
-                layout.label(text="Add-on preferences are unavailable.", icon='ERROR')
-
+                layout.operator("rendersphere.unlock", text="Unlock", icon='KEY_HLT')
+            
             if current_status == "Render Failed" and current_error_msg:
-                layout.separator()
                 box = layout.box()
-                box.label(text="Access check failed", icon='ERROR')
+                box.label(text="Access Error", icon='ERROR')
                 box.label(text=current_error_msg)
-
             return
 
-        layout.label(text="Cloud Settings:", icon='PREFERENCES')
-        layout.prop(scene, "runpod_engine")
-        layout.prop(scene, "runpod_samples")
-
-        layout.separator()
-        layout.label(text="Output", icon='OUTPUT')
-        layout.prop(scene, "runpod_output_format")
-        layout.prop(scene, "runpod_resolution_pct")
-
-        if scene.runpod_engine == 'CYCLES':
-            layout.separator()
-            layout.label(text="Quality", icon='SHADING_RENDERED')
-            layout.prop(scene, "runpod_denoiser")
-            layout.prop(scene, "runpod_noise_threshold")
-
-        layout.separator()
-        layout.prop(scene, "runpod_is_animation", icon='RENDER_ANIMATION')
-
-        if scene.runpod_is_animation:
-            layout.prop(scene, "runpod_use_scene_frames")
-            row = layout.row(align=True)
-            row.enabled = not scene.runpod_use_scene_frames
-            row.prop(scene, "runpod_frame_start")
-            row.prop(scene, "runpod_frame_end")
-
-        layout.separator()
+        account_box = layout.box()
+        account_box.label(text="Authenticated", icon='CHECKMARK')
+        account_box.label(text=f"Gateway: {get_server_url(context)}")
 
         row = layout.row()
         row.enabled = current_job_id is None and current_status in [
-            "Idle",
-            "Render Complete.",
-            "Zip saved.",
-            "Render Failed",
-            "Connection OK",
-            "Error",
+            "Idle", "Render Complete.", "Zip saved.", "Render Failed", "Connection OK", "Error", "Cancelled."
         ]
-
-        btn_text = "Render Animation" if scene.runpod_is_animation else "Render Frame"
+        
+        btn_text = "Render Animation" if context.scene.runpod_is_animation else "Render Frame"
         row.operator("render.cloud_upload", text=btn_text, icon='WORLD')
 
         if current_job_id:
-            cancel_row = layout.row()
-            cancel_row.operator("render.cancel_job", text="Cancel Job", icon='CANCEL')
-
-        layout.separator()
-        account_row = layout.row(align=True)
-        account_row.operator("rendersphere.test_connection", text="Test", icon='URL')
-        account_row.operator("rendersphere.clear_access_key", text="Sign Out", icon='UNLINKED')
+            layout.operator("render.cancel_job", text="Cancel Job", icon='CANCEL')
 
         if current_status != "Idle":
             layout.separator()
             box = layout.box()
-
             if current_status == "Render Failed":
-                box.label(text=current_status, icon='ERROR')
-                box.label(text=f"Error: {current_error_msg}")
+                box.label(text="Render Failed", icon='ERROR')
+                box.label(text=current_error_msg)
             else:
                 icon = 'CHECKMARK' if current_status in ["Render Complete.", "Zip saved.", "Connection OK"] else 'TIME'
-                box.label(text=f"Status: {current_status}", icon=icon)
+                box.label(text=current_status, icon=icon)
 
                 if current_status in ["In Queue...", "Rendering Animation...", "Rendering Frame..."]:
-                    box.label(text=f"Elapsed time: {current_elapsed_str}")
-
-                    target_samples = scene.runpod_samples
+                    box.label(text=f"Elapsed: {current_elapsed_str}")
+                    
+                    target_samples = context.scene.runpod_samples
                     if is_current_job_animation:
                         total_frames = current_end_frame - current_start_frame + 1
                         completed_frames = ui_frame_current - current_start_frame + 1
-                        pct = int((completed_frames / max(total_frames, 1)) * 100)
+                        frame_pct = completed_frames / max(total_frames, 1)
+                        sample_pct = ui_sample_current / max(target_samples, 1)
+                        pct = int(((max(0, completed_frames - 1) + sample_pct) / max(total_frames, 1)) * 100) if ui_sample_current else int(frame_pct * 100)
                     else:
-                        total_frames = 1
                         pct = int((ui_sample_current / max(target_samples, 1)) * 100)
-
+                    
                     pct = min(100, max(0, pct))
-
-                    box.label(text=f"Frame: {ui_frame_current} / {current_end_frame}")
-                    box.label(text=f"Samples: {ui_sample_current} / {target_samples}")
-                    box.label(text=f"Percentage Done: {pct}%")
+                    box.label(text=f"Progress: {pct}%")
+                    if ui_frame_current:
+                        box.label(text=f"Frame: {ui_frame_current}")
+                    if ui_sample_current:
+                        box.label(text=f"Sample: {ui_sample_current}/{target_samples}")
 
                 elif current_status in ["Render Complete.", "Zip saved."]:
-                    box.label(text=f"Elapsed time: {current_elapsed_str}")
+                    box.label(text=f"Elapsed: {current_elapsed_str}")
+
+
+class RENDER_PT_scene_panel(bpy.types.Panel):
+    bl_label = "Scene"
+    bl_idname = "RENDER_PT_scene_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Cloud Render'
+    bl_parent_id = "RENDER_PT_main_panel"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        box = layout.box()
+        box.label(text="Render Target", icon='SCENE_DATA')
+        box.prop(scene, "runpod_scene")
+        box.prop(scene, "runpod_camera")
+        target_scene = selected_render_scene(scene)
+        target_camera = selected_render_camera(scene)
+        box.label(text=f"Using scene: {target_scene.name if target_scene else 'Current'}")
+        box.label(text=f"Using camera: {target_camera.name if target_camera else 'Scene camera'}")
+        box.separator()
+        box.prop(scene, "runpod_project")
+
+
+class RENDER_PT_output_panel(bpy.types.Panel):
+    bl_label = "Output"
+    bl_idname = "RENDER_PT_output_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Cloud Render'
+    bl_parent_id = "RENDER_PT_main_panel"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        box = layout.box()
+        box.label(text="Image Settings", icon='OUTPUT')
+        box.prop(scene, "runpod_output_format")
+        box.prop(scene, "runpod_resolution_pct")
+
+        box = layout.box()
+        box.label(text="Frame Range", icon='RENDER_ANIMATION')
+        box.prop(scene, "runpod_is_animation", icon='RENDER_ANIMATION')
+        if scene.runpod_is_animation:
+            box.prop(scene, "runpod_use_scene_frames")
+            row = box.row(align=True)
+            row.enabled = not scene.runpod_use_scene_frames
+            row.prop(scene, "runpod_frame_start")
+            row.prop(scene, "runpod_frame_end")
+
+
+class RENDER_PT_quality_panel(bpy.types.Panel):
+    bl_label = "Quality Settings"
+    bl_idname = "RENDER_PT_quality_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Cloud Render'
+    bl_parent_id = "RENDER_PT_main_panel"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        layout.prop(scene, "runpod_engine")
+        layout.prop(scene, "runpod_samples")
+
+        if scene.runpod_engine == 'CYCLES':
+            layout.separator()
+            layout.prop(scene, "runpod_denoiser")
+            layout.prop(scene, "runpod_noise_threshold")
+
+
+class RENDER_PT_account_panel(bpy.types.Panel):
+    bl_label = "Account"
+    bl_idname = "RENDER_PT_account_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Cloud Render'
+    bl_parent_id = "RENDER_PT_main_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("rendersphere.test_connection", text="Test Connection", icon='URL')
+        layout.operator("rendersphere.clear_access_key", text="Sign Out", icon='UNLINKED')
 
 
 classes = (
@@ -751,7 +829,11 @@ classes = (
     RENDERSPHERE_OT_clear_access_key,
     RENDER_OT_cloud_upload,
     RENDER_OT_cancel_job,
-    RENDER_PT_cloud_panel,
+    RENDER_PT_main_panel,
+    RENDER_PT_scene_panel,
+    RENDER_PT_output_panel,
+    RENDER_PT_quality_panel,
+    RENDER_PT_account_panel,
 )
 
 
@@ -821,6 +903,23 @@ def register():
         min=0.0,
         max=1.0
     )
+    
+    bpy.types.Scene.runpod_scene = bpy.props.PointerProperty(
+        name="Scene",
+        type=bpy.types.Scene,
+        description="Scene to render. Empty means the current scene."
+    )
+    bpy.types.Scene.runpod_camera = bpy.props.PointerProperty(
+        name="Camera",
+        type=bpy.types.Object,
+        description="Camera to render from. Empty means the selected scene camera.",
+        poll=lambda self, obj: obj.type == 'CAMERA'
+    )
+    bpy.types.Scene.runpod_project = bpy.props.StringProperty(
+        name="Project ID",
+        description="Optional dashboard project UUID. Leave empty to submit as unassigned.",
+        default=""
+    )
 
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -840,6 +939,10 @@ def unregister():
     del bpy.types.Scene.runpod_use_scene_frames
     del bpy.types.Scene.runpod_denoiser
     del bpy.types.Scene.runpod_noise_threshold
+    
+    del bpy.types.Scene.runpod_scene
+    del bpy.types.Scene.runpod_camera
+    del bpy.types.Scene.runpod_project
 
 
 if __name__ == "__main__":

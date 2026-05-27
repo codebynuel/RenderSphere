@@ -10,7 +10,7 @@ function securityHeaders(req, res, next) {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https://images.unsplash.com",
-    "connect-src 'self'",
+    "connect-src 'self' ws: wss:",
   ].join('; ');
 
   res.setHeader('Content-Security-Policy', csp);

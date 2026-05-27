@@ -1,4 +1,7 @@
+import 'dotenv/config';
+
 const REQUIRED_ENV_VARS = [
+  'DATABASE_URL',
   'CLOUDFLARE_ACCOUNT_ID',
   'R2_ACCESS_KEY_ID',
   'R2_SECRET_ACCESS_KEY',
@@ -17,18 +20,9 @@ const SESSION_COOKIE_NAME = 'rs_session';
 const MB = 1024 * 1024;
 const DEFAULT_MAX_UPLOAD_MB = 10 * 1024;
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
-const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'rendersphere';
-
 function parsePositiveIntegerEnv(name, fallback) {
   const value = Number(process.env[name]);
   if (!Number.isInteger(value) || value <= 0) return fallback;
-  return value;
-}
-
-function parseNonNegativeIntegerEnv(name, fallback) {
-  const value = Number(process.env[name]);
-  if (!Number.isInteger(value) || value < 0) return fallback;
   return value;
 }
 
@@ -46,7 +40,7 @@ const config = {
   maxConcurrentJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_CONCURRENT_JOBS', 1),
   maxQueuedJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_QUEUED_JOBS', 3),
   renderPricePerSecondUsd: parseNonNegativeNumberEnv('RENDERSPHERE_RENDER_PRICE_PER_SECOND_USD', 0.01),
-  freeRenderCredits: parseNonNegativeIntegerEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 0),
+  freeRenderCredits: parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS_USD', parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 0)),
   supportEmail: process.env.RENDERSPHERE_SUPPORT_EMAIL || 'support@rendersphere.app',
   inviteCode: process.env.RENDERSPHERE_INVITE_CODE || '',
   adminToken: process.env.RENDERSPHERE_ADMIN_TOKEN || '',
@@ -64,8 +58,6 @@ function validateRequiredEnv() {
 export {
   ACTIVE_JOB_STATUSES,
   MB,
-  MONGODB_DB_NAME,
-  MONGODB_URI,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   VALID_DENOISERS,

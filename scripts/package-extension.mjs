@@ -2,8 +2,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const sourcePath = path.join(process.cwd(), 'extension', 'v1.py');
-const outputDir = path.join(process.cwd(), 'public', 'downloads');
-const outputPath = path.join(outputDir, 'rendersphere-blender-addon.zip');
+const outputTargets = [
+  path.join(process.cwd(), 'public', 'downloads', 'rendersphere-blender-addon.zip'),
+  path.join(process.cwd(), 'frontend', 'public', 'downloads', 'rendersphere-blender-addon.zip'),
+];
 
 const crcTable = new Uint32Array(256);
 for (let i = 0; i < 256; i += 1) {
@@ -129,10 +131,13 @@ const readme = Buffer.from(
   ].join('\n')
 );
 
-await mkdir(outputDir, { recursive: true });
-await writeFile(outputPath, createZip([
+const archive = createZip([
   { name: 'rendersphere.py', data: addonSource },
   { name: 'README.txt', data: readme },
-]));
+]);
 
-console.log(`Packaged ${outputPath}`);
+for (const outputPath of outputTargets) {
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, archive);
+  console.log(`Packaged ${outputPath}`);
+}

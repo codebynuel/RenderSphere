@@ -1,14 +1,15 @@
 import express from 'express';
+import { prisma } from '../src/db.js';
 
-function createSystemRouter({ config, getStoreDbName, pingStore }) {
+function createSystemRouter({ config }) {
   const router = express.Router();
 
   router.get('/healthz', async (req, res) => {
     try {
-      await pingStore();
+      await prisma.$queryRaw`SELECT 1`;
       res.json({
         status: 'ok',
-        database: getStoreDbName(),
+        database: 'postgres',
         limits: {
           maxUploadBytes: config.maxUploadBytes,
           maxRenderSamples: config.maxRenderSamples,
@@ -20,14 +21,14 @@ function createSystemRouter({ config, getStoreDbName, pingStore }) {
         },
       });
     } catch {
-      res.status(500).json({ status: 'error', error: 'MongoDB is not reachable' });
+      res.status(500).json({ status: 'error', error: 'Database is not reachable' });
     }
   });
 
   router.get('/api/config', (req, res) => {
     res.json({
       supportEmail: config.supportEmail,
-      starterBalanceUsd: 0,
+      starterBalanceUsd: config.freeRenderCredits,
       inviteRequired: Boolean(config.inviteCode),
       limits: {
         maxUploadBytes: config.maxUploadBytes,

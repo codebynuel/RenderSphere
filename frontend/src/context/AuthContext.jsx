@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '../utils/api';
 
@@ -19,7 +20,10 @@ export function AuthProvider({ children }) {
     };
 
     useEffect(() => {
-        loadMe();
+        const timer = window.setTimeout(() => {
+            loadMe();
+        }, 0);
+        return () => window.clearTimeout(timer);
     }, []);
 
     const logout = async () => {

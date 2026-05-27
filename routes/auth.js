@@ -1,26 +1,25 @@
-import crypto from 'crypto';
 import express from 'express';
+import {
+  createAccessKeyForUser,
+  createSessionForUser,
+  getBearerToken,
+  getSessionCookie,
+  normalizeEmail,
+  publicAccessKey,
+  publicUser,
+  registerUser,
+  revokeSessionToken,
+  setSessionCookie,
+  clearSessionCookie,
+  verifyPassword,
+} from '../src/services/authService.js';
+import { config } from '../helpers/config.js';
+import { prisma } from '../src/db.js';
 
 function createAuthRouter({
   accountRateLimit,
   authRateLimit,
-  clearSessionCookie,
-  config,
-  createApiKeyForUser,
-  createSessionForUser,
-  hashPassword,
-  hashToken,
-  normalizeAccessKeys,
-  normalizeEmail,
-  publicAccessKey,
-  publicUser,
-  readStore,
   requireAuth,
-  sessionCookieName,
-  setSessionCookie,
-  updateStore,
-  verifyPassword,
-  nowIso,
 }) {
   const router = express.Router();
 
@@ -42,37 +41,21 @@ function createAuthRouter({
     }
 
     try {
-      const result = await updateStore(async (store) => {
-        if (store.users.some((user) => user.email === email)) {
-          return { error: 'An account with this email already exists' };
-        }
+      const result = await registerUser({ email, password });
+      setSessionCookie(req, res, result.sessionToken);
 
-        const passwordHash = await hashPassword(password);
-        const user = {
-          id: crypto.randomUUID(),
-          email,
-          passwordHash: passwordHash.hash,
-          passwordSalt: passwordHash.salt,
-          apiKeyHash: null,
-          apiKeyUpdatedAt: null,
-          accessKeys: [],
-          starterBalanceUsd: 0,
-          createdAt: nowIso(),
-        };
-        const accessKeyToken = await createApiKeyForUser(store, user);
-        const createdAccessKey = publicAccessKey(normalizeAccessKeys(user).at(-1), accessKeyToken);
-        const token = await createSessionForUser(store, user.id);
-        store.users.push(user);
-
-        return { user: publicUser(user), token, accessKey: createdAccessKey };
+      return res.status(201).json({
+        user: publicUser(result.user),
+        token: result.sessionToken,
+        accessKey: publicAccessKey(result.accessKey, result.accessKeyToken),
       });
-
-      if (result.error) return res.status(409).json({ error: result.error });
-      setSessionCookie(req, res, result.token);
-      res.status(201).json(result);
     } catch (error) {
+      if (error.code === 'P2002') {
+        return res.status(409).json({ error: 'An account with this email already exists' });
+      }
+
       console.error('Register Error:', error);
-      res.status(500).json({ error: 'Failed to create account' });
+      return res.status(500).json({ error: 'Failed to create account' });
     }
   });
 
@@ -81,43 +64,26 @@ function createAuthRouter({
     const password = String(req.body.password || '');
 
     try {
-      const store = await readStore();
-      const user = store.users.find((item) => item.email === email);
+      const user = await prisma.user.findUnique({ where: { email } });
       if (!user || !(await verifyPassword(password, user))) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
-      const token = await updateStore(async (nextStore) => createSessionForUser(nextStore, user.id));
-      setSessionCookie(req, res, token);
-      res.json({ user: publicUser(user), token });
+      const session = await createSessionForUser(user.id);
+      setSessionCookie(req, res, session.token);
+      return res.json({ user: publicUser(user), token: session.token });
     } catch (error) {
       console.error('Login Error:', error);
-      res.status(500).json({ error: 'Failed to log in' });
+      return res.status(500).json({ error: 'Failed to log in' });
     }
   });
 
   router.post('/logout', async (req, res) => {
-    const bearerToken = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
-    const cookieMatch = req.headers.cookie?.match(new RegExp(`${sessionCookieName}=([^;]+)`));
-    let token = req.authToken || bearerToken || null;
-
-    if (!token && cookieMatch?.[1]) {
-      try {
-        token = decodeURIComponent(cookieMatch[1]);
-      } catch {
-        token = cookieMatch[1];
-      }
-    }
-
-    if (token) {
-      const tokenHash = hashToken(token);
-      await updateStore(async (store) => {
-        store.sessions = store.sessions.filter((session) => session.tokenHash !== tokenHash);
-      });
-    }
+    const token = req.authToken || getBearerToken(req) || getSessionCookie(req);
+    if (token) await revokeSessionToken(token);
 
     clearSessionCookie(req, res);
-    res.json({ success: true });
+    return res.json({ success: true });
   });
 
   router.get('/me', requireAuth, (req, res) => {
@@ -125,65 +91,50 @@ function createAuthRouter({
   });
 
   router.get('/access-keys', requireAuth, async (req, res) => {
-    const store = await readStore();
-    const user = store.users.find((item) => item.id === req.user.id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const accessKeys = await prisma.accessKey.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'asc' },
+    });
 
-    res.json({ accessKeys: normalizeAccessKeys(user).map(publicAccessKey) });
+    res.json({ accessKeys: accessKeys.map((accessKey) => publicAccessKey(accessKey)) });
   });
 
   router.post('/access-keys', accountRateLimit, requireAuth, async (req, res) => {
-    const requestedName = String(req.body.name || '').trim();
-    const result = await updateStore(async (store) => {
-      const user = store.users.find((item) => item.id === req.user.id);
-      if (!user) return null;
-      const accessKeyToken = await createApiKeyForUser(store, user);
-      const created = normalizeAccessKeys(user).at(-1);
-      if (created && requestedName) {
-        created.name = requestedName.slice(0, 80);
-      }
-      return { accessKey: publicAccessKey(created, accessKeyToken) };
-    });
-
-    if (!result) return res.status(404).json({ error: 'User not found' });
-    res.json(result);
+    try {
+      const requestedName = String(req.body.name || '').trim() || 'Access key';
+      const created = await createAccessKeyForUser(req.user.id, requestedName);
+      return res.status(201).json({ accessKey: publicAccessKey(created.accessKey, created.token) });
+    } catch (error) {
+      console.error('Access key create error:', error);
+      return res.status(500).json({ error: 'Failed to create access key' });
+    }
   });
 
   router.delete('/access-keys/:accessKeyId', accountRateLimit, requireAuth, async (req, res) => {
-    const { accessKeyId } = req.params;
-    const result = await updateStore(async (store) => {
-      const user = store.users.find((item) => item.id === req.user.id);
-      if (!user) return null;
+    try {
+      const deleted = await prisma.accessKey.deleteMany({
+        where: {
+          id: req.params.accessKeyId,
+          userId: req.user.id,
+        },
+      });
 
-      const accessKeys = normalizeAccessKeys(user);
-      const nextAccessKeys = accessKeys.filter((accessKey) => accessKey.id !== accessKeyId);
-      if (nextAccessKeys.length === accessKeys.length) {
-        return { notFound: true };
-      }
-
-      user.accessKeys = nextAccessKeys;
-      return { success: true };
-    });
-
-    if (!result) return res.status(404).json({ error: 'User not found' });
-    if (result.notFound) return res.status(404).json({ error: 'Access key not found' });
-    res.json({ success: true });
+      if (deleted.count === 0) return res.status(404).json({ error: 'Access key not found' });
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Access key delete error:', error);
+      return res.status(500).json({ error: 'Failed to delete access key' });
+    }
   });
 
   router.post('/api-key', accountRateLimit, requireAuth, async (req, res) => {
-    const result = await updateStore(async (store) => {
-      const user = store.users.find((item) => item.id === req.user.id);
-      if (!user) return null;
-      const accessKeyToken = await createApiKeyForUser(store, user);
-      const created = normalizeAccessKeys(user).at(-1);
-      return {
-        apiKey: accessKeyToken,
-        accessKey: publicAccessKey(created, accessKeyToken),
-      };
-    });
-
-    if (!result) return res.status(404).json({ error: 'User not found' });
-    res.json(result);
+    try {
+      const created = await createAccessKeyForUser(req.user.id, 'Access key');
+      return res.json({ apiKey: created.token, accessKey: publicAccessKey(created.accessKey, created.token) });
+    } catch (error) {
+      console.error('Legacy API key create error:', error);
+      return res.status(500).json({ error: 'Failed to create access key' });
+    }
   });
 
   return router;

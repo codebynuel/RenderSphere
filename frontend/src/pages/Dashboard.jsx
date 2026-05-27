@@ -282,6 +282,83 @@ export default function Dashboard() {
     }, [projects.length, selectedProjectId, stats.jobsByProject, stats.unassignedJobs]);
     const recentJobs = useMemo(() => filteredJobs.slice(0, activeView === 'overview' ? 5 : filteredJobs.length), [activeView, filteredJobs]);
     const recentFiles = useMemo(() => filteredFiles.slice(0, activeView === 'overview' ? 4 : filteredFiles.length), [activeView, filteredFiles]);
+    const viewMeta = useMemo(() => {
+        const copy = {
+            overview: {
+                eyebrow: 'Production workspace',
+                title: 'Overview',
+                description: 'Start here: connect Blender, create a project, submit a render, monitor progress, then download completed files.',
+            },
+            projects: {
+                eyebrow: 'Organize work',
+                title: 'Projects',
+                description: 'Create project spaces for clients, shots, sequences, experiments, and production milestones.',
+            },
+            renders: {
+                eyebrow: 'Render operations',
+                title: 'Render jobs',
+                description: `Monitor active and historical render jobs for ${selectedProjectName}.`,
+            },
+            files: {
+                eyebrow: 'Delivery library',
+                title: 'Rendered files',
+                description: `Download completed outputs and share authenticated links for ${selectedProjectName}.`,
+            },
+            access: {
+                eyebrow: 'Blender connection',
+                title: 'Access keys',
+                description: 'Create secure keys for Blender workstations and automation clients before submitting jobs.',
+            },
+        };
+        return copy[activeView] || copy.overview;
+    }, [activeView, selectedProjectName]);
+    const workflowSteps = useMemo(() => [
+        {
+            id: 'connect',
+            icon: KeyRound,
+            title: 'Connect Blender',
+            text: 'Create an access key and paste it into the RenderSphere Blender add-on preferences.',
+            complete: accessKeys.length > 0,
+            actionLabel: accessKeys.length > 0 ? 'Manage keys' : 'Create access key',
+            view: 'access',
+        },
+        {
+            id: 'project',
+            icon: FolderPlus,
+            title: 'Create project',
+            text: 'Group renders by client, shot, sequence, or experiment before production starts.',
+            complete: projects.length > 0,
+            actionLabel: projects.length > 0 ? 'View projects' : 'Create project',
+            view: 'projects',
+        },
+        {
+            id: 'submit',
+            icon: Activity,
+            title: 'Submit render',
+            text: 'Use the Blender add-on to send still frames or animations to the cloud render queue.',
+            complete: jobs.length > 0,
+            actionLabel: 'Download add-on',
+            href: '/downloads/rendersphere-blender-addon.zip',
+        },
+        {
+            id: 'monitor',
+            icon: Clock3,
+            title: 'Monitor jobs',
+            text: 'Track live progress, cost, duration, status changes, and failures in one queue.',
+            complete: jobs.length > 0,
+            actionLabel: 'Monitor jobs',
+            view: 'renders',
+        },
+        {
+            id: 'download',
+            icon: Download,
+            title: 'Download files',
+            text: 'Open completed results, copy download links, and review billed render time.',
+            complete: files.length > 0,
+            actionLabel: 'View files',
+            view: 'files',
+        },
+    ], [accessKeys.length, files.length, jobs.length, projects.length]);
 
     const handleCreateKey = async (event) => {
         event.preventDefault();
@@ -589,6 +666,42 @@ export default function Dashboard() {
         </motion.div>
     );
 
+    const renderWorkflowGuide = () => (
+        <motion.div className="panel dashboard-panel full workflow-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+            <div className="panel-head workflow-head">
+                <div>
+                    <p className="eyebrow">Recommended workflow</p>
+                    <h2>Get from Blender to delivered files</h2>
+                    <p className="muted">Follow these steps in order. Completed steps are marked automatically as your workspace fills with keys, projects, jobs, and files.</p>
+                </div>
+            </div>
+            <div className="workflow-steps">
+                {workflowSteps.map((step, index) => {
+                    const Icon = step.icon;
+                    return (
+                        <article className={`workflow-step ${step.complete ? 'complete' : ''}`} key={step.id}>
+                            <div className="workflow-step-number">{step.complete ? <CheckCircle2 size={16} /> : index + 1}</div>
+                            <div className="workflow-step-icon"><Icon size={20} /></div>
+                            <div className="workflow-step-copy">
+                                <h3>{step.title}</h3>
+                                <p>{step.text}</p>
+                            </div>
+                            {step.href ? (
+                                <a className="link-button" href={step.href} download>
+                                    {step.actionLabel}
+                                </a>
+                            ) : (
+                                <button className="button" type="button" onClick={() => setActiveView(step.view)}>
+                                    {step.actionLabel}
+                                </button>
+                            )}
+                        </article>
+                    );
+                })}
+            </div>
+        </motion.div>
+    );
+
     if (authLoading || !user) return null;
 
     return (
@@ -606,14 +719,17 @@ export default function Dashboard() {
             <section className="dashboard-main">
                 <div className="dashboard-titlebar">
                     <div>
-                        <p className="eyebrow">Production workspace</p>
-                        <h1>{selectedProjectName}</h1>
-                        <p className="muted">Monitor renders, group work into projects, and manage Blender access keys.</p>
+                        <p className="eyebrow">{viewMeta.eyebrow}</p>
+                        <h1>{viewMeta.title}</h1>
+                        <p className="muted">{viewMeta.description}</p>
+                        {activeView !== 'overview' && <span className="scope-chip">Scope: {selectedProjectName}</span>}
                     </div>
                     <button className="button" type="button" onClick={loadAll}>
                         <RefreshCcw size={16} /> Refresh all
                     </button>
                 </div>
+
+                {activeView === 'overview' && renderWorkflowGuide()}
 
                 {activeView === 'overview' && (
                     <div className="dashboard-metrics-grid">

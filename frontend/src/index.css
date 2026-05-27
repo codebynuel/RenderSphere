@@ -6,6 +6,10 @@
     --bg-soft: #0b0d0f;
     --panel: rgba(8, 9, 10, 0.82);
     --panel-solid: #0c0e10;
+    --panel-card: rgba(255, 255, 255, 0.045);
+    --panel-card-strong: rgba(0, 0, 0, 0.20);
+    --panel-section: rgba(0, 0, 0, 0.18);
+    --input-bg: rgba(0, 0, 0, 0.24);
     --line: rgba(255, 255, 255, 0.16);
     --line-soft: rgba(255, 255, 255, 0.08);
     --text: #f6f7f4;
@@ -14,10 +18,53 @@
     --accent: #ff6b35;
     --accent-soft: rgba(255, 107, 53, 0.18);
     --good: #b7ffdd;
-    --danger: #ff7b8d;
+    --frame-bg: rgba(5, 6, 7, 0.84);
+    --frame-gradient: rgba(255, 255, 255, 0.045);
+    --frame-border: rgba(255, 255, 255, 0.20);
+    --frame-ring: rgba(255, 255, 255, 0.045);
+    --nav-bg: rgba(5, 6, 7, 0.94);
+    --button-bg: rgba(255, 255, 255, 0.055);
+    --button-primary-bg: #f5f0e7;
+    --button-primary-text: #150b07;
+    --body-spot: rgba(255, 107, 53, 0.12);
+    --body-sheen: rgba(255, 255, 255, 0.03);
+    --body-overlay: rgba(0, 0, 0, 0.64);
     --radius-xl: 36px;
     --radius: 18px;
     --shadow: 0 26px 90px rgba(0, 0, 0, 0.46);
+}
+
+:root[data-theme='light'] {
+    color-scheme: light;
+    --bg: #f5f1ea;
+    --bg-soft: #ebe5da;
+    --panel: rgba(255, 252, 246, 0.88);
+    --panel-solid: #fffaf2;
+    --panel-card: rgba(255, 255, 255, 0.74);
+    --panel-card-strong: rgba(255, 255, 255, 0.82);
+    --panel-section: rgba(255, 255, 255, 0.62);
+    --input-bg: rgba(255, 255, 255, 0.72);
+    --line: rgba(26, 22, 18, 0.16);
+    --line-soft: rgba(26, 22, 18, 0.09);
+    --text: #171310;
+    --muted: rgba(23, 19, 16, 0.68);
+    --subtle: rgba(23, 19, 16, 0.48);
+    --accent: #d94f22;
+    --accent-soft: rgba(217, 79, 34, 0.14);
+    --good: #16724b;
+    --danger: #c73652;
+    --frame-bg: rgba(255, 252, 246, 0.86);
+    --frame-gradient: rgba(255, 255, 255, 0.72);
+    --frame-border: rgba(26, 22, 18, 0.14);
+    --frame-ring: rgba(255, 255, 255, 0.56);
+    --nav-bg: rgba(255, 252, 246, 0.94);
+    --button-bg: rgba(255, 255, 255, 0.64);
+    --button-primary-bg: #171310;
+    --button-primary-text: #fffaf2;
+    --body-spot: rgba(255, 107, 53, 0.18);
+    --body-sheen: rgba(255, 255, 255, 0.54);
+    --body-overlay: rgba(255, 250, 242, 0.38);
+    --shadow: 0 26px 90px rgba(68, 49, 31, 0.16);
 }
 
 * {
@@ -33,8 +80,8 @@ body {
     margin: 0;
     min-height: 100vh;
     background:
-        radial-gradient(circle at 70% 12%, rgba(255, 107, 53, 0.12), transparent 28%),
-        linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 260px),
+        radial-gradient(circle at 70% 12%, var(--body-spot), transparent 28%),
+        linear-gradient(180deg, var(--body-sheen), transparent 260px),
         var(--bg);
     color: var(--text);
     font-family: "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -59,7 +106,7 @@ body::after {
     position: fixed;
     inset: 0;
     z-index: -1;
-    background: rgba(0, 0, 0, 0.64);
+    background: var(--body-overlay);
 }
 
 a {
@@ -83,19 +130,51 @@ button {
 .site-frame {
     min-height: calc(100vh - 56px);
     margin: 28px auto;
-    border: 1px solid rgba(255, 255, 255, 0.20);
+    border: 1px solid var(--frame-border);
     border-radius: var(--radius-xl);
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 46%),
-        rgba(5, 6, 7, 0.84);
-    box-shadow: var(--shadow), inset 0 0 0 10px rgba(255, 255, 255, 0.045);
+        linear-gradient(180deg, var(--frame-gradient), transparent 46%),
+        var(--frame-bg);
+    box-shadow: var(--shadow), inset 0 0 0 10px var(--frame-ring);
     overflow: hidden;
     backdrop-filter: blur(12px);
 }
 
 .app-frame {
-    overflow: visible;
+    width: min(1380px, calc(100vw - 28px));
+    height: calc(100vh - 56px);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
     backdrop-filter: none;
+}
+
+.app-frame .nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    width: 100%;
+    flex-wrap: wrap;
+    padding: 18px clamp(18px, 3vw, 34px);
+    border-bottom: 1px solid var(--line-soft);
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    background:
+        linear-gradient(180deg, var(--frame-gradient), transparent),
+        var(--nav-bg);
+    backdrop-filter: blur(14px);
+}
+
+.app-frame .nav-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+}
+
+.app-frame .account-label {
+    max-width: min(220px, 40vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .nav {
@@ -146,7 +225,7 @@ button {
     border: 1px solid var(--line-soft);
     border-radius: 10px;
     color: var(--text);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--panel-section);
     font-size: 12px;
     font-weight: 700;
 }
@@ -157,17 +236,19 @@ button {
 }
 
 .button,
-.link-button {
+.link-button,
+.theme-toggle {
     min-height: 46px;
     border: 1px solid var(--line);
     border-radius: 12px;
     color: var(--text);
-    background: rgba(255, 255, 255, 0.055);
+    background: var(--button-bg);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 .button,
-.link-button {
+.link-button,
+.theme-toggle {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -181,8 +262,8 @@ button {
 .button.primary,
 .link-button.primary {
     border-color: rgba(255, 107, 53, 0.5);
-    color: #150b07;
-    background: #f5f0e7;
+    color: var(--button-primary-text);
+    background: var(--button-primary-bg);
 }
 
 .button.danger {
@@ -355,7 +436,7 @@ button {
 .job-row {
     border: 1px solid var(--line-soft);
     border-radius: var(--radius);
-    background: rgba(255, 255, 255, 0.045);
+    background: var(--panel-card);
 }
 
 .card,
@@ -391,7 +472,7 @@ button {
     padding: 24px;
     border: 1px solid var(--line-soft);
     border-radius: var(--radius);
-    background: rgba(255, 255, 255, 0.035);
+    background: var(--panel-card);
 }
 
 .stat strong,
@@ -433,6 +514,10 @@ button {
     text-decoration: none;
 }
 
+.footer .footer-brand-link {
+    color: var(--good);
+}
+
 .page {
     padding: 34px clamp(24px, 5vw, 56px) 56px;
 }
@@ -455,7 +540,7 @@ button {
     background:
         linear-gradient(150deg, transparent, rgba(255, 107, 53, 0.10)),
         repeating-radial-gradient(ellipse at 18% 80%, rgba(255, 255, 255, 0.10) 0 2px, transparent 3px 18px),
-        rgba(255, 255, 255, 0.035);
+        var(--panel-card);
 }
 
 .auth-panel {
@@ -482,7 +567,7 @@ button {
     padding: 5px;
     border: 1px solid var(--line-soft);
     border-radius: 14px;
-    background: rgba(255, 255, 255, 0.035);
+    background: var(--panel-section);
     margin-bottom: 20px;
 }
 
@@ -496,7 +581,7 @@ button {
 
 .tab.active {
     color: var(--text);
-    background: rgba(255, 255, 255, 0.09);
+    background: var(--button-bg);
 }
 
 .form,
@@ -522,7 +607,7 @@ input {
     border-radius: 12px;
     padding: 0 14px;
     color: var(--text);
-    background: rgba(0, 0, 0, 0.24);
+    background: var(--input-bg);
     outline: none;
 }
 
@@ -624,7 +709,7 @@ input:focus {
     padding: 16px;
     border: 1px solid var(--line-soft);
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.035);
+    background: var(--panel-card-strong);
 }
 
 .stack-meta {
@@ -822,10 +907,13 @@ input:focus {
 .dashboard-page {
     --dashboard-sidebar-width: 290px;
     --dashboard-page-pad: clamp(18px, 3vw, 34px);
-    display: block;
-    min-height: 760px;
-    padding: 18px var(--dashboard-page-pad) 42px;
-    padding-left: calc(var(--dashboard-page-pad) + var(--dashboard-sidebar-width) + 18px);
+    display: grid;
+    grid-template-columns: var(--dashboard-sidebar-width) minmax(0, 1fr);
+    gap: 18px;
+    min-height: 0;
+    height: 100%;
+    padding: 18px var(--dashboard-page-pad) 18px;
+    overflow: hidden;
 }
 
 .dashboard-sidebar,
@@ -833,27 +921,28 @@ input:focus {
 .helper-panel {
     border: 1px solid var(--line-soft);
     border-radius: 28px;
-    background: rgba(255, 255, 255, 0.035);
+    background: var(--panel-card);
 }
 
 .dashboard-sidebar {
-    position: fixed;
+    position: sticky;
+    top: 0;
     z-index: 8;
-    top: 128px;
-    bottom: 42px;
-    left: calc((100vw - min(1180px, calc(100vw - 28px))) / 2 + var(--dashboard-page-pad));
     width: var(--dashboard-sidebar-width);
+    height: 100%;
+    min-height: 0;
     display: grid;
+    align-content: start;
     gap: 14px;
-    max-height: none;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 16px;
 }
 
 .sidebar-section {
     border: 1px solid var(--line-soft);
     border-radius: 20px;
-    background: rgba(0, 0, 0, 0.18);
+    background: var(--panel-section);
     padding: 14px;
 }
 
@@ -892,7 +981,7 @@ input:focus {
     border-radius: 999px;
     padding: 7px 10px;
     color: var(--muted);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--button-bg);
     font-size: 12px;
     font-weight: 800;
 }
@@ -930,9 +1019,9 @@ input:focus {
 .sidebar-link:hover,
 .project-filter.active,
 .project-filter:hover {
-    border-color: rgba(255, 255, 255, 0.14);
+    border-color: var(--line);
     color: var(--text);
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--button-bg);
 }
 
 .sidebar-section-head,
@@ -945,14 +1034,26 @@ input:focus {
     border-radius: 999px;
     padding: 3px 7px;
     color: var(--text);
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--button-bg);
     text-align: center;
     font-size: 11px;
 }
 
 .dashboard-main {
     min-width: 0;
+    min-height: 0;
+    display: grid;
+    align-content: start;
+    gap: 16px;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: clamp(18px, 3vw, 30px);
+}
+
+.app-footer {
+    padding: 18px var(--dashboard-page-pad, clamp(18px, 3vw, 34px));
+    border-top: 1px solid var(--line-soft);
+    background: var(--nav-bg);
 }
 
 .dashboard-titlebar {
@@ -960,7 +1061,7 @@ input:focus {
     justify-content: space-between;
     align-items: flex-start;
     gap: 18px;
-    margin-bottom: 22px;
+    margin-bottom: 6px;
 }
 
 .dashboard-titlebar .eyebrow {
@@ -971,6 +1072,20 @@ input:focus {
     font-size: clamp(38px, 5vw, 72px);
     font-weight: 500;
     line-height: 0.94;
+}
+
+.scope-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    margin-top: 14px;
+    border: 1px solid var(--line-soft);
+    border-radius: 999px;
+    padding: 0 11px;
+    color: var(--muted);
+    background: var(--panel-section);
+    font-size: 12px;
+    font-weight: 800;
 }
 
 .dashboard-metrics-grid,
@@ -993,7 +1108,7 @@ input:focus {
 .helper-panel {
     border: 1px solid var(--line-soft);
     border-radius: 20px;
-    background: rgba(0, 0, 0, 0.20);
+    background: var(--panel-card-strong);
     padding: 18px;
 }
 
@@ -1113,7 +1228,7 @@ input:focus {
     height: 10px;
     border-radius: 999px;
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--panel-section);
 }
 
 .progress-fill {
@@ -1188,7 +1303,8 @@ input:focus {
 }
 
 .button:disabled,
-.link-button:disabled {
+.link-button:disabled,
+.theme-toggle:disabled {
     cursor: not-allowed;
     opacity: 0.5;
 }
@@ -1201,17 +1317,86 @@ input:focus {
     to { transform: rotate(360deg); }
 }
 
+.workflow-panel {
+    overflow: hidden;
+}
+
+.workflow-head .eyebrow {
+    margin-bottom: 10px;
+}
+
+.workflow-steps {
+    display: grid;
+    gap: 12px;
+}
+
+.workflow-step {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    border: 1px solid var(--line-soft);
+    border-radius: 18px;
+    padding: 14px;
+    background: var(--panel-section);
+}
+
+.workflow-step.complete {
+    border-color: rgba(183, 255, 221, 0.34);
+}
+
+.workflow-step-number,
+.workflow-step-icon {
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.workflow-step-number {
+    color: var(--text);
+    background: var(--button-bg);
+}
+
+.workflow-step.complete .workflow-step-number {
+    color: #07100b;
+    background: var(--good);
+}
+
+.workflow-step-icon {
+    color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.workflow-step-copy h3,
+.workflow-step-copy p {
+    margin: 0;
+}
+
+.workflow-step-copy h3 {
+    font-size: 16px;
+}
+
+.workflow-step-copy p {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.55;
+}
+
 @media (max-width: 1100px) {
     .dashboard-page {
-        display: grid;
         grid-template-columns: 1fr;
-        padding-left: var(--dashboard-page-pad);
     }
 
     .dashboard-sidebar {
         position: static;
         width: auto;
-        max-height: none;
+        height: auto;
+        max-height: 34vh;
     }
 
     .dashboard-metrics-grid,
@@ -1223,11 +1408,28 @@ input:focus {
 }
 
 @media (max-width: 760px) {
+    .app-frame {
+        width: min(100vw - 16px, 100%);
+        height: calc(100vh - 16px);
+        margin: 8px auto;
+        border-radius: 24px;
+    }
+
+    .app-frame .nav {
+        border-radius: 24px 24px 0 0;
+        padding: 14px;
+    }
+
+    .app-footer {
+        padding: 14px;
+    }
+
     .dashboard-page {
-        padding: 12px 14px 28px;
+        padding: 12px 14px 16px;
     }
 
     .dashboard-titlebar,
+    .workflow-step,
     .job-card-main,
     .job-actions,
     .file-item {

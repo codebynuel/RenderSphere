@@ -1,9 +1,9 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { formatBalance } from '../utils/api';
-import { LogOut } from 'lucide-react';
+import { LogOut, Moon, Sun } from 'lucide-react';
 
-export default function Navbar() {
+export default function Navbar({ theme = 'dark', onToggleTheme }) {
     const location = useLocation();
     const { user, logout } = useAuth();
 
@@ -14,6 +14,15 @@ export default function Navbar() {
         <header className="nav">
             <Link className="brand" to="/">RenderSphere</Link>
             <div className="nav-actions">
+                <button
+                    className="theme-toggle"
+                    type="button"
+                    onClick={onToggleTheme}
+                    aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+                >
+                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+                    <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+                </button>
                 {isApp && (
                     <>
                         <span className="route-chip">/app</span>

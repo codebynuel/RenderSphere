@@ -1,15 +1,15 @@
 import { Link } from 'react-router-dom';
 
-export default function Footer() {
+export default function Footer({ className = '' }) {
     return (
-        <footer className="footer">
+        <footer className={`footer${className ? ` ${className}` : ''}`}>
             <span>
                 &copy; {new Date().getFullYear()}{' '}
-                <a 
-                    href="https://github.com/Ella-Labs" 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
-                    style={{ color: 'aquamarine', textDecoration: 'none' }}
+                <a
+                    className="footer-brand-link"
+                    href="https://github.com/Ella-Labs"
+                    target="_blank"
+                    rel="noopener noreferrer"
                 >
                     Ella Labs &#8599;
                 </a>. 

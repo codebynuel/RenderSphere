@@ -141,11 +141,17 @@ button {
 }
 
 .app-frame {
-    width: min(1380px, calc(100vw - 28px));
-    height: calc(100vh - 56px);
+    width: 100vw;
+    height: 100vh;
+    min-height: 100vh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: 64px minmax(0, 1fr) auto;
     overflow: hidden;
+    background: var(--bg);
+    box-shadow: none;
     backdrop-filter: none;
 }
 
@@ -154,13 +160,12 @@ button {
     top: 0;
     z-index: 30;
     width: 100%;
-    flex-wrap: wrap;
-    padding: 18px clamp(18px, 3vw, 34px);
+    min-height: 64px;
+    flex-wrap: nowrap;
+    padding: 0 clamp(18px, 2.4vw, 32px);
     border-bottom: 1px solid var(--line-soft);
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-    background:
-        linear-gradient(180deg, var(--frame-gradient), transparent),
-        var(--nav-bg);
+    border-radius: 0;
+    background: var(--nav-bg);
     backdrop-filter: blur(14px);
 }
 
@@ -187,7 +192,7 @@ button {
 
 .brand {
     color: var(--text);
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 800;
     line-height: 1;
     text-decoration: none;
@@ -238,9 +243,9 @@ button {
 .button,
 .link-button,
 .theme-toggle {
-    min-height: 46px;
+    min-height: 40px;
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: 10px;
     color: var(--text);
     background: var(--button-bg);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -253,8 +258,8 @@ button {
     align-items: center;
     justify-content: center;
     gap: 10px;
-    padding: 0 22px;
-    font-size: 14px;
+    padding: 0 16px;
+    font-size: 13px;
     font-weight: 800;
     text-decoration: none;
 }
@@ -905,23 +910,21 @@ input:focus {
 }
 
 .dashboard-page {
-    --dashboard-sidebar-width: 290px;
-    --dashboard-page-pad: clamp(18px, 3vw, 34px);
+    --dashboard-sidebar-width: 272px;
+    --dashboard-page-pad: clamp(16px, 2.4vw, 32px);
     display: grid;
     grid-template-columns: var(--dashboard-sidebar-width) minmax(0, 1fr);
-    gap: 18px;
+    gap: 0;
     min-height: 0;
     height: 100%;
-    padding: 18px var(--dashboard-page-pad) 18px;
+    padding: 0;
     overflow: hidden;
 }
 
 .dashboard-sidebar,
 .dashboard-main,
 .helper-panel {
-    border: 1px solid var(--line-soft);
-    border-radius: 28px;
-    background: var(--panel-card);
+    background: transparent;
 }
 
 .dashboard-sidebar {
@@ -933,17 +936,19 @@ input:focus {
     min-height: 0;
     display: grid;
     align-content: start;
-    gap: 14px;
+    gap: 12px;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 16px;
+    border-right: 1px solid var(--line-soft);
+    padding: 18px 14px 18px var(--dashboard-page-pad);
+    background: color-mix(in srgb, var(--nav-bg) 76%, transparent);
 }
 
 .sidebar-section {
-    border: 1px solid var(--line-soft);
-    border-radius: 20px;
-    background: var(--panel-section);
-    padding: 14px;
+    border: 0;
+    border-radius: 14px;
+    background: transparent;
+    padding: 0;
 }
 
 .sidebar-hero h2,
@@ -967,9 +972,9 @@ input:focus {
 }
 
 .sidebar-hero h2 {
-    margin-top: 8px;
-    font-size: 22px;
-    line-height: 1.08;
+    margin-top: 6px;
+    font-size: 18px;
+    line-height: 1.16;
 }
 
 .socket-state {
@@ -995,24 +1000,24 @@ input:focus {
 .sidebar-nav,
 .sidebar-projects {
     display: grid;
-    gap: 8px;
+    gap: 4px;
 }
 
 .sidebar-link,
 .project-filter {
     width: 100%;
-    min-height: 42px;
+    min-height: 38px;
     border: 1px solid transparent;
-    border-radius: 14px;
+    border-radius: 10px;
     color: var(--muted);
     background: transparent;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 12px;
+    padding: 0 10px;
     text-align: left;
-    font-size: 14px;
-    font-weight: 800;
+    font-size: 13px;
+    font-weight: 750;
 }
 
 .sidebar-link.active,
@@ -1044,16 +1049,22 @@ input:focus {
     min-height: 0;
     display: grid;
     align-content: start;
-    gap: 16px;
+    gap: 14px;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: clamp(18px, 3vw, 30px);
+    padding: 24px var(--dashboard-page-pad) 28px;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--panel-card) 58%, transparent), transparent 280px),
+        var(--bg);
 }
 
 .app-footer {
-    padding: 18px var(--dashboard-page-pad, clamp(18px, 3vw, 34px));
+    min-height: 44px;
+    padding: 0 clamp(18px, 2.4vw, 32px);
+    align-items: center;
     border-top: 1px solid var(--line-soft);
     background: var(--nav-bg);
+    font-size: 12px;
 }
 
 .dashboard-titlebar {
@@ -1061,7 +1072,9 @@ input:focus {
     justify-content: space-between;
     align-items: flex-start;
     gap: 18px;
-    margin-bottom: 6px;
+    max-width: 1180px;
+    width: 100%;
+    margin: 0 auto 2px;
 }
 
 .dashboard-titlebar .eyebrow {
@@ -1069,9 +1082,10 @@ input:focus {
 }
 
 .dashboard-titlebar h1 {
-    font-size: clamp(38px, 5vw, 72px);
-    font-weight: 500;
-    line-height: 0.94;
+    font-size: clamp(32px, 4vw, 52px);
+    font-weight: 650;
+    line-height: 1;
+    letter-spacing: -0.04em;
 }
 
 .scope-chip {
@@ -1093,12 +1107,20 @@ input:focus {
 .project-grid,
 .job-details {
     display: grid;
-    gap: 14px;
+    gap: 12px;
+}
+
+.dashboard-grid {
+    max-width: 1180px;
+    width: 100%;
+    margin: 0 auto;
 }
 
 .dashboard-metrics-grid {
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    margin-bottom: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    max-width: 1180px;
+    width: 100%;
+    margin: 0 auto;
 }
 
 .dashboard-metric,
@@ -1107,13 +1129,13 @@ input:focus {
 .empty-state,
 .helper-panel {
     border: 1px solid var(--line-soft);
-    border-radius: 20px;
+    border-radius: 14px;
     background: var(--panel-card-strong);
-    padding: 18px;
+    padding: 16px;
 }
 
 .dashboard-metric {
-    min-height: 146px;
+    min-height: 118px;
 }
 
 .metric-icon {
@@ -1121,7 +1143,7 @@ input:focus {
     height: 36px;
     display: grid;
     place-items: center;
-    margin-bottom: 18px;
+    margin-bottom: 12px;
     border-radius: 12px;
     color: var(--accent);
     background: var(--accent-soft);
@@ -1134,7 +1156,7 @@ input:focus {
     text-overflow: ellipsis;
     overflow-wrap: anywhere;
     color: var(--text);
-    font-size: clamp(22px, 2.2vw, 28px);
+    font-size: clamp(19px, 1.8vw, 24px);
     line-height: 1.05;
 }
 
@@ -1156,6 +1178,9 @@ input:focus {
 
 .dashboard-panel {
     min-width: 0;
+    max-width: 1180px;
+    width: 100%;
+    margin-inline: auto;
 }
 
 .project-grid {
@@ -1319,6 +1344,7 @@ input:focus {
 
 .workflow-panel {
     overflow: hidden;
+    padding: 18px;
 }
 
 .workflow-head .eyebrow {
@@ -1327,16 +1353,17 @@ input:focus {
 
 .workflow-steps {
     display: grid;
-    gap: 12px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
 }
 
 .workflow-step {
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
-    gap: 14px;
-    align-items: center;
+    align-content: space-between;
+    gap: 12px;
+    min-height: 210px;
     border: 1px solid var(--line-soft);
-    border-radius: 18px;
+    border-radius: 14px;
     padding: 14px;
     background: var(--panel-section);
 }
@@ -1371,25 +1398,39 @@ input:focus {
     background: var(--accent-soft);
 }
 
+.workflow-step .button,
+.workflow-step .link-button {
+    width: 100%;
+    min-height: 36px;
+    padding: 0 12px;
+}
+
 .workflow-step-copy h3,
 .workflow-step-copy p {
     margin: 0;
 }
 
 .workflow-step-copy h3 {
-    font-size: 16px;
+    font-size: 15px;
 }
 
 .workflow-step-copy p {
     margin-top: 6px;
     color: var(--muted);
-    font-size: 14px;
-    line-height: 1.55;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+@media (max-width: 1180px) {
+    .workflow-steps {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 @media (max-width: 1100px) {
     .dashboard-page {
         grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr);
     }
 
     .dashboard-sidebar {
@@ -1397,6 +1438,9 @@ input:focus {
         width: auto;
         height: auto;
         max-height: 34vh;
+        border-right: 0;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 14px var(--dashboard-page-pad);
     }
 
     .dashboard-metrics-grid,
@@ -1409,15 +1453,18 @@ input:focus {
 
 @media (max-width: 760px) {
     .app-frame {
-        width: min(100vw - 16px, 100%);
-        height: calc(100vh - 16px);
-        margin: 8px auto;
-        border-radius: 24px;
+        width: 100vw;
+        height: 100vh;
+        margin: 0;
+        border-radius: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
     }
 
     .app-frame .nav {
-        border-radius: 24px 24px 0 0;
-        padding: 14px;
+        border-radius: 0;
+        padding: 12px 14px;
+        align-items: flex-start;
+        flex-wrap: wrap;
     }
 
     .app-footer {
@@ -1425,7 +1472,15 @@ input:focus {
     }
 
     .dashboard-page {
-        padding: 12px 14px 16px;
+        padding: 0;
+    }
+
+    .dashboard-main {
+        padding: 18px 14px 22px;
+    }
+
+    .workflow-steps {
+        grid-template-columns: 1fr;
     }
 
     .dashboard-titlebar,
@@ -1435,6 +1490,11 @@ input:focus {
     .file-item {
         display: grid;
         grid-template-columns: 1fr;
+    }
+
+    .nav-actions,
+    .footer-links {
+        gap: 8px;
     }
 
     .dashboard-metrics-grid,

@@ -61,7 +61,7 @@ export default function Auth() {
     if (authLoading || user) return null; // Avoid flashing the page while checking auth
 
     return (
-        <main className="page">
+        <main className="page auth-page">
             <section className="auth-layout">
                 <motion.div 
                     className="workbench"
@@ -71,10 +71,13 @@ export default function Auth() {
                 >
                     <div>
                         <p className="eyebrow">RenderSphere account</p>
-                        <h2 style={{ margin: 0, fontSize: '32px', fontWeight: 500, lineHeight: 1.1, color: 'var(--text)' }}>
-                            Sign in and continue to your render dashboard.
-                        </h2>
-                        <p className="lede">Use your account to manage access keys, submit renders from Blender, and track completed files.</p>
+                        <h2>Move from scene file to delivered output.</h2>
+                        <p className="lede">Use your account to manage access keys, organize projects, submit renders from Blender, and track completed files.</p>
+                    </div>
+                    <div className="auth-benefits">
+                        <span>Access keys for workstations</span>
+                        <span>Project-scoped render history</span>
+                        <span>Authenticated result downloads</span>
                     </div>
                     <div className="placeholder-shot image-shot" data-label="Account access">
                         <img src="https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=900&q=80" alt="Clean workstation for managing cloud rendering projects" />
@@ -90,7 +93,7 @@ export default function Auth() {
                     <div className="panel-head">
                         <div>
                             <h2>{mode === 'register' ? 'Create account' : 'Log in'}</h2>
-                            <p className="muted">After sign in you will be taken to /app.</p>
+                            <p className="muted">After sign in, you will land in your production dashboard.</p>
                         </div>
                     </div>
 

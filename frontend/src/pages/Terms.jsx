@@ -3,13 +3,15 @@ import { motion } from 'framer-motion';
 export default function Terms() {
     return (
         <main className="legal">
-            <motion.div
+            <motion.article
+                className="legal-card"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
             >
+                <p className="eyebrow">Legal</p>
                 <h1>Terms of Service</h1>
-                <p>By using RenderSphere, you agree to these terms.</p>
+                <p className="legal-lede">By using RenderSphere, you agree to these terms.</p>
                 
                 <h2>1. Service Description</h2>
                 <p>RenderSphere provides cloud rendering services for Blender files via RunPod infrastructure. We process your .blend files, execute the render using the specified settings, and return the output.</p>
@@ -25,7 +27,7 @@ export default function Terms() {
 
                 <h2>5. Limitation of Liability</h2>
                 <p>RenderSphere is provided "as is" without warranties. We are not liable for any lost data, failed renders, or project delays. Please always keep backups of your original files.</p>
-            </motion.div>
+            </motion.article>
         </main>
     );
 }

@@ -670,7 +670,6 @@ export default function Dashboard() {
         <motion.div className="panel dashboard-panel full workflow-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-head workflow-head">
                 <div>
-                    <p className="eyebrow">Recommended workflow</p>
                     <h2>Get from Blender to delivered files</h2>
                     <p className="muted">Follow these steps in order. Completed steps are marked automatically as your workspace fills with keys, projects, jobs, and files.</p>
                 </div>

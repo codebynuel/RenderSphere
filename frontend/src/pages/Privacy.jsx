@@ -3,13 +3,15 @@ import { motion } from 'framer-motion';
 export default function Privacy() {
     return (
         <main className="legal">
-            <motion.div
+            <motion.article
+                className="legal-card"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
             >
+                <p className="eyebrow">Privacy</p>
                 <h1>Privacy Policy</h1>
-                <p>How we handle your data.</p>
+                <p className="legal-lede">How we handle your data.</p>
 
                 <h2>Information Collection</h2>
                 <p>We collect your email address for account management. Render jobs generate metadata (job IDs, duration, costs) which we store to provide you with your dashboard history.</p>
@@ -22,7 +24,7 @@ export default function Privacy() {
                 
                 <h2>Data Deletion</h2>
                 <p>You can request account deletion at any time by contacting support. This will remove your account details, access keys, and associated file references from our database.</p>
-            </motion.div>
+            </motion.article>
         </main>
     );
 }

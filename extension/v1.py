@@ -44,6 +44,17 @@ ui_sample_current = 0
 LOG_PREFIX = "[RenderSphere]"
 ACTIVE_RENDER_STATUSES = {"In Queue...", "Rendering Animation...", "Rendering Frame...", "Downloading Render..."}
 READY_RENDER_STATUSES = {"Idle", "Render Complete.", "Zip saved.", "Render Failed", "Connection OK", "Error", "Cancelled."}
+INTERNAL_RENDER_ERROR_MARKERS = (
+    "runpod",
+    "traceback",
+    "error_traceback",
+    "hostname",
+    "worker_id",
+    "serverless",
+    "rp_job.py",
+    "handler.py",
+    "/usr/local/",
+)
 GUIDED_WALL_ITEMS = [
     ('AUTH', '1 · Connect', 'Connect your RenderSphere account'),
     ('TARGET', '2 · Target', 'Choose scene, camera, and project'),
@@ -182,6 +193,55 @@ def describe_url_error(error):
         return f"{error.code}: {message}"
 
     return str(error)
+
+
+def parse_maybe_json(value):
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
+
+
+def first_text(*values):
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def extract_render_error_message(error):
+    parsed = parse_maybe_json(error)
+    if isinstance(parsed, str):
+        return parsed
+    if not isinstance(parsed, dict):
+        return ""
+
+    output = parsed.get("output") if isinstance(parsed.get("output"), dict) else {}
+    return first_text(
+        parsed.get("user_message"),
+        parsed.get("userMessage"),
+        parsed.get("message"),
+        parsed.get("error_message"),
+        parsed.get("error"),
+        output.get("message"),
+        output.get("error"),
+    )
+
+
+def sanitize_render_error(error, fallback="Render failed while processing the scene."):
+    raw_message = extract_render_error_message(error) or fallback
+    normalized = " ".join(str(raw_message).split())
+    lower_message = normalized.lower()
+
+    if "blender stopped" in lower_message or "blender crashed" in lower_message or "exit code" in lower_message or "signal" in lower_message:
+        return "Blender stopped unexpectedly while rendering this scene. Try lowering samples, resolution, or texture sizes before submitting again."
+
+    if not normalized or any(marker in lower_message for marker in INTERNAL_RENDER_ERROR_MARKERS):
+        return fallback
+
+    return normalized[:320]
 
 
 def get_service_max_upload_bytes(context=None):
@@ -396,7 +456,8 @@ def check_job_status():
                     return None
 
                 elif status == "FAILED":
-                    current_error_msg = str(data.get("error", "Unknown render service error."))
+                    raw_error = data.get("error") or data.get("message") or data.get("job", {}).get("error")
+                    current_error_msg = sanitize_render_error(raw_error, "Render failed while processing the scene.")
                     log_verbose("Render failed", job_id=current_job_id, error=current_error_msg)
                     set_status("Render Failed")
                     current_job_id = None

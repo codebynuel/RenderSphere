@@ -14,6 +14,15 @@ REQUIRED_ENV_VARS = [
     'R2_SECRET_ACCESS_KEY',
     'R2_BUCKET_NAME',
 ]
+BLENDER_FATAL_PATTERNS = (
+    'segmentation fault',
+    'signal 6',
+    'sigabrt',
+    'abort',
+    'out of memory',
+    'cuda error',
+    'optix error',
+)
 
 def positive_int_env(name, default):
     try:
@@ -109,7 +118,7 @@ def ensure_tmp_space(stage):
     print(f"/tmp free before {stage}: {free_mb} MB")
 
 
-def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold, camera, scene_name, force_cpu):
+def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold, camera, scene_name, force_cpu, allow_cpu_fallback, gpu_device_type):
     return f"""
 import bpy
 
@@ -122,6 +131,8 @@ noise_threshold = {noise_threshold}
 camera_name = {camera!r}
 scene_name = {scene_name!r}
 force_cpu = {force_cpu!r}
+allow_cpu_fallback = {allow_cpu_fallback!r}
+requested_gpu_device_type = {gpu_device_type!r}
 
 target_scene = bpy.data.scenes.get(scene_name) if scene_name else bpy.context.scene
 if scene_name and target_scene is None:
@@ -163,8 +174,14 @@ if engine == 'CYCLES':
         scene.cycles.adaptive_threshold = noise_threshold
 
     def use_cpu(reason):
-        scene.cycles.device = 'CPU'
-        print(f"Cycles CPU rendering enabled: {{reason}}")
+        if force_cpu or allow_cpu_fallback:
+            scene.cycles.device = 'CPU'
+            print(f"Cycles CPU rendering enabled: {{reason}}")
+            return
+        raise RuntimeError(
+            f"GPU render device setup failed: {{reason}}. "
+            "Attach an NVIDIA GPU worker or set RENDER_ALLOW_CPU_FALLBACK=true for diagnostics."
+        )
 
     if force_cpu:
         use_cpu('forced by worker configuration')
@@ -177,25 +194,45 @@ if engine == 'CYCLES':
                 raise RuntimeError('Cycles add-on preferences are unavailable')
             cprefs = cycles_addon.preferences
 
+            def refresh_devices():
+                if hasattr(cprefs, 'refresh_devices'):
+                    cprefs.refresh_devices()
+                else:
+                    cprefs.get_devices()
+
             def enable_devices(device_type):
                 try:
                     cprefs.compute_device_type = device_type
-                    cprefs.get_devices()
+                    refresh_devices()
                 except Exception as exc:
                     print(f"Could not select {{device_type}} devices: {{exc}}")
                     return False
 
-                found = False
+                selected = []
                 for device in cprefs.devices:
-                    should_use = device.type == device_type
+                    should_use = device.type == device_type and device.type != 'CPU'
                     device.use = should_use
-                    found = found or should_use
-                return found
+                    if should_use:
+                        selected.append(getattr(device, 'name', device.type))
 
-            if not enable_devices('OPTIX'):
-                print('No OPTIX devices found; trying CUDA.')
-                if not enable_devices('CUDA'):
-                    use_cpu('no compatible GPU device was found')
+                if selected:
+                    print(f"Enabled Cycles {{device_type}} devices: {{', '.join(selected)}}")
+                return bool(selected)
+
+            requested = (requested_gpu_device_type or 'AUTO').upper()
+            if requested in {'OPTIX', 'CUDA'}:
+                device_order = [requested] + [device for device in ['OPTIX', 'CUDA'] if device != requested]
+            else:
+                device_order = ['OPTIX', 'CUDA']
+
+            enabled = False
+            for device_type in device_order:
+                if enable_devices(device_type):
+                    enabled = True
+                    break
+
+            if not enabled:
+                use_cpu('no compatible NVIDIA Cycles device was found')
         except Exception as exc:
             use_cpu(f'GPU setup failed: {{exc}}')
 else:
@@ -230,6 +267,7 @@ def stream_blender_process(process, job, start_frame, end_frame, samples, is_ani
     current_frame_val = start_frame
     current_sample_val = 0
     frame_count = max(1, end_frame - start_frame + 1 if is_animation else 1)
+    recent_output = []
 
     def progress_percent():
         sample_ratio = min(1.0, max(0.0, current_sample_val / max(1, samples)))
@@ -248,6 +286,8 @@ def stream_blender_process(process, job, start_frame, end_frame, samples, is_ani
             line = process.stdout.readline()
             if line:
                 print(line, end='')
+                recent_output.append(line.strip())
+                recent_output = recent_output[-24:]
 
                 frame_match = re.search(r'Fra:(\d+)', line)
                 sample_match = re.search(r'Sample (\d+)/', line)
@@ -272,16 +312,27 @@ def stream_blender_process(process, job, start_frame, end_frame, samples, is_ani
         if process.poll() is not None:
             for line in process.stdout:
                 print(line, end='')
+                recent_output.append(line.strip())
+                recent_output = recent_output[-24:]
             break
 
     if process.returncode != 0:
+        tail = "\n".join(line for line in recent_output if line)
+        tail_lower = tail.lower()
         if process.returncode < 0:
             signal_number = abs(process.returncode)
+            likely_reason = "out of memory" if "out of memory" in tail_lower else "native Blender/GPU failure"
             raise RuntimeError(
-                f"Blender stopped unexpectedly with signal {signal_number}. "
-                "This usually means the render worker ran out of memory or the scene triggered a native Blender/GPU crash."
+                f"Blender stopped unexpectedly with signal {signal_number} ({likely_reason}). "
+                "Recent Blender output:\n"
+                f"{tail[-2000:]}"
             )
-        raise RuntimeError(f"Blender stopped with exit code {process.returncode}")
+        matched_reason = next((pattern for pattern in BLENDER_FATAL_PATTERNS if pattern in tail_lower), "render process failure")
+        raise RuntimeError(
+            f"Blender stopped with exit code {process.returncode} ({matched_reason}). "
+            "Recent Blender output:\n"
+            f"{tail[-2000:]}"
+        )
 
     runpod.serverless.progress_update(job, {
         "current_frame": end_frame if is_animation else start_frame,
@@ -342,6 +393,14 @@ def render_job(job):
         ensure_tmp_space('download')
         os.makedirs(output_dir, exist_ok=True)
         force_cpu = normalize_bool(os.environ.get('RENDER_FORCE_CPU'), False)
+        allow_cpu_fallback = normalize_bool(os.environ.get('RENDER_ALLOW_CPU_FALLBACK'), False)
+        gpu_device_type = os.environ.get('RENDER_GPU_DEVICE_TYPE', 'AUTO').strip().upper() or 'AUTO'
+        if gpu_device_type not in {'AUTO', 'OPTIX', 'CUDA'}:
+            print(f"Unsupported RENDER_GPU_DEVICE_TYPE={gpu_device_type}; using AUTO.")
+            gpu_device_type = 'AUTO'
+
+        cuda_cache_path = os.environ.get('CUDA_CACHE_PATH', '/tmp/cuda-cache')
+        os.makedirs(cuda_cache_path, exist_ok=True)
 
         print(
             "Render settings: "
@@ -356,7 +415,9 @@ def render_job(job):
             f"denoiser={denoiser} "
             f"scene={scene_name or 'active'} "
             f"camera={camera or 'scene camera'} "
+            f"gpu_device_type={gpu_device_type} "
             f"force_cpu={force_cpu} "
+            f"allow_cpu_fallback={allow_cpu_fallback} "
             f"timeout_seconds={RENDER_TIMEOUT_SECONDS}"
         )
 
@@ -373,7 +434,9 @@ def render_job(job):
             noise_threshold,
             camera,
             scene_name,
-            force_cpu
+            force_cpu,
+            allow_cpu_fallback,
+            gpu_device_type
         )
 
         with open(gpu_script_path, 'w') as f:
@@ -393,7 +456,10 @@ def render_job(job):
         else:
             render_command.extend(['-f', str(start_frame)])
 
-        process = subprocess.Popen(render_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        render_env = os.environ.copy()
+        render_env.setdefault('CUDA_CACHE_PATH', cuda_cache_path)
+        render_env.setdefault('CUDA_MODULE_LOADING', 'LAZY')
+        process = subprocess.Popen(render_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=render_env)
         stream_blender_process(process, job, start_frame, end_frame, samples, is_animation)
 
         if is_animation:

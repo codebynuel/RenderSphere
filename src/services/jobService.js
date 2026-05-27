@@ -131,8 +131,13 @@ export function sanitizeRenderError(error, fallback = 'Render failed while proce
   const normalized = rawMessage.replace(/\s+/g, ' ').trim();
   const lowerMessage = normalized.toLowerCase();
 
-  if (lowerMessage.includes('blender crashed') || lowerMessage.includes('exit code')) {
-    return 'Blender stopped unexpectedly while rendering this scene. Try lowering samples or resolution, then submit again.';
+  if (
+    lowerMessage.includes('blender stopped')
+    || lowerMessage.includes('blender crashed')
+    || lowerMessage.includes('exit code')
+    || lowerMessage.includes('signal')
+  ) {
+    return 'Blender stopped unexpectedly while rendering this scene. Try lowering samples, resolution, or texture sizes before submitting again.';
   }
 
   if (!normalized || INTERNAL_ERROR_MARKERS.some((marker) => lowerMessage.includes(marker))) {

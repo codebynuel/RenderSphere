@@ -615,13 +615,15 @@ export default function Dashboard() {
                     </button>
                 </div>
 
-                <div className="dashboard-metrics-grid">
-                    <MetricCard icon={FolderKanban} label="Current scope" value={selectedProjectName} detail={scopeDetail} />
-                    <MetricCard icon={Activity} label="Active jobs" value={scopedStats.activeJobs} detail={`${scopedStats.totalJobs} jobs in this view`} />
-                    <MetricCard icon={CheckCircle2} label="Completed" value={scopedStats.completedJobs} detail={`${scopedStats.totalFiles} downloadable files`} />
-                    <MetricCard icon={XCircle} label="Failed" value={scopedStats.failedJobs} detail="In this view" />
-                    <MetricCard icon={Clock3} label="Spend" value={formatUsd(scopedStats.totalSpend)} detail={`${formatDuration(scopedStats.billableSeconds)} billed / Balance ${formatUsd(user.starterBalanceUsd)}`} />
-                </div>
+                {activeView === 'overview' && (
+                    <div className="dashboard-metrics-grid">
+                        <MetricCard icon={FolderKanban} label="Current scope" value={selectedProjectName} detail={scopeDetail} />
+                        <MetricCard icon={Activity} label="Active jobs" value={scopedStats.activeJobs} detail={`${scopedStats.totalJobs} jobs in this view`} />
+                        <MetricCard icon={CheckCircle2} label="Completed" value={scopedStats.completedJobs} detail={`${scopedStats.totalFiles} downloadable files`} />
+                        <MetricCard icon={XCircle} label="Failed" value={scopedStats.failedJobs} detail="In this view" />
+                        <MetricCard icon={Clock3} label="Spend" value={formatUsd(scopedStats.totalSpend)} detail={`${formatDuration(scopedStats.billableSeconds)} billed / Balance ${formatUsd(user.starterBalanceUsd)}`} />
+                    </div>
+                )}
 
                 {activeView === 'overview' && (
                     <div className="dashboard-grid">

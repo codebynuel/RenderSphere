@@ -9,7 +9,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "package:extension": "node scripts/package-extension.mjs",
-    "test": "node scripts/smoke-test.mjs"
+    "test": "node scripts/smoke-test.mjs",
+    "start:prod": "npm run build --prefix frontend && npm run start"
   },
   "keywords": [],
   "author": "",

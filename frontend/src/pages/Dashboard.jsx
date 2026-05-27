@@ -613,7 +613,7 @@ export default function Dashboard() {
             <div className="panel-head">
                 <div>
                     <h2>{activeView === 'overview' ? 'Active and recent jobs' : `Render jobs / ${selectedProjectName}`}</h2>
-                    <p className="muted">Live progress streams from RunPod through Socket.IO.</p>
+                    <p className="muted">Live render progress updates through the dashboard.</p>
                 </div>
                 <button className="button" type="button" onClick={loadJobs} disabled={loading.jobs}>
                     <RefreshCcw size={16} className={loading.jobs ? 'spin' : ''} /> Refresh

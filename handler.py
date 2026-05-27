@@ -109,7 +109,7 @@ def ensure_tmp_space(stage):
     print(f"/tmp free before {stage}: {free_mb} MB")
 
 
-def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold, camera, scene_name):
+def build_blender_setup_script(engine, samples, output_format, resolution_pct, denoiser, noise_threshold, camera, scene_name, force_cpu):
     return f"""
 import bpy
 
@@ -121,6 +121,7 @@ denoiser = {denoiser!r}
 noise_threshold = {noise_threshold}
 camera_name = {camera!r}
 scene_name = {scene_name!r}
+force_cpu = {force_cpu!r}
 
 target_scene = bpy.data.scenes.get(scene_name) if scene_name else bpy.context.scene
 if scene_name and target_scene is None:
@@ -161,29 +162,42 @@ if engine == 'CYCLES':
     if hasattr(scene.cycles, 'adaptive_threshold'):
         scene.cycles.adaptive_threshold = noise_threshold
 
-    scene.cycles.device = 'GPU'
-    prefs = bpy.context.preferences
-    cprefs = prefs.addons['cycles'].preferences
+    def use_cpu(reason):
+        scene.cycles.device = 'CPU'
+        print(f"Cycles CPU rendering enabled: {{reason}}")
 
-    def enable_devices(device_type):
+    if force_cpu:
+        use_cpu('forced by worker configuration')
+    else:
         try:
-            cprefs.compute_device_type = device_type
+            scene.cycles.device = 'GPU'
+            prefs = bpy.context.preferences
+            cycles_addon = prefs.addons.get('cycles')
+            if not cycles_addon:
+                raise RuntimeError('Cycles add-on preferences are unavailable')
+            cprefs = cycles_addon.preferences
+
+            def enable_devices(device_type):
+                try:
+                    cprefs.compute_device_type = device_type
+                    cprefs.get_devices()
+                except Exception as exc:
+                    print(f"Could not select {{device_type}} devices: {{exc}}")
+                    return False
+
+                found = False
+                for device in cprefs.devices:
+                    should_use = device.type == device_type
+                    device.use = should_use
+                    found = found or should_use
+                return found
+
+            if not enable_devices('OPTIX'):
+                print('No OPTIX devices found; trying CUDA.')
+                if not enable_devices('CUDA'):
+                    use_cpu('no compatible GPU device was found')
         except Exception as exc:
-            print(f"Could not select {{device_type}} devices: {{exc}}")
-            return False
-
-        cprefs.get_devices()
-        found = False
-        for device in cprefs.devices:
-            should_use = device.type == device_type
-            device.use = should_use
-            found = found or should_use
-        return found
-
-    if not enable_devices('OPTIX'):
-        print('No OPTIX devices found; trying CUDA.')
-        if not enable_devices('CUDA'):
-            print('No CUDA devices found; Cycles will render with CPU.')
+            use_cpu(f'GPU setup failed: {{exc}}')
 else:
     try:
         scene.eevee.taa_render_samples = samples
@@ -261,7 +275,13 @@ def stream_blender_process(process, job, start_frame, end_frame, samples, is_ani
             break
 
     if process.returncode != 0:
-        raise RuntimeError(f"Blender crashed with exit code {process.returncode}")
+        if process.returncode < 0:
+            signal_number = abs(process.returncode)
+            raise RuntimeError(
+                f"Blender stopped unexpectedly with signal {signal_number}. "
+                "This usually means the render worker ran out of memory or the scene triggered a native Blender/GPU crash."
+            )
+        raise RuntimeError(f"Blender stopped with exit code {process.returncode}")
 
     runpod.serverless.progress_update(job, {
         "current_frame": end_frame if is_animation else start_frame,
@@ -321,6 +341,7 @@ def render_job(job):
     try:
         ensure_tmp_space('download')
         os.makedirs(output_dir, exist_ok=True)
+        force_cpu = normalize_bool(os.environ.get('RENDER_FORCE_CPU'), False)
 
         print(
             "Render settings: "
@@ -335,6 +356,7 @@ def render_job(job):
             f"denoiser={denoiser} "
             f"scene={scene_name or 'active'} "
             f"camera={camera or 'scene camera'} "
+            f"force_cpu={force_cpu} "
             f"timeout_seconds={RENDER_TIMEOUT_SECONDS}"
         )
 
@@ -350,7 +372,8 @@ def render_job(job):
             denoiser,
             noise_threshold,
             camera,
-            scene_name
+            scene_name,
+            force_cpu
         )
 
         with open(gpu_script_path, 'w') as f:

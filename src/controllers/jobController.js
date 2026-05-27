@@ -3,7 +3,7 @@ import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
 import { attachmentFileName, contentTypeForKey, getRenderedObject } from '../services/storageService.js';
 import { fetchRunpodJobStatus, getRunpodResultKey } from '../services/runpodService.js';
-import { persistRunpodStatus, renderedFileDownloadPath, serializeJob, serializeRenderedFile, syncActiveJobsForUser } from '../services/jobService.js';
+import { persistRunpodStatus, renderedFileDownloadPath, sanitizeRenderError, serializeJob, serializeRenderedFile, syncActiveJobsForUser } from '../services/jobService.js';
 
 export function createJobController({ emitJobUpdate = null } = {}) {
   return {
@@ -81,12 +81,16 @@ export function createJobController({ emitJobUpdate = null } = {}) {
 
         if (rpData.status === 'COMPLETED') {
           const resultKey = getRunpodResultKey(rpData) || updatedJob?.resultKey;
-          if (!resultKey) return res.status(502).json({ error: 'RunPod completed without a result key' });
+          if (!resultKey) return res.status(502).json({ error: 'Render completed without a result file' });
           return res.json({ status: 'COMPLETED', downloadUrl: renderedFileDownloadPath(jobId), job: serializeJob(updatedJob, rpData) });
         }
 
         if (rpData.status === 'FAILED') {
-          return res.json({ status: 'FAILED', error: rpData.error || updatedJob?.error, job: serializeJob(updatedJob, rpData) });
+          return res.json({
+            status: 'FAILED',
+            error: sanitizeRenderError(updatedJob?.error || rpData.error || rpData.output),
+            job: serializeJob(updatedJob, rpData),
+          });
         }
 
         if (rpData.status === 'CANCELLED') {

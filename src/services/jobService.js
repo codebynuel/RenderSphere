@@ -2,6 +2,18 @@ import { ACTIVE_JOB_STATUSES, VALID_DENOISERS, VALID_ENGINES, VALID_OUTPUT_FORMA
 import { prisma } from '../db.js';
 import { fetchRunpodJobStatus, getRunpodExecutionSeconds, getRunpodResultKey } from './runpodService.js';
 
+const INTERNAL_ERROR_MARKERS = [
+  'runpod',
+  'traceback',
+  'error_traceback',
+  'hostname',
+  'worker_id',
+  'serverless',
+  'rp_job.py',
+  'handler.py',
+  '/usr/local/',
+];
+
 export function normalizeBoolean(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (value === 'true') return true;
@@ -89,6 +101,45 @@ function parseMaybeJson(value) {
   } catch {
     return value;
   }
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function providerErrorMessage(error) {
+  const parsed = parseMaybeJson(error);
+  if (typeof parsed === 'string') return parsed;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
+
+  return firstString(
+    parsed.user_message,
+    parsed.userMessage,
+    parsed.message,
+    parsed.error_message,
+    parsed.error,
+    parsed.output?.message,
+    parsed.output?.error
+  );
+}
+
+export function sanitizeRenderError(error, fallback = 'Render failed while processing the scene.') {
+  const rawMessage = providerErrorMessage(error) || fallback;
+  const normalized = rawMessage.replace(/\s+/g, ' ').trim();
+  const lowerMessage = normalized.toLowerCase();
+
+  if (lowerMessage.includes('blender crashed') || lowerMessage.includes('exit code')) {
+    return 'Blender stopped unexpectedly while rendering this scene. Try lowering samples or resolution, then submit again.';
+  }
+
+  if (!normalized || INTERNAL_ERROR_MARKERS.some((marker) => lowerMessage.includes(marker))) {
+    return fallback;
+  }
+
+  return normalized.slice(0, 320);
 }
 
 function unwrapStreamPayload(item) {
@@ -219,7 +270,7 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
       updatedAt: new Date().toISOString(),
     };
   } else if (status === 'FAILED') {
-    updateData.error = rpData.error || rpData.output?.message || rpData.output?.error || 'Unknown RunPod error';
+    updateData.error = sanitizeRenderError(rpData.error || rpData.output, 'Render failed while processing the scene.');
     updateData.failedAt = job.failedAt || new Date();
   } else if (status === 'CANCELLED') {
     updateData.cancelledAt = job.cancelledAt || new Date();
@@ -272,7 +323,7 @@ export async function syncActiveJobsForUser(userId, emitJobUpdate = null) {
       const updatedJob = await persistRunpodStatus(userId, job.jobId, rpData);
       if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
     } catch (error) {
-      console.error(`Could not sync RunPod job ${job.jobId}:`, error);
+      console.error(`Could not sync render job ${job.jobId}:`, error);
     }
   }));
 }

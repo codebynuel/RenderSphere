@@ -20,7 +20,7 @@ export default function Privacy() {
                 <p>Your uploaded .blend files and completed renders are stored in our Cloudflare R2 buckets. These files are strictly used for your render jobs and are not accessed for any other purpose.</p>
 
                 <h2>Third-Party Services</h2>
-                <p>We use RunPod to process your renders. When a job is dispatched, your file key and render settings are sent to RunPod infrastructure. No personally identifiable information (like your email) is sent to RunPod.</p>
+                <p>We use cloud render infrastructure to process your renders. When a job is dispatched, your file key and render settings are sent to our render processing environment. No personally identifiable information, such as your email, is included in render job payloads.</p>
                 
                 <h2>Data Deletion</h2>
                 <p>You can request account deletion at any time by contacting support. This will remove your account details, access keys, and associated file references from our database.</p>

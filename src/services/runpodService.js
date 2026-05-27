@@ -32,7 +32,7 @@ export async function fetchRunpodJobStatus(jobId) {
     headers: runpodHeaders(),
   });
   const data = await readResponseJson(response);
-  if (!response.ok) throw new Error(data.error || data.message || `RunPod status failed with ${response.status}`);
+  if (!response.ok) throw new Error(data.error || data.message || `Render status failed with ${response.status}`);
   return data;
 }
 
@@ -45,7 +45,7 @@ export async function startRunpodRender(input) {
 
   const data = await readResponseJson(response);
   if (!response.ok) {
-    const error = new Error(data.error || data.message || 'Failed to trigger RunPod');
+    const error = new Error(data.error || data.message || 'Failed to trigger render');
     error.status = response.status;
     error.data = data;
     throw error;

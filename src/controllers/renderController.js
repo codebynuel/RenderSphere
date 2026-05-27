@@ -1,7 +1,7 @@
 import { ACTIVE_JOB_STATUSES, config } from '../../helpers/config.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
-import { buildRunpodInput, normalizeRenderSettings, serializeJob, validateRenderChoices } from '../services/jobService.js';
+import { buildRunpodInput, normalizeRenderSettings, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
 import { cancelRunpodJob, startRunpodRender } from '../services/runpodService.js';
 import { createUploadUrl, isSafeFileName, isSafeObjectKey } from '../services/storageService.js';
 
@@ -85,8 +85,8 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         console.log(`Render job dispatched. Job ID: ${data.id}`);
         return res.json({ success: true, jobId: data.id, status: data.status, job: serializeJob(job, data), user: publicUser(user) });
       } catch (error) {
-        console.error('RunPod Gateway Error:', error.data || error);
-        return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+        console.error('Render dispatch error:', error.data || error);
+        return res.status(error.status || 500).json({ error: sanitizeRenderError(error.data || error.message, 'Failed to start render job') });
       }
     },
 
@@ -120,12 +120,12 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         return res.status(runpodResult.ok ? 200 : runpodResult.status).json({
           success: runpodResult.ok,
           status: runpodResult.status,
-          runpod: runpodResult.data,
+          provider: runpodResult.data,
           job: serializeJob(updatedJob, runpodResult.data),
         });
       } catch (error) {
         console.error('Cancel Error:', error);
-        return res.status(500).json({ success: false, error: 'Failed to cancel RunPod job' });
+        return res.status(500).json({ success: false, error: 'Failed to cancel render job' });
       }
     },
   };

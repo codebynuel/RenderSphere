@@ -1,8 +1,8 @@
 import { ACTIVE_JOB_STATUSES, config } from '../../helpers/config.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
-import { buildRunpodInput, normalizeRenderSettings, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
-import { cancelRunpodJob, startRunpodRender } from '../services/runpodService.js';
+import { buildProviderInput, normalizeRenderSettings, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
+import { cancelRenderJob, startRenderJob } from '../services/renderProviderService.js';
 import { createUploadUrl, isSafeFileName, isSafeObjectKey } from '../services/storageService.js';
 
 export function createRenderController({ emitJobUpdate = null } = {}) {
@@ -60,10 +60,10 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       if (activeJobs >= config.maxConcurrentJobsPerUser) return res.status(429).json({ error: 'Active job limit reached' });
       if (projectId && !project) return res.status(404).json({ error: 'Project not found' });
 
-      const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
+      const providerInput = buildProviderInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
 
       try {
-        const data = await startRunpodRender(runpodInput);
+        const data = await startRenderJob(providerInput);
         const job = await prisma.$transaction(async (tx) => {
           await tx.upload.update({ where: { key: fileKey }, data: { used: true } });
           return tx.job.create({
@@ -73,7 +73,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               projectId: project?.id || null,
               fileKey,
               status: data.status || 'SUBMITTED',
-              settings: runpodInput,
+              settings: providerInput,
               frameCount: normalizedSettings.frameCount,
               progress: { percent: 2, updatedAt: new Date().toISOString() },
             },
@@ -98,10 +98,10 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       if (!job) return res.status(404).json({ error: 'Job not found' });
 
       try {
-        const runpodResult = await cancelRunpodJob(jobId);
+        const providerResult = await cancelRenderJob(jobId);
         let updatedJob = job;
 
-        if (runpodResult.ok) {
+        if (providerResult.ok) {
           updatedJob = await prisma.job.update({
             where: { jobId },
             data: {
@@ -114,14 +114,14 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
             },
             include: { project: true },
           });
-          if (emitJobUpdate) emitJobUpdate(updatedJob, runpodResult.data);
+          if (emitJobUpdate) emitJobUpdate(updatedJob, providerResult.data);
         }
 
-        return res.status(runpodResult.ok ? 200 : runpodResult.status).json({
-          success: runpodResult.ok,
-          status: runpodResult.status,
-          provider: runpodResult.data,
-          job: serializeJob(updatedJob, runpodResult.data),
+        return res.status(providerResult.ok ? 200 : providerResult.status).json({
+          success: providerResult.ok,
+          status: providerResult.status,
+          provider: providerResult.data,
+          job: serializeJob(updatedJob, providerResult.data),
         });
       } catch (error) {
         console.error('Cancel Error:', error);

@@ -35,7 +35,7 @@ RUN wget https://download.blender.org/release/Blender4.0/blender-4.0.2-linux-x64
     && ln -s /opt/blender/blender /usr/local/bin/blender \
     && rm blender-4.0.2-linux-x64.tar.xz
 
-# 4. Keep CUDA kernel caches in writable /tmp for RunPod workers and default to GPU rendering
+# 4. Keep CUDA kernel caches in writable /tmp and default to GPU rendering
 ENV CUDA_CACHE_PATH=/tmp/cuda-cache \
     CUDA_MODULE_LOADING=LAZY \
     NVIDIA_VISIBLE_DEVICES=all \
@@ -44,11 +44,12 @@ ENV CUDA_CACHE_PATH=/tmp/cuda-cache \
     RENDER_ALLOW_CPU_FALLBACK=false \
     RENDER_FORCE_CPU=false
 
-# 5. Install the Python packages
-RUN pip3 install --no-cache-dir runpod boto3
+# 5. Install the Python packages used by the legacy container worker
+RUN pip3 install --no-cache-dir boto3
 
-# 6. Copy your handler
+# 6. Copy the worker modules
+COPY render_worker.py /render_worker.py
 COPY handler.py /handler.py
 
-# 7. Start the listener
+# 7. Start the legacy container listener if this image is used directly
 CMD ["python3", "/handler.py"]

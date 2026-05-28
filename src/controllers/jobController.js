@@ -2,8 +2,8 @@ import { config } from '../../helpers/config.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
 import { attachmentFileName, contentTypeForKey, getRenderedObject } from '../services/storageService.js';
-import { fetchRunpodJobStatus, getRunpodResultKey } from '../services/runpodService.js';
-import { persistRunpodStatus, renderedFileDownloadPath, sanitizeRenderError, serializeJob, serializeRenderedFile, syncActiveJobsForUser } from '../services/jobService.js';
+import { fetchRenderJobStatus, getProviderResultKey } from '../services/renderProviderService.js';
+import { persistProviderStatus, renderedFileDownloadPath, sanitizeRenderError, serializeJob, serializeRenderedFile, syncActiveJobsForUser } from '../services/jobService.js';
 
 export function createJobController({ emitJobUpdate = null } = {}) {
   return {
@@ -75,29 +75,29 @@ export function createJobController({ emitJobUpdate = null } = {}) {
       if (!job) return res.status(404).json({ error: 'Job not found' });
 
       try {
-        const rpData = await fetchRunpodJobStatus(jobId);
-        const updatedJob = await persistRunpodStatus(req.user.id, jobId, rpData);
-        if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
+        const providerData = await fetchRenderJobStatus(jobId);
+        const updatedJob = await persistProviderStatus(req.user.id, jobId, providerData);
+        if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, providerData);
 
-        if (rpData.status === 'COMPLETED') {
-          const resultKey = getRunpodResultKey(rpData) || updatedJob?.resultKey;
+        if (providerData.status === 'COMPLETED') {
+          const resultKey = getProviderResultKey(providerData) || updatedJob?.resultKey;
           if (!resultKey) return res.status(502).json({ error: 'Render completed without a result file' });
-          return res.json({ status: 'COMPLETED', downloadUrl: renderedFileDownloadPath(jobId), job: serializeJob(updatedJob, rpData) });
+          return res.json({ status: 'COMPLETED', downloadUrl: renderedFileDownloadPath(jobId), job: serializeJob(updatedJob, providerData) });
         }
 
-        if (rpData.status === 'FAILED') {
+        if (providerData.status === 'FAILED') {
           return res.json({
             status: 'FAILED',
-            error: sanitizeRenderError(updatedJob?.error || rpData.error || rpData.output),
-            job: serializeJob(updatedJob, rpData),
+            error: sanitizeRenderError(updatedJob?.error || providerData.error || providerData.output),
+            job: serializeJob(updatedJob, providerData),
           });
         }
 
-        if (rpData.status === 'CANCELLED') {
-          return res.json({ status: 'CANCELLED', job: serializeJob(updatedJob, rpData) });
+        if (providerData.status === 'CANCELLED') {
+          return res.json({ status: 'CANCELLED', job: serializeJob(updatedJob, providerData) });
         }
 
-        return res.json({ status: rpData.status, stream: rpData.stream || [], job: serializeJob(updatedJob || job, rpData) });
+        return res.json({ status: providerData.status, stream: providerData.stream || [], job: serializeJob(updatedJob || job, providerData) });
       } catch (error) {
         console.error(error);
         return res.status(500).json({ error: 'Failed to check status' });

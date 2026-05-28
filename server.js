@@ -10,8 +10,8 @@ import { ACTIVE_JOB_STATUSES, SESSION_COOKIE_NAME, config, validateRequiredEnv }
 import { createRateLimiter, requireSameOriginForBrowserWrites, securityHeaders } from './helpers/security.js';
 import { prisma } from './src/db.js';
 import { authenticateToken, parseCookieHeader, requireAdmin, requireAuth } from './src/services/authService.js';
-import { fetchRunpodJobStatus } from './src/services/runpodService.js';
-import { persistRunpodStatus, serializeJob } from './src/services/jobService.js';
+import { fetchRenderJobStatus } from './src/services/renderProviderService.js';
+import { persistProviderStatus, serializeJob } from './src/services/jobService.js';
 
 import { createAdminRouter } from './routes/admin.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -120,11 +120,11 @@ const activeJobPoller = setInterval(async () => {
 
     await Promise.all(activeJobs.map(async (job) => {
       try {
-        const rpData = await fetchRunpodJobStatus(job.jobId);
-        const updatedJob = await persistRunpodStatus(job.userId, job.jobId, rpData);
-        emitJobUpdate(updatedJob || job, rpData);
+        const providerData = await fetchRenderJobStatus(job.jobId);
+        const updatedJob = await persistProviderStatus(job.userId, job.jobId, providerData);
+        emitJobUpdate(updatedJob || job, providerData);
       } catch (error) {
-        console.error(`Could not poll RunPod job ${job.jobId}:`, error.message || error);
+        console.error(`Could not poll render job ${job.jobId}:`, error.message || error);
       }
     }));
   } catch (error) {

@@ -1,9 +1,9 @@
 import { ACTIVE_JOB_STATUSES, VALID_DENOISERS, VALID_ENGINES, VALID_OUTPUT_FORMATS, config } from '../../helpers/config.js';
 import { prisma } from '../db.js';
-import { fetchRunpodJobStatus, getRunpodExecutionSeconds, getRunpodResultKey } from './runpodService.js';
+import { fetchRenderJobStatus, getProviderExecutionSeconds, getProviderResultKey } from './renderProviderService.js';
 
 const INTERNAL_ERROR_MARKERS = [
-  'runpod',
+  'modal',
   'traceback',
   'error_traceback',
   'hostname',
@@ -114,7 +114,7 @@ export function validateRenderChoices({ engine, outputFormat, denoiser }) {
   return null;
 }
 
-export function buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings }) {
+export function buildProviderInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings }) {
   return {
     fileKey,
     engine,
@@ -219,10 +219,13 @@ function unwrapStreamPayload(item) {
   return payload;
 }
 
-export function extractProgressFromRunpodData(rpData) {
-  const stream = Array.isArray(rpData?.stream) ? rpData.stream : [];
+export function extractProgressFromProviderData(providerData) {
+  const payloads = [];
+  if (providerData?.progress) payloads.push(providerData.progress);
+  if (providerData?.output?.progress) payloads.push(providerData.output.progress);
+  if (Array.isArray(providerData?.stream)) payloads.push(...[...providerData.stream].reverse());
 
-  for (const item of [...stream].reverse()) {
+  for (const item of payloads) {
     const payload = unwrapStreamPayload(item);
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
 
@@ -262,12 +265,13 @@ export function calculateProgressPercent(job, progressInput = job?.progress) {
   const samples = Math.max(1, Number(settings.samples || 1));
   const startFrame = Number(settings.startFrame ?? settings.start_frame ?? 1);
   const endFrame = Number(settings.endFrame ?? settings.end_frame ?? startFrame);
-  const frameCount = Math.max(1, Number(job?.frameCount || endFrame - startFrame + 1 || 1));
+  const frameStep = Math.max(1, Number(settings.frameStep ?? settings.frame_step ?? 1));
+  const frameCount = Math.max(1, Number(job?.frameCount || Math.floor((endFrame - startFrame) / frameStep) + 1 || 1));
   const currentFrame = Number(progress.currentFrame ?? startFrame);
   const currentSample = Number(progress.currentSample ?? 0);
 
   if (settings.isAnimation || settings.is_animation) {
-    const frameIndex = Math.min(frameCount - 1, Math.max(0, currentFrame - startFrame));
+    const frameIndex = Math.min(frameCount - 1, Math.max(0, Math.floor((currentFrame - startFrame) / frameStep)));
     const sampleRatio = Math.min(1, Math.max(0, currentSample / samples));
     return Math.round(((frameIndex + sampleRatio) / frameCount) * 100);
   }
@@ -278,7 +282,7 @@ export function calculateProgressPercent(job, progressInput = job?.progress) {
   return 2;
 }
 
-export function serializeJob(job, rpData = null) {
+export function serializeJob(job, providerData = null) {
   if (!job) return null;
   const progress = normalizeProgress(job.progress);
   const serialized = {
@@ -290,7 +294,7 @@ export function serializeJob(job, rpData = null) {
     downloadUrl: job.status === 'COMPLETED' && job.resultKey ? renderedFileDownloadPath(job.jobId) : null,
   };
 
-  if (rpData?.stream) serialized.stream = rpData.stream;
+  if (providerData?.stream) serialized.stream = providerData.stream;
   return serialized;
 }
 
@@ -310,10 +314,10 @@ export function serializeRenderedFile(job) {
   };
 }
 
-export async function persistRunpodStatus(userId, jobId, rpData) {
-  const status = rpData.status || 'UNKNOWN';
-  const resultKey = getRunpodResultKey(rpData);
-  const progress = extractProgressFromRunpodData(rpData);
+export async function persistProviderStatus(userId, jobId, providerData) {
+  const status = providerData.status || 'UNKNOWN';
+  const resultKey = getProviderResultKey(providerData);
+  const progress = extractProgressFromProviderData(providerData);
 
   const job = await prisma.job.findUnique({ where: { jobId }, include: { project: true } });
   if (!job || job.userId !== userId) return null;
@@ -336,7 +340,7 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
       updatedAt: new Date().toISOString(),
     };
   } else if (status === 'FAILED') {
-    updateData.error = sanitizeRenderError(rpData.error || rpData.output, 'Render failed while processing the scene.');
+    updateData.error = sanitizeRenderError(providerData.error || providerData.output, 'Render failed while processing the scene.');
     updateData.failedAt = job.failedAt || new Date();
   } else if (status === 'CANCELLED') {
     updateData.cancelledAt = job.cancelledAt || new Date();
@@ -344,7 +348,7 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
 
   return prisma.$transaction(async (tx) => {
     if (status === 'COMPLETED' && updateData.resultKey && !job.billedAt) {
-      const billableSeconds = getRunpodExecutionSeconds(rpData, job);
+      const billableSeconds = getProviderExecutionSeconds(providerData, job);
       const priceUsd = roundMoney(billableSeconds * config.renderPricePerSecondUsd);
       const billedJob = await tx.job.updateMany({
         where: { jobId, userId, billedAt: null },
@@ -385,9 +389,9 @@ export async function syncActiveJobsForUser(userId, emitJobUpdate = null) {
 
   await Promise.all(syncableJobs.map(async (job) => {
     try {
-      const rpData = await fetchRunpodJobStatus(job.jobId);
-      const updatedJob = await persistRunpodStatus(userId, job.jobId, rpData);
-      if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
+      const providerData = await fetchRenderJobStatus(job.jobId);
+      const updatedJob = await persistProviderStatus(userId, job.jobId, providerData);
+      if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, providerData);
     } catch (error) {
       console.error(`Could not sync render job ${job.jobId}:`, error);
     }

@@ -10,7 +10,7 @@ RenderSphere is a strong MVP idea because the workflow pain is real: Blender use
 - API key
 - Blender add-on
 - upload `.blend`
-- dispatch RunPod render
+- dispatch cloud render
 - poll progress
 - download result
 
@@ -22,46 +22,42 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - Files: `extension/v1.py` and any packaged add-on copy.
   - Current value: `DEFAULT_SERVER_URL = "http://localhost:3000"`
   - Change this to the real HTTPS gateway URL before distributing the add-on.
-  - Packaging now supports `RENDERSPHERE_PUBLIC_URL=https://your-domain npm run package:extension`.
+  - Packaging supports `RENDERSPHERE_PUBLIC_URL=https://your-domain npm run package:extension`.
 
 - [x] Fix the extension source-of-truth situation.
   - Current source of truth is `extension/v1.py`.
   - Package or copy this file into `public/` only during release.
 
 - [x] Wire the landing page buttons.
-  - File: `public/index.html`
-  - `Log In` links to `/auth.html`.
   - `Download Extension` links to `/downloads/rendersphere-blender-addon.zip`.
   - Docs CTA was replaced with the account flow for MVP.
 
 - [x] Replace the failing test script.
   - File: `package.json`
-  - `npm test` now runs `scripts/smoke-test.mjs`.
+  - `npm test` runs `scripts/smoke-test.mjs`.
 
 - [x] Add fail-fast environment validation.
-  - File: `server.js`
+  - File: `helpers/config.js`
   - Validate required variables at startup:
+    - `DATABASE_URL`
     - `CLOUDFLARE_ACCOUNT_ID`
     - `R2_ACCESS_KEY_ID`
     - `R2_SECRET_ACCESS_KEY`
     - `R2_BUCKET_NAME`
-    - `RUNPOD_ENDPOINT_ID`
-    - `RUNPOD_API_KEY`
+    - `MODAL_RENDER_ENDPOINT_URL`
+    - `MODAL_RENDER_TOKEN`
 
-- [x] Move persistence to MongoDB.
-  - File: `server.js`
-  - Users, sessions, uploads, and jobs are persisted in MongoDB collections.
-  - Configure `MONGODB_URI` and optionally `MONGODB_DB_NAME`.
+- [x] Use PostgreSQL persistence through Prisma.
+  - File: `prisma/schema.prisma`
+  - Users, sessions, uploads, jobs, and projects are persisted in PostgreSQL.
 
 ## Absolutely Necessary MVP Features
 
 - [x] Add cost controls before allowing real users.
-  - This is the most important missing product feature.
-  - New accounts now receive a configurable render credit balance.
+  - New accounts receive a configurable render credit balance.
   - `/api/trigger-render` rejects accounts with no credits.
 
 - [x] Add render limits on the server.
-  - File: `server.js`
   - Validate and cap:
     - max samples
     - max resolution percentage
@@ -71,23 +67,21 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - Do not rely only on the Blender UI limits; API clients can call the server directly.
 
 - [x] Add upload size limits.
-  - Files: `server.js`, `extension/v1.py`
+  - Files: `src/controllers/renderController.js`, `extension/v1.py`
   - The add-on sends `fileSizeBytes`.
   - The server rejects oversized upload URL requests.
   - The add-on also warns before uploading an oversized packed `.blend`.
 
 - [x] Add basic pricing or usage visibility.
-  - Users need to know whether renders are free, limited, paid, or manually approved.
-  - Dashboard now shows credits and service limits.
-  - Landing page now presents starter MVP limits.
+  - Dashboard shows credits and service limits.
+  - Landing page presents starter MVP limits.
 
 - [x] Add support/contact information.
-  - Add a support email or Discord link on the dashboard and landing page.
-  - Render failures will happen; users need somewhere obvious to go.
+  - Support information is visible on the dashboard and landing page.
 
 - [x] Add terms/privacy basics.
   - Users upload private `.blend` files and textures.
-  - Added `public/terms.html` and `public/privacy.html`.
+  - Terms and privacy pages are available in the frontend.
 
 ## Security And Trust
 
@@ -96,30 +90,26 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - Implemented basic in-memory IP rate limits.
 
 - [x] Keep worker credentials least-privilege.
-  - File: `handler.py`
+  - Files: `modal_app.py`, `render_worker.py`
   - The worker downloads and opens user `.blend` files in Blender.
   - Documented worker-only env requirements and least-privilege R2 guidance in `docs/production.md`.
 
 - [x] Review public claims on the landing page.
-  - File: `public/index.html`
   - Removed unsupported claims and replaced them with MVP limits.
 
-- [x] Consider replacing `localStorage` session storage later.
-  - File: `public/auth/index.html`
-  - Web dashboard sessions now use an HTTP-only `rs_session` cookie.
+- [x] Use secure browser sessions.
+  - Web dashboard sessions use an HTTP-only `rs_session` cookie.
   - Bearer tokens remain supported for the Blender add-on API key and admin endpoints.
 
 - [x] Add security headers.
-  - File: `server.js`
+  - File: `helpers/security.js`
   - Added baseline security headers for static pages and API responses.
 
 - [x] Add account abuse controls.
-  - File: `server.js`
   - Optional invite-code registration is enabled with `RENDERSPHERE_INVITE_CODE`.
 
 - [x] Prevent upload reuse if that is not intentional.
-  - File: `server.js`
-  - `/api/trigger-render` now rejects already-used upload keys.
+  - `/api/trigger-render` rejects already-used upload keys.
 
 ## Extension Review
 
@@ -128,114 +118,100 @@ The biggest risk is not whether the idea makes sense. The biggest risk is cost a
   - Blender users expect an installable add-on zip.
 
 - [x] Add a connection test button in the add-on preferences.
-  - The add-on should test:
+  - The add-on tests:
     - gateway URL
     - API key
     - authenticated `/api/auth/me`
-  - This will reduce support pain a lot.
 
 - [x] Improve add-on error messages.
   - File: `extension/v1.py`
-  - Many `urllib` failures currently collapse into generic statuses like `Upload Error` or `Failed to reach Node Gateway`.
-  - Server error bodies are now surfaced in `current_error_msg`.
+  - Server error bodies are surfaced in `current_error_msg`.
 
 - [x] Add a pre-upload confirmation for expensive jobs.
-  - Show frame count, samples, resolution percentage, and estimated risk/cost before animation renders.
-  - This is especially important for animation.
+  - Shows frame count, samples, resolution percentage, and estimated risk/cost before animation renders.
 
 - [x] Add a max file size warning before upload.
   - File: `extension/v1.py`
-  - Check the packed `.blend` size before requesting or using the upload URL.
+  - Checks the packed `.blend` size before requesting or using the upload URL.
 
 - [x] Clean up temporary packed files after upload.
   - File: `extension/v1.py`
-  - The add-on writes `runpod_payload.blend` into Blender's temp directory.
-  - Remove it after successful or failed upload when safe.
+  - The add-on writes `rendersphere_payload.blend` into Blender's temp directory and removes it after successful or failed upload when safe.
 
 - [x] Make animation download location configurable.
-  - Current behavior saves animation zips to the user's Desktop.
-  - Add-on preferences now include an animation download folder.
+  - Add-on preferences include an animation download folder.
 
 - [x] Add version/update visibility.
-  - The add-on should display its version and ideally link to the latest download.
-  - This matters once you start fixing bugs after launch.
+  - The add-on displays its version.
+
+- [x] Add Advanced Mode for power users.
+  - File: `extension/v1.py`
+  - Advanced controls include GPU backend, CPU fallback, frame step, transparent film, color management, bounces, caustics, persistent data, and simplify settings.
 
 ## Server And API Review
 
-- [x] Return clearer RunPod errors.
-  - File: `server.js`
-  - `/api/trigger-render` now returns useful RunPod error/message text when available.
+- [x] Return clearer render errors.
+  - Files: `src/services/jobService.js`, `src/services/renderProviderService.js`
+  - `/api/trigger-render` and job status polling sanitize provider/runtime errors before user display.
 
 - [x] Add admin visibility.
-  - File: `server.js`
   - Added bearer-token admin endpoints for summary, users, jobs, and metadata cleanup.
 
 - [x] Add job lifecycle cleanup.
-  - Files: `server.js`, R2 bucket settings
+  - Files: `src/controllers/*`, R2 bucket settings
   - Added local metadata cleanup endpoint.
   - Documented R2 lifecycle rules in `docs/production.md`.
 
 - [x] Add idempotency or duplicate-submit protection.
-  - File: `server.js`
   - Users can double-click or retry at awkward moments.
-  - Reusing the same upload key is now rejected.
+  - Reusing the same upload key is rejected.
 
 - [x] Validate booleans and frame ranges explicitly.
-  - File: `server.js`
-  - `isAnimation`, `startFrame`, and `endFrame` should be normalized and checked on the server.
-  - Reject invalid ranges before RunPod receives them.
+  - File: `src/services/jobService.js`
+  - `isAnimation`, `startFrame`, `endFrame`, and `frameStep` are normalized and checked on the server.
 
 - [x] Add health check endpoint.
-  - File: `server.js`
   - Added `/healthz`.
 
 ## Worker Review
 
 - [x] Add worker-side env validation.
-  - File: `handler.py`
-  - Validate `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` at startup.
+  - File: `render_worker.py`
+  - Validates `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME`.
 
 - [x] Add render timeout protection.
-  - File: `handler.py`
-  - `subprocess.Popen` can run for a long time.
-  - Set a maximum render duration per job or rely on a known RunPod timeout and document it.
+  - File: `render_worker.py`
+  - `subprocess.Popen` has a maximum render duration per job.
 
 - [x] Add worker disk cleanup safeguards.
-  - File: `handler.py`
-  - Cleanup exists, but large animation zips and failed runs can still stress `/tmp`.
-  - Consider checking available disk before render and before zipping.
+  - File: `render_worker.py`
+  - Checks available disk before download, zipping, and upload.
 
 - [x] Add logs that identify job settings without leaking secrets.
-  - File: `handler.py`
-  - Log engine, samples, frame range, output format, resolution percentage, and result key.
-  - This helps debug failed user renders.
+  - File: `render_worker.py`
+  - Logs engine, samples, frame range, output format, resolution percentage, and worker settings.
+
+- [x] Add Modal worker entrypoint.
+  - File: `modal_app.py`
+  - Exposes `/render`, `/status/:jobId`, and `/cancel/:jobId` endpoints backed by a Modal GPU function.
 
 ## Operations Checklist
 
 - [ ] Deploy the Express gateway to a production host with HTTPS.
-- [ ] Set production R2 and RunPod environment variables.
-- [ ] Set `MONGODB_URI` and `MONGODB_DB_NAME` in production.
+- [ ] Deploy the Modal worker with `modal deploy modal_app.py`.
+- [ ] Set production R2 and Modal environment variables.
 - [x] Package `extension/v1.py` as an installable Blender add-on zip.
 - [x] Publish the add-on zip somewhere the landing page can link to.
   - Current path: `public/downloads/rendersphere-blender-addon.zip`
-- [ ] Confirm the RunPod worker image tag matches the deployed endpoint.
 - [x] Review `.github/workflows/docker-image.yml`.
-  - It now supports manual runs and pushes `latest` plus the commit SHA tag.
+  - It now uses provider-neutral worker image naming.
 - [x] Add `__pycache__/` to `.gitignore`.
-  - A local `__pycache__/` directory is currently untracked.
-- [x] Decide whether `public/auth/index.html` should be committed.
-  - It is part of the MVP account dashboard and should be committed.
 
 ## Verified During Review
 
 - `server.js` passes `node --check`.
-- `handler.py` and `extension/v1.py` parse cleanly with Python AST.
-- `npm test` passes.
-- Packaged add-on zip expands and `rendersphere.py` parses cleanly.
-- Smoke test covers invite-code signup and admin summary auth.
-- Add-on packaging was verified with `RENDERSPHERE_PUBLIC_URL`.
-- Local auth smoke test passed:
-  - register account
-  - receive API key
-  - call `/api/auth/me` with bearer token
+- `handler.py`, `render_worker.py`, `modal_app.py`, and `extension/v1.py` parse cleanly with Python bytecode compilation.
+- `pnpm --dir frontend lint` passes.
+- `pnpm --dir frontend build` passes.
+- Packaged add-on zip is regenerated.
 - `.env` is ignored and not tracked.

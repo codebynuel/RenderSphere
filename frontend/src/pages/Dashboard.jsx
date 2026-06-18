@@ -562,7 +562,7 @@ export default function Dashboard() {
     );
 
     const renderProjects = () => (
-        <motion.div className="panel dashboard-panel full" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+        <motion.div className="panel dashboard-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-head">
                 <div>
                     <h2>Projects</h2>
@@ -609,7 +609,7 @@ export default function Dashboard() {
     );
 
     const renderJobs = () => (
-        <motion.div className="panel dashboard-panel full" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+        <motion.div className="panel dashboard-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-head">
                 <div>
                     <h2>{activeView === 'overview' ? 'Active and recent jobs' : `Render jobs / ${selectedProjectName}`}</h2>

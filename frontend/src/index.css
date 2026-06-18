@@ -148,7 +148,7 @@ button {
     border: 0;
     border-radius: 0;
     display: grid;
-    grid-template-rows: 64px minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     overflow: hidden;
     background: var(--bg);
     box-shadow: none;
@@ -156,8 +156,6 @@ button {
 }
 
 .app-frame .nav {
-    position: sticky;
-    top: 0;
     z-index: 30;
     width: 100%;
     min-height: 64px;
@@ -1208,11 +1206,12 @@ input:focus {
     min-width: 0;
     min-height: 0;
     display: grid;
+    grid-template-columns: 1fr;
     align-content: start;
     gap: 14px;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 24px var(--dashboard-page-pad) 28px;
+    padding: 80px var(--dashboard-page-pad) 28px;
     background:
         linear-gradient(180deg, color-mix(in srgb, var(--panel-card) 58%, transparent), transparent 280px),
         var(--bg);
@@ -1271,6 +1270,7 @@ input:focus {
 }
 
 .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     max-width: 1180px;
     width: 100%;
     margin: 0 auto;
@@ -1503,8 +1503,9 @@ input:focus {
 }
 
 .workflow-panel {
-    overflow: hidden;
+    overflow: visible;
     padding: 18px;
+    margin-bottom: 4px;
 }
 
 .workflow-head .eyebrow {
@@ -1770,6 +1771,7 @@ input:focus {
     .feature-grid,
     .assurance-grid,
     .dashboard-metrics-grid,
+    .dashboard-grid,
     .project-grid,
     .job-details,
     .dashboard-grid.two-col {

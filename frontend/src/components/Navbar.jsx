@@ -39,7 +39,6 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                 )}
                 {isAuth && (
                     <>
-                        <span className="route-chip">/auth</span>
                         <Link className="link-button" to="/">Home</Link>
                     </>
                 )}

@@ -48,9 +48,6 @@ export default function Home() {
                         organize projects, dispatch jobs, monitor progress, and download results from one production workspace.
                     </p>
                     <div className="hero-actions">
-                        <Link className="link-button primary" to={user ? '/app' : '/auth'}>
-                            <LayoutDashboard size={18} /> {user ? 'Open dashboard' : 'Start rendering'}
-                        </Link>
                         <a className="link-button" href="/downloads/rendersphere-blender-addon.zip">
                             <Download size={18} /> Download add-on
                         </a>

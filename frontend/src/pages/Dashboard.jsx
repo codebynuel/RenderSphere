@@ -6,6 +6,8 @@ import { io } from 'socket.io-client';
 import {
     Activity,
     CheckCircle2,
+    ChevronDown,
+    ChevronUp,
     Clock3,
     Copy,
     Download,
@@ -112,6 +114,7 @@ export default function Dashboard() {
     const [newProjectName, setNewProjectName] = useState('');
     const [creatingKey, setCreatingKey] = useState(false);
     const [creatingProject, setCreatingProject] = useState(false);
+    const [showWorkflow, setShowWorkflow] = useState(true);
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true });
 
     useEffect(() => {
@@ -671,33 +674,39 @@ export default function Dashboard() {
             <div className="panel-head workflow-head">
                 <div>
                     <h2>Get from Blender to delivered files</h2>
-                    <p className="muted">Follow these steps in order. Completed steps are marked automatically as your workspace fills with keys, projects, jobs, and files.</p>
+                    <p className={`muted${showWorkflow ? '' : ' hide-mobile'}`}>{showWorkflow ? 'Follow these steps in order. Completed steps are marked automatically as your workspace fills with keys, projects, jobs, and files.' : ''}</p>
                 </div>
+                <button className="button workflow-toggle" type="button" onClick={() => setShowWorkflow(!showWorkflow)} aria-label={showWorkflow ? 'Collapse workflow guide' : 'Expand workflow guide'}>
+                    {showWorkflow ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    <span className="toggle-label">{showWorkflow ? 'Hide steps' : 'Show steps'}</span>
+                </button>
             </div>
-            <div className="workflow-steps">
-                {workflowSteps.map((step, index) => {
-                    const Icon = step.icon;
-                    return (
-                        <article className={`workflow-step ${step.complete ? 'complete' : ''}`} key={step.id}>
-                            <div className="workflow-step-number">{step.complete ? <CheckCircle2 size={16} /> : index + 1}</div>
-                            <div className="workflow-step-icon"><Icon size={20} /></div>
-                            <div className="workflow-step-copy">
-                                <h3>{step.title}</h3>
-                                <p>{step.text}</p>
-                            </div>
-                            {step.href ? (
-                                <a className="link-button" href={step.href} download>
-                                    {step.actionLabel}
-                                </a>
-                            ) : (
-                                <button className="button" type="button" onClick={() => setActiveView(step.view)}>
-                                    {step.actionLabel}
-                                </button>
-                            )}
-                        </article>
-                    );
-                })}
-            </div>
+            {showWorkflow && (
+                <div className="workflow-steps">
+                    {workflowSteps.map((step, index) => {
+                        const Icon = step.icon;
+                        return (
+                            <article className={`workflow-step ${step.complete ? 'complete' : ''}`} key={step.id}>
+                                <div className="workflow-step-number">{step.complete ? <CheckCircle2 size={16} /> : index + 1}</div>
+                                <div className="workflow-step-icon"><Icon size={20} /></div>
+                                <div className="workflow-step-copy">
+                                    <h3>{step.title}</h3>
+                                    <p>{step.text}</p>
+                                </div>
+                                {step.href ? (
+                                    <a className="link-button" href={step.href} download>
+                                        {step.actionLabel}
+                                    </a>
+                                ) : (
+                                    <button className="button" type="button" onClick={() => setActiveView(step.view)}>
+                                        {step.actionLabel}
+                                    </button>
+                                )}
+                            </article>
+                        );
+                    })}
+                </div>
+            )}
         </motion.div>
     );
 

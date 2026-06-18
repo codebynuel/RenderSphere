@@ -1508,6 +1508,23 @@ input:focus {
     margin-bottom: 4px;
 }
 
+.workflow-toggle {
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 12px;
+    flex-shrink: 0;
+}
+
+.workflow-toggle .toggle-label {
+    display: inline;
+}
+
+@media (max-width: 560px) {
+    .workflow-toggle .toggle-label {
+        display: none;
+    }
+}
+
 .workflow-head .eyebrow {
     margin-bottom: 10px;
 }

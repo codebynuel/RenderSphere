@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process';
 
 const port = process.env.SMOKE_TEST_PORT || '3999';
 const baseUrl = `http://127.0.0.1:${port}`;
-const schemaName = `smoke_${Date.now()}`;
-const defaultDatabaseUrl = `postgresql://rendersphere:rendersphere_password@127.0.0.1:5432/rendersphere_db?schema=${schemaName}`;
+const fallbackSchemaName = `smoke_${Date.now()}`;
+const defaultDatabaseUrl = `postgresql://rendersphere:rendersphere_password@127.0.0.1:5432/rendersphere_db?schema=${fallbackSchemaName}`;
 const databaseUrl = process.env.SMOKE_TEST_DATABASE_URL || process.env.DATABASE_URL || defaultDatabaseUrl;
 
 function commandName(binary) {
@@ -53,6 +53,10 @@ const serverEnv = {
 
 await runCommand('npx', ['prisma', 'generate'], serverEnv);
 await runCommand('npx', ['prisma', 'db', 'push', '--force-reset'], serverEnv);
+Object.assign(process.env, serverEnv);
+
+const { prisma } = await import('../src/db.js');
+const { CREDIT_TRANSACTION_TYPES, applyCreditTransaction, chargeRenderCredits } = await import('../src/services/creditService.js');
 
 const server = spawn(process.execPath, ['server.js'], {
   cwd: process.cwd(),
@@ -134,6 +138,22 @@ try {
     throw new Error(`Expected starter balance 5, got ${registered.user.starterBalanceUsd}.`);
   }
 
+  const registrationGrant = await prisma.creditTransaction.findFirst({
+    where: {
+      userId: registered.user.id,
+      type: CREDIT_TRANSACTION_TYPES.CREDIT_GRANT,
+      idempotencyKey: `registration-grant:${registered.user.id}`,
+    },
+  });
+  if (!registrationGrant || Number(registrationGrant.amountUsd) !== 5 || Number(registrationGrant.balanceAfterUsd) !== 5) {
+    throw new Error('Registration grant was not recorded in the credit ledger with the expected amount and balance.');
+  }
+
+  const grantAudit = await prisma.creditAuditEvent.findFirst({
+    where: { creditTransactionId: registrationGrant.id, eventType: 'credit.grant_applied' },
+  });
+  if (!grantAudit) throw new Error('Registration grant did not create a credit audit event.');
+
   const sessionCookie = registerResult.response.headers.get('set-cookie')?.split(';')[0];
   if (!sessionCookie?.startsWith('rs_session=')) {
     throw new Error('Register response did not set the HTTP-only session cookie.');
@@ -157,6 +177,61 @@ try {
 
   const projects = await request('/api/projects', { headers: cookieHeaders });
   if (projects.projects.length !== 1) throw new Error(`Expected one project, got ${projects.projects.length}.`);
+
+  const ledgerJobId = `smoke-ledger-${Date.now()}`;
+  await prisma.job.create({
+    data: {
+      jobId: ledgerJobId,
+      userId: registered.user.id,
+      projectId: project.project.id,
+      fileKey: `smoke-ledger/${registered.user.id}.blend`,
+      status: 'COMPLETED',
+      frameCount: 1,
+      billableSeconds: 125,
+      priceUsd: 1.25,
+      pricePerSecondUsd: 0.01,
+      completedAt: new Date(),
+      billedAt: new Date(),
+    },
+  });
+
+  const renderCharge = await chargeRenderCredits({
+    userId: registered.user.id,
+    jobId: ledgerJobId,
+    amountUsd: 1.25,
+    billableSeconds: 125,
+    pricePerSecondUsd: 0.01,
+    metadata: { source: 'smoke-test' },
+  });
+  if (renderCharge.idempotent || Number(renderCharge.transaction.amountUsd) !== -1.25 || Number(renderCharge.transaction.balanceAfterUsd) !== 3.75) {
+    throw new Error('Render charge was not recorded in the credit ledger with the expected amount and balance.');
+  }
+
+  const duplicateRenderCharge = await chargeRenderCredits({
+    userId: registered.user.id,
+    jobId: ledgerJobId,
+    amountUsd: 1.25,
+    billableSeconds: 125,
+    pricePerSecondUsd: 0.01,
+    metadata: { source: 'smoke-test-duplicate' },
+  });
+  const userAfterDuplicateCharge = await prisma.user.findUnique({ where: { id: registered.user.id } });
+  if (!duplicateRenderCharge.idempotent || Number(userAfterDuplicateCharge.starterBalanceUsd) !== 3.75) {
+    throw new Error('Render charge idempotency did not preserve the cached user balance.');
+  }
+
+  const directAdjustment = await applyCreditTransaction({
+    userId: registered.user.id,
+    type: CREDIT_TRANSACTION_TYPES.REFUND,
+    amountUsd: 0.25,
+    referenceType: 'smoke_test',
+    referenceId: ledgerJobId,
+    idempotencyKey: `smoke-refund:${ledgerJobId}`,
+    metadata: { reason: 'ledger_smoke_refund' },
+  });
+  if (directAdjustment.idempotent || Number(directAdjustment.transaction.amountUsd) !== 0.25 || Number(directAdjustment.transaction.balanceAfterUsd) !== 4) {
+    throw new Error('Refund credit was not recorded in the credit ledger with the expected amount and balance.');
+  }
 
   const oversized = await fetch(`${baseUrl}/api/get-upload-url`, {
     method: 'POST',
@@ -204,8 +279,8 @@ try {
   if (summary.users !== initialSummary.users + 1) {
     throw new Error(`Expected admin summary user count to increase by one, got ${summary.users - initialSummary.users}.`);
   }
-  if (summary.jobs !== initialSummary.jobs) {
-    throw new Error(`Expected underfunded render not to create a job, job count changed from ${initialSummary.jobs} to ${summary.jobs}.`);
+  if (summary.jobs !== initialSummary.jobs + 1) {
+    throw new Error(`Expected only the smoke ledger job to be present after underfunded render, job count changed from ${initialSummary.jobs} to ${summary.jobs}.`);
   }
   if (summary.limits?.minRenderStartBalanceUsd !== 6) {
     throw new Error(`Expected admin summary minimum render start balance 6, got ${summary.limits?.minRenderStartBalanceUsd}.`);
@@ -224,4 +299,5 @@ try {
   console.log('Smoke test passed.');
 } finally {
   server.kill();
+  await prisma.$disconnect();
 }

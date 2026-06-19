@@ -1,5 +1,6 @@
 import { ACTIVE_JOB_STATUSES, VALID_DENOISERS, VALID_ENGINES, VALID_OUTPUT_FORMATS, config } from '../../helpers/config.js';
 import { prisma } from '../db.js';
+import { chargeRenderCredits } from './creditService.js';
 import { fetchRunpodJobStatus, getRunpodExecutionSeconds, getRunpodResultKey } from './runpodService.js';
 
 const INTERNAL_ERROR_MARKERS = [
@@ -358,9 +359,14 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
       });
 
       if (billedJob.count > 0 && priceUsd > 0) {
-        await tx.user.update({
-          where: { id: userId },
-          data: { starterBalanceUsd: { decrement: priceUsd } },
+        await chargeRenderCredits({
+          client: tx,
+          userId,
+          jobId,
+          amountUsd: priceUsd,
+          billableSeconds,
+          pricePerSecondUsd: config.renderPricePerSecondUsd,
+          metadata: { status, resultKey: updateData.resultKey },
         });
       }
     } else {

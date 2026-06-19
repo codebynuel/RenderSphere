@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../db.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, config } from '../../helpers/config.js';
+import { CREDIT_ACTOR_TYPES, grantCredits } from './creditService.js';
 
 export function nowIso() {
   return new Date().toISOString();
@@ -234,27 +235,44 @@ export async function registerUser({ email, password }) {
   const rawAccessKey = createRawAccessKey();
   const rawSession = createRawSessionToken();
 
-  const user = await prisma.user.create({
-    data: {
-      email: normalizedEmail,
-      passwordHash: passwordHash.hash,
-      passwordSalt: passwordHash.salt,
-      starterBalanceUsd: config.freeRenderCredits,
-      accessKeys: {
-        create: {
-          name: 'Blender workstation',
-          tokenHash: rawAccessKey.tokenHash,
-          tokenPreview: rawAccessKey.tokenPreview,
+  const user = await prisma.$transaction(async (tx) => {
+    const createdUser = await tx.user.create({
+      data: {
+        email: normalizedEmail,
+        passwordHash: passwordHash.hash,
+        passwordSalt: passwordHash.salt,
+        starterBalanceUsd: 0,
+        accessKeys: {
+          create: {
+            name: 'Blender workstation',
+            tokenHash: rawAccessKey.tokenHash,
+            tokenPreview: rawAccessKey.tokenPreview,
+          },
+        },
+        sessions: {
+          create: {
+            tokenHash: rawSession.tokenHash,
+            expiresAt: rawSession.expiresAt,
+          },
         },
       },
-      sessions: {
-        create: {
-          tokenHash: rawSession.tokenHash,
-          expiresAt: rawSession.expiresAt,
-        },
-      },
-    },
-    include: { accessKeys: true },
+      include: { accessKeys: true },
+    });
+
+    if (config.freeRenderCredits > 0) {
+      await grantCredits({
+        client: tx,
+        userId: createdUser.id,
+        amountUsd: config.freeRenderCredits,
+        actor: { actorType: CREDIT_ACTOR_TYPES.SYSTEM },
+        referenceType: 'user_registration',
+        referenceId: createdUser.id,
+        idempotencyKey: `registration-grant:${createdUser.id}`,
+        metadata: { reason: 'new_user_free_render_credits' },
+      });
+    }
+
+    return tx.user.findUnique({ where: { id: createdUser.id }, include: { accessKeys: true } });
   });
 
   return {

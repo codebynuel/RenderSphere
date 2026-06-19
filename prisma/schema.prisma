@@ -15,11 +15,13 @@ model User {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  accessKeys        AccessKey[]
-  sessions          Session[]
-  uploads           Upload[]
-  jobs              Job[]
-  projects          Project[]
+  accessKeys         AccessKey[]
+  sessions           Session[]
+  uploads            Upload[]
+  jobs               Job[]
+  projects           Project[]
+  creditTransactions CreditTransaction[]
+  creditAuditEvents  CreditAuditEvent[]
 }
 
 model AccessKey {
@@ -98,11 +100,83 @@ model Job {
   billedAt          DateTime?
   lastCheckedAt     DateTime?
 
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project           Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project            Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  creditTransactions CreditTransaction[]
+  creditAuditEvents  CreditAuditEvent[]
 
   @@index([userId, createdAt])
   @@index([userId, status])
   @@index([projectId])
   @@index([status])
+}
+
+model CreditTransaction {
+  id               String                @id @default(uuid())
+  userId           String
+  type             CreditTransactionType
+  amountUsd        Decimal               @db.Decimal(12, 6)
+  balanceBeforeUsd Decimal               @db.Decimal(12, 6)
+  balanceAfterUsd  Decimal               @db.Decimal(12, 6)
+  actorType        CreditActorType       @default(SYSTEM)
+  actorId          String?
+  actorEmail       String?
+  referenceType    String?
+  referenceId      String?
+  jobId            String?
+  idempotencyKey   String?               @unique
+  metadata         Json?
+  createdAt        DateTime              @default(now())
+
+  user             User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job              Job?                  @relation(fields: [jobId], references: [jobId], onDelete: SetNull)
+  auditEvents      CreditAuditEvent[]
+
+  @@index([userId, createdAt])
+  @@index([userId, type])
+  @@index([referenceType, referenceId])
+  @@index([jobId])
+}
+
+model CreditAuditEvent {
+  id                  String             @id @default(uuid())
+  eventType           String
+  targetUserId        String?
+  actorType           CreditActorType    @default(SYSTEM)
+  actorId             String?
+  actorEmail          String?
+  creditTransactionId String?
+  jobId               String?
+  referenceType       String?
+  referenceId         String?
+  idempotencyKey      String?
+  metadata            Json?
+  createdAt           DateTime           @default(now())
+
+  targetUser          User?              @relation(fields: [targetUserId], references: [id], onDelete: SetNull)
+  creditTransaction   CreditTransaction? @relation(fields: [creditTransactionId], references: [id], onDelete: SetNull)
+  job                 Job?               @relation(fields: [jobId], references: [jobId], onDelete: SetNull)
+
+  @@index([targetUserId, createdAt])
+  @@index([creditTransactionId])
+  @@index([jobId])
+  @@index([eventType, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+enum CreditTransactionType {
+  CREDIT_GRANT
+  PROMO_CREDIT
+  PREPAID_TOP_UP
+  RENDER_RESERVATION_HOLD
+  RENDER_CHARGE
+  REFUND
+  RESERVATION_RELEASE
+  ADMIN_ADJUSTMENT
+}
+
+enum CreditActorType {
+  USER
+  ADMIN
+  SYSTEM
 }

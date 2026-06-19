@@ -35,6 +35,30 @@ Recommended gateway environment variables:
 - `RENDERSPHERE_MAX_QUEUED_JOBS`
 - `RENDERSPHERE_JOB_RECORD_RETENTION_DAYS`
 
+## Prepaid Credit Ledger
+
+Prepaid credits are tracked with an append-only ledger backed by the `CreditTransaction` and `CreditAuditEvent` tables. The legacy `User.starterBalanceUsd` field remains as the current balance cache for compatibility with existing dashboard and render-start checks, but balance-changing code must write a ledger row and an audit event in the same Prisma transaction that updates the cache.
+
+Ledger money fields use PostgreSQL decimal columns through Prisma `Decimal` values. New money fields should not use floating-point columns. Existing job pricing fields remain unchanged in this batch for compatibility and can be migrated separately.
+
+Supported transaction types are:
+
+- `CREDIT_GRANT` for system-issued starter grants.
+- `PROMO_CREDIT` for promotional grants.
+- `PREPAID_TOP_UP` for future payment-provider recharge completion.
+- `RENDER_RESERVATION_HOLD` for future pre-render holds.
+- `RENDER_CHARGE` for completed render deductions.
+- `REFUND` and `RESERVATION_RELEASE` for returning user credits.
+- `ADMIN_ADJUSTMENT` for controlled manual corrections.
+
+Operational rules:
+
+- Use the credit service helpers instead of directly incrementing or decrementing `User.starterBalanceUsd`.
+- Supply an `idempotencyKey` for any operation that can be retried. Render charges use `render-charge:<jobId>` so repeated RunPod status syncs do not double-bill.
+- Include `referenceType`, `referenceId`, optional `jobId`, and safe actor metadata (`actorType`, `actorId`, `actorEmail`) whenever available.
+- Keep audit metadata operational only; do not include secrets, payment tokens, access keys, or private render payloads.
+- Payment-provider checkout/recharge integration is intentionally out of scope for this batch. Future top-up completion handlers should use `PREPAID_TOP_UP` with provider event idempotency.
+
 ## Admin Endpoints
 
 Set `RENDERSPHERE_ADMIN_TOKEN` to enable admin endpoints. Use it as a bearer token.

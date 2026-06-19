@@ -1,7 +1,5 @@
-import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useAuth } from '../context/AuthContext';
-import { Activity, CheckCircle2, CloudUpload, Download, FolderKanban, KeyRound, LayoutDashboard, ShieldCheck, Timer, WalletCards } from 'lucide-react';
+import { Activity, CheckCircle2, CloudUpload, Download, FolderKanban, KeyRound, ShieldCheck, Timer, WalletCards } from 'lucide-react';
 
 const fadeUp = {
     initial: { opacity: 0, y: 18 },
@@ -30,8 +28,6 @@ const assurances = [
 ];
 
 export default function Home() {
-    const { user } = useAuth();
-
     return (
         <>
             <main className="marketing-hero">

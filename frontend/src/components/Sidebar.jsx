@@ -1,9 +1,10 @@
-import { Activity, Download, FolderKanban, KeyRound, LayoutDashboard, Radio } from 'lucide-react';
+import { Activity, Download, FolderKanban, KeyRound, LayoutDashboard, Radio, WalletCards } from 'lucide-react';
+import { formatUsd } from '../utils/api';
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
-  { id: 'renders', label: 'Render jobs', icon: Activity },
+  { id: 'renders', label: 'Render queue', icon: Activity },
   { id: 'files', label: 'Rendered files', icon: Download },
   { id: 'access', label: 'Access keys', icon: KeyRound },
 ];
@@ -11,17 +12,15 @@ const navItems = [
 export default function Sidebar({
   activeView,
   onChangeView,
-  projects,
-  selectedProjectId,
-  onSelectProject,
   stats,
   socketConnected,
+  balanceUsd,
 }) {
   return (
     <aside className="dashboard-sidebar">
       <div className="sidebar-section sidebar-hero">
         <div className="sidebar-kicker">RenderSphere</div>
-        <h2>Cloud render dashboard</h2>
+        <h2>Operations workspace</h2>
         <div className={`socket-state ${socketConnected ? 'connected' : ''}`}>
           <Radio size={14} /> {socketConnected ? 'Live updates connected' : 'Live updates offline'}
         </div>
@@ -44,39 +43,37 @@ export default function Sidebar({
         })}
       </nav>
 
-      <div className="sidebar-section sidebar-projects">
+      <div className="sidebar-section sidebar-status-card">
         <div className="sidebar-section-head">
-          <span>Projects</span>
-          <strong>{projects.length}</strong>
+          <span>Workspace status</span>
         </div>
-        <button
-          className={`project-filter ${selectedProjectId === 'all' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onSelectProject('all')}
-        >
-          All renders
-          <span>{stats.totalJobs}</span>
-        </button>
-        <button
-          className={`project-filter ${selectedProjectId === 'unassigned' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onSelectProject('unassigned')}
-        >
-          Unassigned
-          <span>{stats.unassignedJobs}</span>
-        </button>
-        {projects.map((project) => (
-          <button
-            className={`project-filter ${selectedProjectId === project.id ? 'active' : ''}`}
-            type="button"
-            key={project.id}
-            onClick={() => onSelectProject(project.id)}
-          >
-            {project.name}
-            <span>{stats.jobsByProject.get(project.id) || 0}</span>
-          </button>
-        ))}
+        <div className="sidebar-stat-row">
+          <span>Active jobs</span>
+          <strong>{stats.activeJobs}</strong>
+        </div>
+        <div className="sidebar-stat-row">
+          <span>Completed</span>
+          <strong>{stats.completedJobs}</strong>
+        </div>
+        <div className="sidebar-stat-row">
+          <span>Files</span>
+          <strong>{stats.totalFiles}</strong>
+        </div>
+        <div className="sidebar-stat-row">
+          <span>Spend</span>
+          <strong>{formatUsd(stats.totalSpend)}</strong>
+        </div>
       </div>
+
+      <div className="sidebar-section sidebar-balance-card">
+        <WalletCards size={18} />
+        <span>Starter balance</span>
+        <strong>{formatUsd(balanceUsd)}</strong>
+      </div>
+
+      <p className="sidebar-note">
+        Project scoping now lives in each list toolbar so queue and file filters are explicit.
+      </p>
     </aside>
   );
 }

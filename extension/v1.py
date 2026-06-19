@@ -1,7 +1,7 @@
 bl_info = {
     "name": "RenderSphere Extension",
     "author": "Ella",
-    "version": (1, 14, 0),
+    "version": (1, 15, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > RenderSphere",
     "category": "Render",
@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 DEFAULT_SERVER_URL = "http://localhost:3000"
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 ADDON_VERSION = ".".join(str(part) for part in bl_info["version"])
+LOG_PREFIX = "[RenderSphere]"
 
 OUTPUT_EXTENSIONS = {
     "PNG": "png",
@@ -26,30 +27,36 @@ OUTPUT_EXTENSIONS = {
     "OPEN_EXR": "exr",
     "OPEN_EXR_MULTILAYER": "exr",
 }
+
 GPU_BACKEND_ITEMS = [
     ('AUTO', 'Auto', 'Use the fastest compatible GPU backend'),
     ('OPTIX', 'OptiX', 'Prefer OptiX on supported NVIDIA GPUs'),
     ('CUDA', 'CUDA', 'Prefer CUDA on supported NVIDIA GPUs'),
 ]
 
-current_job_id = None
-current_status = "Idle"
-current_error_msg = ""
-job_start_time = 0.0
-last_api_check = 0.0
-current_elapsed_str = "00:00"
-is_current_job_animation = False
-current_start_frame = 1
-current_end_frame = 1
-current_frame_step = 1
-current_download_extension = "png"
+FLOW_ITEMS = [
+    ('SETUP', 'Setup', 'Choose the account, project, scene, output, and quality'),
+    ('REVIEW', 'Review', 'Review the job before credits are used'),
+    ('SUBMITTING', 'Submitting', 'Packaging and uploading the .blend file'),
+    ('RENDERING', 'Rendering', 'RenderSphere is rendering the job'),
+    ('COMPLETE', 'Complete', 'The render finished successfully'),
+    ('FAILED', 'Failed', 'The render failed or was cancelled'),
+]
 
-ui_frame_current = 0
-ui_sample_current = 0
+QUALITY_PRESET_ITEMS = [
+    ('FAST', 'Fast', 'Lower samples for quick previews'),
+    ('BALANCED', 'Balanced', 'Recommended default quality'),
+    ('HIGH', 'High', 'Higher samples for final stills'),
+    ('CUSTOM', 'Custom', 'Show sample, denoise, and advanced quality controls'),
+]
 
-LOG_PREFIX = "[RenderSphere]"
-ACTIVE_RENDER_STATUSES = {"In Queue...", "Rendering Animation...", "Rendering Frame...", "Downloading Render..."}
-READY_RENDER_STATUSES = {"Idle", "Render Complete.", "Zip saved.", "Render Failed", "Connection OK", "Error", "Cancelled."}
+RENDER_TYPE_ITEMS = [
+    ('STILL', 'Still Frame', 'Render the current frame'),
+    ('ANIMATION', 'Animation', 'Render a frame range and download a zip'),
+]
+
+ACTIVE_PHASES = {'packaging', 'uploading', 'submitted', 'rendering', 'downloading', 'cancelling'}
+TERMINAL_PHASES = {'idle', 'connected', 'complete', 'failed', 'cancelled'}
 INTERNAL_RENDER_ERROR_MARKERS = (
     "runpod",
     "traceback",
@@ -61,29 +68,97 @@ INTERNAL_RENDER_ERROR_MARKERS = (
     "handler.py",
     "/usr/local/",
 )
-GUIDED_WALL_ITEMS = [
-    ('AUTH', '1 · Connect', 'Connect your RenderSphere account'),
-    ('TARGET', '2 · Target', 'Choose scene, camera, and project'),
-    ('OUTPUT', '3 · Output', 'Choose output format and frame range'),
-    ('QUALITY', '4 · Quality', 'Choose engine and quality settings'),
-    ('REVIEW', '5 · Review', 'Confirm and submit the render'),
-    ('PROGRESS', '6 · Progress', 'Track render progress and results'),
-]
-GUIDED_WALL_ORDER = [item[0] for item in GUIDED_WALL_ITEMS]
-GUIDED_WALL_LABELS = {item[0]: item[1] for item in GUIDED_WALL_ITEMS}
-GUIDED_WALL_DESCRIPTIONS = {item[0]: item[2] for item in GUIDED_WALL_ITEMS}
+
+QUALITY_PRESETS = {
+    'FAST': {
+        'samples': 64,
+        'resolution_pct': 75,
+        'denoiser': 'OPENIMAGEDENOISE',
+        'noise_threshold': 0.05,
+    },
+    'BALANCED': {
+        'samples': 128,
+        'resolution_pct': 100,
+        'denoiser': 'OPENIMAGEDENOISE',
+        'noise_threshold': 0.02,
+    },
+    'HIGH': {
+        'samples': 256,
+        'resolution_pct': 100,
+        'denoiser': 'OPENIMAGEDENOISE',
+        'noise_threshold': 0.01,
+    },
+}
+
+PROJECT_NONE_ITEM = ('NONE', 'No project', 'Submit without attaching the render to a dashboard project')
+PROJECT_ITEMS = [PROJECT_NONE_ITEM]
+PROJECT_ID_BY_ENUM = {'NONE': None}
+PROJECT_LAST_REFRESH = 0.0
+
+
+class RuntimeState:
+    def __init__(self):
+        self.job_id = None
+        self.phase = 'idle'
+        self.status = 'Ready to set up a render.'
+        self.error = ''
+        self.job_start_time = 0.0
+        self.last_api_check = 0.0
+        self.elapsed = '00:00'
+        self.is_animation = False
+        self.start_frame = 1
+        self.end_frame = 1
+        self.frame_step = 1
+        self.download_extension = 'png'
+        self.frame_current = 0
+        self.sample_current = 0
+        self.last_output_path = ''
+        self.last_output_kind = ''
+        self.connected_account = ''
+
+    def reset_job(self, status='Ready to set up a render.', phase='idle'):
+        self.job_id = None
+        self.phase = phase
+        self.status = status
+        self.error = ''
+        self.job_start_time = 0.0
+        self.last_api_check = 0.0
+        self.elapsed = '00:00'
+        self.is_animation = False
+        self.start_frame = 1
+        self.end_frame = 1
+        self.frame_step = 1
+        self.download_extension = 'png'
+        self.frame_current = 0
+        self.sample_current = 0
+
+
+STATE = RuntimeState()
+
+
+# Compatibility aliases for older code paths and console diagnostics.
+def __getattr__(name):
+    if name == 'current_job_id':
+        return STATE.job_id
+    if name == 'current_status':
+        return STATE.status
+    if name == 'current_error_msg':
+        return STATE.error
+    if name == 'current_elapsed_str':
+        return STATE.elapsed
+    raise AttributeError(name)
 
 
 def force_ui_redraw():
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
+            if area.type in {'VIEW_3D', 'IMAGE_EDITOR'}:
                 area.tag_redraw()
 
 
 def verbose_logging_enabled(context=None):
     prefs = get_addon_preferences(context)
-    if prefs and hasattr(prefs, "verbose_logging"):
+    if prefs and hasattr(prefs, 'verbose_logging'):
         return bool(prefs.verbose_logging)
     return True
 
@@ -92,41 +167,16 @@ def log_verbose(message, context=None, **details):
     if not verbose_logging_enabled(context):
         return
 
-    timestamp = time.strftime("%H:%M:%S")
-    suffix = ""
+    timestamp = time.strftime('%H:%M:%S')
+    suffix = ''
     if details:
         safe_details = []
         for key, value in details.items():
-            if "key" in key.lower() or "token" in key.lower() or "authorization" in key.lower():
-                value = "<redacted>"
+            if 'key' in key.lower() or 'token' in key.lower() or 'authorization' in key.lower():
+                value = '<redacted>'
             safe_details.append(f"{key}={value}")
-        suffix = " | " + ", ".join(safe_details)
+        suffix = ' | ' + ', '.join(safe_details)
     print(f"{LOG_PREFIX} {timestamp} | {message}{suffix}")
-
-
-def set_status(text):
-    global current_status
-    current_status = text
-    force_ui_redraw()
-    log_verbose("Status updated", status=text)
-
-
-def reset_job_state(status="Idle"):
-    global current_job_id, current_status, current_error_msg, job_start_time, last_api_check
-    global current_elapsed_str, is_current_job_animation, current_frame_step, ui_frame_current, ui_sample_current
-
-    log_verbose("Resetting job state", previous_job_id=current_job_id, next_status=status)
-    current_job_id = None
-    current_status = status
-    current_error_msg = ""
-    job_start_time = 0.0
-    last_api_check = 0.0
-    current_elapsed_str = "00:00"
-    is_current_job_animation = False
-    current_frame_step = 1
-    ui_frame_current = 0
-    ui_sample_current = 0
-    force_ui_redraw()
 
 
 def get_addon_preferences(context=None):
@@ -144,8 +194,7 @@ def get_addon_preferences(context=None):
 def get_server_url(context=None):
     prefs = get_addon_preferences(context)
     if prefs and prefs.server_url:
-        return prefs.server_url.rstrip("/")
-
+        return prefs.server_url.rstrip('/')
     return DEFAULT_SERVER_URL
 
 
@@ -153,16 +202,14 @@ def get_api_key(context=None):
     prefs = get_addon_preferences(context)
     if prefs and prefs.api_key:
         return prefs.api_key.strip()
-
-    return ""
+    return ''
 
 
 def get_animation_output_dir(context=None):
     prefs = get_addon_preferences(context)
     if prefs and prefs.animation_output_dir:
         return bpy.path.abspath(prefs.animation_output_dir)
-
-    return os.path.join(os.path.expanduser("~"), "Desktop")
+    return os.path.join(os.path.expanduser('~'), 'Desktop')
 
 
 def auth_headers(context=None, content_type=None):
@@ -175,10 +222,44 @@ def auth_headers(context=None, content_type=None):
     return headers
 
 
+def set_flow_state(scene, flow_state):
+    if scene and hasattr(scene, 'rendersphere_flow_state'):
+        allowed = {item[0] for item in FLOW_ITEMS}
+        scene.rendersphere_flow_state = flow_state if flow_state in allowed else 'SETUP'
+    force_ui_redraw()
+
+
+def set_status(text, phase=None, flow_state=None, error=None, context=None):
+    STATE.status = text
+    if phase:
+        STATE.phase = phase
+    if error is not None:
+        STATE.error = error
+    if flow_state:
+        scene = context.scene if context else getattr(bpy.context, 'scene', None)
+        set_flow_state(scene, flow_state)
+    force_ui_redraw()
+    log_verbose('Status updated', context, status=text, phase=STATE.phase, flow=flow_state)
+
+
+def reset_job_state(status='Ready to set up a render.', context=None):
+    log_verbose('Resetting job state', context, previous_job_id=STATE.job_id, next_status=status)
+    STATE.reset_job(status=status)
+    force_ui_redraw()
+
+
+def can_submit_render(context):
+    return STATE.job_id is None and STATE.phase in TERMINAL_PHASES and bool(get_api_key(context))
+
+
+def is_busy():
+    return STATE.job_id is not None or STATE.phase in ACTIVE_PHASES
+
+
 def resolve_download_url(download_url, context=None):
     if not download_url:
-        return ""
-    if download_url.startswith("/"):
+        return ''
+    if download_url.startswith('/'):
         return f"{get_server_url(context)}{download_url}"
     return download_url
 
@@ -194,11 +275,10 @@ def describe_url_error(error):
         try:
             body = error.read().decode('utf-8')
             data = json.loads(body)
-            message = data.get("error") or data.get("message") or body
+            message = data.get('error') or data.get('message') or body
         except Exception:
             message = error.reason
         return f"{error.code}: {message}"
-
     return str(error)
 
 
@@ -215,7 +295,7 @@ def first_text(*values):
     for value in values:
         if isinstance(value, str) and value.strip():
             return value.strip()
-    return ""
+    return ''
 
 
 def extract_render_error_message(error):
@@ -223,27 +303,27 @@ def extract_render_error_message(error):
     if isinstance(parsed, str):
         return parsed
     if not isinstance(parsed, dict):
-        return ""
+        return ''
 
-    output = parsed.get("output") if isinstance(parsed.get("output"), dict) else {}
+    output = parsed.get('output') if isinstance(parsed.get('output'), dict) else {}
     return first_text(
-        parsed.get("user_message"),
-        parsed.get("userMessage"),
-        parsed.get("message"),
-        parsed.get("error_message"),
-        parsed.get("error"),
-        output.get("message"),
-        output.get("error"),
+        parsed.get('user_message'),
+        parsed.get('userMessage'),
+        parsed.get('message'),
+        parsed.get('error_message'),
+        parsed.get('error'),
+        output.get('message'),
+        output.get('error'),
     )
 
 
-def sanitize_render_error(error, fallback="Render failed while processing the scene."):
+def sanitize_render_error(error, fallback='Render failed while processing the scene.'):
     raw_message = extract_render_error_message(error) or fallback
-    normalized = " ".join(str(raw_message).split())
+    normalized = ' '.join(str(raw_message).split())
     lower_message = normalized.lower()
 
-    if "blender stopped" in lower_message or "blender crashed" in lower_message or "exit code" in lower_message or "signal" in lower_message:
-        return "Blender stopped unexpectedly while rendering this scene. Try lowering samples, resolution, or texture sizes before submitting again."
+    if 'blender stopped' in lower_message or 'blender crashed' in lower_message or 'exit code' in lower_message or 'signal' in lower_message:
+        return 'Blender stopped unexpectedly while rendering this scene. Try lowering samples, resolution, or texture sizes before submitting again.'
 
     if not normalized or any(marker in lower_message for marker in INTERNAL_RENDER_ERROR_MARKERS):
         return fallback
@@ -253,16 +333,16 @@ def sanitize_render_error(error, fallback="Render failed while processing the sc
 
 def get_service_max_upload_bytes(context=None):
     try:
-        log_verbose("Fetching upload limit", context, server=get_server_url(context))
+        log_verbose('Fetching upload limit', context, server=get_server_url(context))
         req = urllib.request.Request(f"{get_server_url(context)}/api/config")
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode())
-            max_upload_bytes = data.get("limits", {}).get("maxUploadBytes")
+            max_upload_bytes = data.get('limits', {}).get('maxUploadBytes')
             if isinstance(max_upload_bytes, int) and max_upload_bytes > 0:
-                log_verbose("Upload limit loaded", context, max_upload_bytes=max_upload_bytes)
+                log_verbose('Upload limit loaded', context, max_upload_bytes=max_upload_bytes)
                 return max_upload_bytes
     except Exception as exc:
-        log_verbose("Could not fetch upload limit; using default", context, error=exc)
+        log_verbose('Could not fetch upload limit; using default', context, error=exc)
 
     return DEFAULT_MAX_UPLOAD_BYTES
 
@@ -271,72 +351,139 @@ def remove_temp_payload(temp_path):
     try:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
-            log_verbose("Removed temporary payload", path=temp_path)
+            log_verbose('Removed temporary payload', path=temp_path)
     except Exception as exc:
-        log_verbose("Could not remove temporary payload", error=exc)
+        log_verbose('Could not remove temporary payload', error=exc)
 
 
-def get_guided_wall(scene):
-    wall = getattr(scene, "rendersphere_guided_wall", "AUTH")
-    if wall not in GUIDED_WALL_ORDER:
-        return "AUTH"
-    return wall
-
-
-def set_guided_wall(scene, wall):
-    if wall not in GUIDED_WALL_ORDER:
-        wall = "AUTH"
-    scene.rendersphere_guided_wall = wall
-    log_verbose("Guided wall changed", wall=wall)
-    force_ui_redraw()
-
-
-def get_wall_index(wall):
-    try:
-        return GUIDED_WALL_ORDER.index(wall)
-    except ValueError:
-        return 0
-
-
-def can_submit_render(context):
-    return current_job_id is None and current_status in READY_RENDER_STATUSES and bool(get_api_key(context))
-
-
-def get_frame_step(scene):
-    if not getattr(scene, "runpod_advanced_mode", False):
-        return 1
-    return max(1, int(getattr(scene, "runpod_frame_step", 1)))
-
-
-def get_render_frame_count(scene):
-    start_frame, end_frame = get_render_frame_range(scene)
-    if not scene.runpod_is_animation:
-        return 1
-    return ((end_frame - start_frame) // get_frame_step(scene)) + 1
-
-
-def calculate_progress_percent(scene):
-    target_samples = scene.runpod_samples
-    if current_status not in ACTIVE_RENDER_STATUSES:
-        if current_status in ["Render Complete.", "Zip saved."]:
-            return 100
-        return 0
-
-    if current_status == "In Queue...":
-        return 3
-
-    if is_current_job_animation:
-        total_frames = ((current_end_frame - current_start_frame) // max(current_frame_step, 1)) + 1
-        completed_frame_index = max(0, (ui_frame_current - current_start_frame) // max(current_frame_step, 1))
-        frame_pct = (completed_frame_index + 1) / max(total_frames, 1)
-        sample_pct = ui_sample_current / max(target_samples, 1)
-        pct = int(((completed_frame_index + sample_pct) / max(total_frames, 1)) * 100) if ui_sample_current else int(frame_pct * 100)
+def http_put_file(upload_url, temp_path, file_size):
+    parsed_url = urlparse(upload_url)
+    if parsed_url.scheme == 'http':
+        connection = http.client.HTTPConnection(parsed_url.netloc)
     else:
-        pct = int((ui_sample_current / max(target_samples, 1)) * 100)
+        connection = http.client.HTTPSConnection(parsed_url.netloc)
 
-    return min(100, max(0, pct))
+    request_path = parsed_url.path
+    if parsed_url.query:
+        request_path += '?' + parsed_url.query
+
+    try:
+        with open(temp_path, 'rb') as file_data:
+            connection.request(
+                'PUT',
+                request_path,
+                body=file_data,
+                headers={'Content-Type': 'application/octet-stream', 'Content-Length': str(file_size)},
+            )
+            return connection.getresponse()
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
+def apply_quality_preset(self, context):
+    scene = context.scene if context else self
+    preset = getattr(scene, 'runpod_quality_preset', 'BALANCED')
+    values = QUALITY_PRESETS.get(preset)
+    if not values:
+        return
+
+    scene.runpod_samples = values['samples']
+    scene.runpod_resolution_pct = values['resolution_pct']
+    scene.runpod_denoiser = values['denoiser']
+    scene.runpod_noise_threshold = values['noise_threshold']
+    log_verbose('Quality preset applied', context, preset=preset)
+
+
+def sync_render_type(self, context):
+    scene = context.scene if context else self
+    scene.runpod_is_animation = getattr(scene, 'runpod_render_type', 'STILL') == 'ANIMATION'
+
+
+def should_show_quality_controls(scene):
+    return scene.runpod_quality_preset == 'CUSTOM' or scene.runpod_advanced_mode
+
+
+def should_show_advanced_controls(scene):
+    return scene.runpod_advanced_mode
+
+
+def project_items(self, context):
+    return PROJECT_ITEMS if PROJECT_ITEMS else [PROJECT_NONE_ITEM]
+
+
+def project_enum_identifier(project_id):
+    safe_chars = []
+    for char in str(project_id).upper():
+        if char.isascii() and char.isalnum():
+            safe_chars.append(char)
+        else:
+            safe_chars.append('_')
+
+    safe_id = ''.join(safe_chars).strip('_') or 'ID'
+    return f"PROJECT_{safe_id[:48]}"
+
+
+def get_selected_project_id(scene):
+    project_key = getattr(scene, 'runpod_project', 'NONE') or 'NONE'
+    if project_key == 'NONE':
+        return None
+    if project_key in PROJECT_ID_BY_ENUM:
+        return PROJECT_ID_BY_ENUM[project_key]
+    return project_key
+
+
+def get_selected_project_label(scene):
+    project_key = getattr(scene, 'runpod_project', 'NONE') or 'NONE'
+    return next((item[1] for item in PROJECT_ITEMS if item[0] == project_key), 'No project')
+
+
+def set_project_items(projects):
+    global PROJECT_ITEMS, PROJECT_ID_BY_ENUM, PROJECT_LAST_REFRESH
+    items = [PROJECT_NONE_ITEM]
+    id_by_enum = {'NONE': None}
+    seen_project_ids = set()
+    seen_enum_ids = {'NONE'}
+
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+
+        project_id = str(project.get('id') or '').strip()
+        if not project_id or project_id in seen_project_ids:
+            continue
+
+        enum_id = project_enum_identifier(project_id)
+        if enum_id in seen_enum_ids:
+            suffix = 2
+            base_enum_id = enum_id[:55]
+            while f"{base_enum_id}_{suffix}" in seen_enum_ids:
+                suffix += 1
+            enum_id = f"{base_enum_id}_{suffix}"
+
+        name = str(project.get('name') or project_id).strip() or project_id
+        description = f"Dashboard project: {name}"
+        items.append((enum_id, name[:64], description[:256]))
+        id_by_enum[enum_id] = project_id
+        seen_project_ids.add(project_id)
+        seen_enum_ids.add(enum_id)
+
+    PROJECT_ITEMS = items or [PROJECT_NONE_ITEM]
+    PROJECT_ID_BY_ENUM = id_by_enum
+    PROJECT_LAST_REFRESH = time.time()
+
+
+def fetch_projects(context=None):
+    req = urllib.request.Request(f"{get_server_url(context)}/api/projects", headers=auth_headers(context))
+    with urllib.request.urlopen(req, timeout=15) as response:
+        data = json.loads(response.read().decode())
+    projects = data.get('projects', [])
+    if not isinstance(projects, list):
+        projects = []
+    set_project_items(projects)
+    return projects
 
 
 def get_missing_external_files():
@@ -349,13 +496,6 @@ def get_missing_external_files():
     return missing_files
 
 
-def get_render_frame_range(scene):
-    target_scene = scene.runpod_scene or scene
-    start_frame = target_scene.frame_start if scene.runpod_use_scene_frames else scene.runpod_frame_start
-    end_frame = target_scene.frame_end if scene.runpod_use_scene_frames else scene.runpod_frame_end
-    return start_frame, end_frame if scene.runpod_is_animation else start_frame
-
-
 def selected_render_scene(scene):
     return scene.runpod_scene or scene
 
@@ -364,141 +504,189 @@ def selected_render_camera(scene):
     return scene.runpod_camera or selected_render_scene(scene).camera
 
 
+def get_frame_step(scene):
+    if not should_show_advanced_controls(scene):
+        return 1
+    return max(1, int(getattr(scene, 'runpod_frame_step', 1)))
+
+
+def get_render_frame_range(scene):
+    target_scene = selected_render_scene(scene)
+    if not scene.runpod_is_animation:
+        return target_scene.frame_current, target_scene.frame_current
+
+    start_frame = target_scene.frame_start if scene.runpod_use_scene_frames else scene.runpod_frame_start
+    end_frame = target_scene.frame_end if scene.runpod_use_scene_frames else scene.runpod_frame_end
+    return start_frame, end_frame
+
+
+def get_render_frame_count(scene):
+    start_frame, end_frame = get_render_frame_range(scene)
+    if not scene.runpod_is_animation:
+        return 1
+    return ((end_frame - start_frame) // get_frame_step(scene)) + 1
+
+
 def describe_render_job(scene):
     start_frame, end_frame = get_render_frame_range(scene)
     frame_count = get_render_frame_count(scene)
-    render_type = "Animation" if scene.runpod_is_animation else "Still frame"
+    render_type = 'Animation' if scene.runpod_is_animation else 'Still frame'
     target_scene = selected_render_scene(scene)
     target_camera = selected_render_camera(scene)
     return {
-        "render_type": render_type,
-        "start_frame": start_frame,
-        "end_frame": end_frame,
-        "frame_count": frame_count,
-        "frame_step": get_frame_step(scene),
-        "samples": scene.runpod_samples,
-        "resolution_pct": scene.runpod_resolution_pct,
-        "format": scene.runpod_output_format,
-        "scene": target_scene.name if target_scene else "Current scene",
-        "camera": target_camera.name if target_camera else "Scene camera",
+        'render_type': render_type,
+        'start_frame': start_frame,
+        'end_frame': end_frame,
+        'frame_count': frame_count,
+        'frame_step': get_frame_step(scene),
+        'engine': scene.runpod_engine,
+        'quality_preset': scene.runpod_quality_preset,
+        'samples': scene.runpod_samples,
+        'resolution_pct': scene.runpod_resolution_pct,
+        'format': scene.runpod_output_format,
+        'scene': target_scene.name if target_scene else 'Current scene',
+        'camera': target_camera.name if target_camera else 'Scene camera',
+        'project': get_selected_project_label(scene),
     }
 
 
-def check_job_status():
-    global current_job_id, current_status, current_error_msg, job_start_time, last_api_check, current_elapsed_str
-    global is_current_job_animation, ui_frame_current, ui_sample_current
+def calculate_progress_percent(scene):
+    if STATE.phase == 'complete':
+        return 100
+    if STATE.phase == 'packaging':
+        return 5
+    if STATE.phase == 'uploading':
+        return 12
+    if STATE.phase == 'submitted':
+        return 20
+    if STATE.phase not in {'rendering', 'downloading'}:
+        return 0
+    if STATE.phase == 'downloading':
+        return 95
 
-    if not current_job_id:
+    target_samples = max(scene.runpod_samples, 1)
+    if STATE.is_animation:
+        total_frames = ((STATE.end_frame - STATE.start_frame) // max(STATE.frame_step, 1)) + 1
+        completed_frame_index = max(0, (STATE.frame_current - STATE.start_frame) // max(STATE.frame_step, 1))
+        sample_pct = STATE.sample_current / target_samples
+        pct = int(((completed_frame_index + sample_pct) / max(total_frames, 1)) * 100) if STATE.sample_current else int((completed_frame_index / max(total_frames, 1)) * 100)
+    else:
+        pct = int((STATE.sample_current / target_samples) * 100) if STATE.sample_current else 25
+
+    return min(94, max(20, pct))
+
+
+def check_job_status():
+    if not STATE.job_id:
         return None
 
-    elapsed = int(time.time() - job_start_time)
+    scene = getattr(bpy.context, 'scene', None)
+    elapsed = int(time.time() - STATE.job_start_time)
     mins, secs = divmod(elapsed, 60)
-    current_elapsed_str = f"{mins:02d}:{secs:02d}"
+    STATE.elapsed = f"{mins:02d}:{secs:02d}"
     force_ui_redraw()
 
-    if time.time() - last_api_check >= 5.0:
-        last_api_check = time.time()
-        status_endpoint = f"{get_server_url()}/api/job-status/{current_job_id}"
+    if time.time() - STATE.last_api_check < 5.0:
+        return 1.0
 
-        try:
-            log_verbose("Polling render status", job_id=current_job_id)
-            req = urllib.request.Request(status_endpoint, headers=auth_headers())
-            with urllib.request.urlopen(req) as response:
-                data = json.loads(response.read().decode())
-                status = data.get("status")
-                log_verbose("Received render status", job_id=current_job_id, status=status)
+    STATE.last_api_check = time.time()
+    status_endpoint = f"{get_server_url()}/api/job-status/{STATE.job_id}"
 
-                if status in ["IN_QUEUE", "IN_PROGRESS", "RUNNING"]:
-                    if status == "IN_QUEUE":
-                        set_status("In Queue...")
-                    else:
-                        set_status("Rendering Animation..." if is_current_job_animation else "Rendering Frame...")
+    try:
+        log_verbose('Polling render status', job_id=STATE.job_id)
+        req = urllib.request.Request(status_endpoint, headers=auth_headers())
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            status = data.get('status')
+            log_verbose('Received render status', job_id=STATE.job_id, status=status)
 
-                    stream_data = data.get("stream", [])
-                    if stream_data and isinstance(stream_data, list):
-                        for item in reversed(stream_data):
-                            payload = item
+        if status in ['IN_QUEUE', 'IN_PROGRESS', 'RUNNING', 'SUBMITTED']:
+            if status == 'IN_QUEUE':
+                set_status('Submitted: waiting for a render worker...', phase='submitted', flow_state='RENDERING')
+            else:
+                set_status('Rendering animation...' if STATE.is_animation else 'Rendering frame...', phase='rendering', flow_state='RENDERING')
 
-                            if isinstance(item, dict):
-                                if "update" in item:
-                                    payload = item["update"]
-                                elif "output" in item:
-                                    payload = item["output"]
+            stream_data = data.get('stream', [])
+            if stream_data and isinstance(stream_data, list):
+                for item in reversed(stream_data):
+                    payload = item
+                    if isinstance(item, dict):
+                        if 'update' in item:
+                            payload = item['update']
+                        elif 'output' in item:
+                            payload = item['output']
+                    if isinstance(payload, str):
+                        try:
+                            payload = json.loads(payload)
+                        except Exception:
+                            pass
+                    if isinstance(payload, dict):
+                        found_data = False
+                        if 'current_frame' in payload:
+                            STATE.frame_current = payload['current_frame']
+                            found_data = True
+                        if 'current_sample' in payload:
+                            STATE.sample_current = payload['current_sample']
+                            found_data = True
+                        if found_data:
+                            break
 
-                            if isinstance(payload, str):
-                                try:
-                                    payload = json.loads(payload)
-                                except Exception:
-                                    pass
+        elif status == 'COMPLETED':
+            set_status('Complete: downloading output...', phase='downloading', flow_state='RENDERING')
+            download_url = data.get('downloadUrl')
+            if not download_url:
+                STATE.error = 'Render completed but no download URL was returned.'
+                set_status('Failed: no download URL was returned.', phase='failed', flow_state='FAILED')
+                STATE.job_id = None
+                return None
 
-                            if isinstance(payload, dict):
-                                found_data = False
-                                if "current_frame" in payload:
-                                    ui_frame_current = payload["current_frame"]
-                                    found_data = True
-                                if "current_sample" in payload:
-                                    ui_sample_current = payload["current_sample"]
-                                    found_data = True
+            if STATE.is_animation:
+                output_dir = get_animation_output_dir()
+                os.makedirs(output_dir, exist_ok=True)
+                output_path = os.path.join(output_dir, f"animation_{STATE.job_id[:6]}.zip")
+                log_verbose('Downloading completed animation', job_id=STATE.job_id, path=output_path)
+                download_authenticated_file(download_url, output_path)
+                STATE.last_output_kind = 'animation'
+                STATE.last_output_path = output_path
+                set_status('Complete: animation zip saved.', phase='complete', flow_state='COMPLETE')
+            else:
+                output_path = os.path.join(bpy.app.tempdir, f"cloud_render_final.{STATE.download_extension}")
+                log_verbose('Downloading completed frame', job_id=STATE.job_id, path=output_path)
+                download_authenticated_file(download_url, output_path)
+                img = bpy.data.images.load(output_path)
+                for window in bpy.context.window_manager.windows:
+                    for area in window.screen.areas:
+                        if area.type == 'IMAGE_EDITOR':
+                            area.spaces.active.image = img
+                STATE.last_output_kind = 'image'
+                STATE.last_output_path = output_path
+                set_status('Complete: still image downloaded.', phase='complete', flow_state='COMPLETE')
 
-                                if found_data:
-                                    break
+            STATE.job_id = None
+            return None
 
-                elif status == "COMPLETED":
-                    set_status("Downloading Render...")
-                    download_url = data.get("downloadUrl")
-                    if not download_url:
-                        current_error_msg = "Render completed but no download URL was returned."
-                        set_status("Render Failed")
-                        current_job_id = None
-                        force_ui_redraw()
-                        return None
+        elif status == 'FAILED':
+            raw_error = data.get('error') or data.get('message') or data.get('job', {}).get('error')
+            STATE.error = sanitize_render_error(raw_error, 'Render failed while processing the scene.')
+            log_verbose('Render failed', job_id=STATE.job_id, error=STATE.error)
+            set_status('Failed: render processing did not finish.', phase='failed', flow_state='FAILED')
+            STATE.job_id = None
+            return None
 
-                    if is_current_job_animation:
-                        output_dir = get_animation_output_dir()
-                        os.makedirs(output_dir, exist_ok=True)
-                        zip_path = os.path.join(output_dir, f"animation_{current_job_id[:6]}.zip")
-                        log_verbose("Downloading completed animation", job_id=current_job_id, path=zip_path)
-                        download_authenticated_file(download_url, zip_path)
-                        set_status("Zip saved.")
-                    else:
-                        save_path = os.path.join(bpy.app.tempdir, f"cloud_render_final.{current_download_extension}")
-                        log_verbose("Downloading completed frame", job_id=current_job_id, path=save_path)
-                        download_authenticated_file(download_url, save_path)
-                        img = bpy.data.images.load(save_path)
+        elif status == 'CANCELLED':
+            STATE.error = 'The render was cancelled.'
+            set_status('Cancelled: render job stopped.', phase='cancelled', flow_state='FAILED')
+            STATE.job_id = None
+            return None
 
-                        for window in bpy.context.window_manager.windows:
-                            for area in window.screen.areas:
-                                if area.type == 'IMAGE_EDITOR':
-                                    area.spaces.active.image = img
-                        set_status("Render Complete.")
+        else:
+            STATE.error = f"Unexpected job status: {status}"
+            set_status('Failed: unexpected render status.', phase='failed', flow_state='FAILED')
+            STATE.job_id = None
+            return None
 
-                    current_job_id = None
-                    force_ui_redraw()
-                    return None
-
-                elif status == "FAILED":
-                    raw_error = data.get("error") or data.get("message") or data.get("job", {}).get("error")
-                    current_error_msg = sanitize_render_error(raw_error, "Render failed while processing the scene.")
-                    log_verbose("Render failed", job_id=current_job_id, error=current_error_msg)
-                    set_status("Render Failed")
-                    current_job_id = None
-                    force_ui_redraw()
-                    return None
-
-                elif status == "CANCELLED":
-                    set_status("Cancelled.")
-                    current_job_id = None
-                    force_ui_redraw()
-                    return None
-                    
-                else:
-                    set_status(f"Error: {status}")
-                    current_job_id = None
-                    force_ui_redraw()
-                    return None
-
-        except Exception as e:
-            log_verbose("Status check failed", error=e)
+    except Exception as exc:
+        log_verbose('Status check failed', error=exc)
 
     return 1.0
 
@@ -507,197 +695,249 @@ class RENDERSPHERE_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__ if __package__ else __name__
 
     server_url: bpy.props.StringProperty(
-        name="Server URL",
-        description="RenderSphere service URL",
+        name='Server URL',
+        description='RenderSphere service URL',
         default=DEFAULT_SERVER_URL,
     )
     api_key: bpy.props.StringProperty(
-        name="Access Key",
-        description="RenderSphere access key from your dashboard",
-        default="",
+        name='Access Key',
+        description='RenderSphere access key from your dashboard',
+        default='',
         subtype='PASSWORD',
     )
     animation_output_dir: bpy.props.StringProperty(
-        name="Animation Download Folder",
-        description="Folder used for completed animation zip downloads",
-        default="",
+        name='Animation Download Folder',
+        description='Folder used for completed animation zip downloads',
+        default='',
         subtype='DIR_PATH',
     )
     verbose_logging: bpy.props.BoolProperty(
-        name="Verbose Logging",
-        description="Print detailed RenderSphere extension activity to the Blender console",
+        name='Verbose Logging',
+        description='Print detailed RenderSphere extension activity to the Blender console',
         default=True,
     )
 
     def draw(self, context):
         layout = self.layout
         layout.label(text=f"RenderSphere Add-on v{ADDON_VERSION}")
-        layout.prop(self, "server_url")
-        layout.prop(self, "api_key")
-        layout.prop(self, "animation_output_dir")
-        layout.prop(self, "verbose_logging")
-        layout.operator("rendersphere.test_connection", icon='URL')
+        layout.prop(self, 'server_url')
+        layout.prop(self, 'api_key')
+        layout.prop(self, 'animation_output_dir')
+        layout.prop(self, 'verbose_logging')
+        row = layout.row(align=True)
+        row.operator('rendersphere.connect', icon='KEY_HLT')
+        row.operator('rendersphere.test_connection', icon='URL')
 
 
 class RENDERSPHERE_OT_test_connection(bpy.types.Operator):
-    bl_idname = "rendersphere.test_connection"
-    bl_label = "Test RenderSphere Connection"
+    bl_idname = 'rendersphere.test_connection'
+    bl_label = 'Test Connection'
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        global current_error_msg
-
-        log_verbose("Testing account connection", context, server=get_server_url(context))
+        log_verbose('Testing account connection', context, server=get_server_url(context))
         if not get_api_key(context):
-            current_error_msg = "Add your RenderSphere access key before testing."
-            log_verbose("Connection test blocked: missing access key", context)
-            self.report({'ERROR'}, current_error_msg)
-            set_status("Render Failed")
+            STATE.error = 'Add your RenderSphere access key before testing.'
+            set_status('Failed: access key is missing.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
             return {'CANCELLED'}
 
         try:
             req = urllib.request.Request(f"{get_server_url(context)}/api/auth/me", headers=auth_headers(context))
             with urllib.request.urlopen(req, timeout=15) as response:
                 data = json.loads(response.read().decode())
-                user = data.get("user", {})
-                email = user.get("email", "account")
+                user = data.get('user', {})
+                email = user.get('email', 'account')
 
-            current_error_msg = ""
-            log_verbose("Connection test succeeded", context, account=email)
-            set_status("Connection OK")
+            STATE.connected_account = email
+            STATE.error = ''
+            log_verbose('Connection test succeeded', context, account=email)
+            set_status(f"Connected as {email}.", phase='connected', flow_state='SETUP', context=context)
             self.report({'INFO'}, f"Connected as {email}")
             return {'FINISHED'}
         except Exception as exc:
-            current_error_msg = describe_url_error(exc)
-            log_verbose("Connection test failed", context, error=current_error_msg)
-            set_status("Render Failed")
-            self.report({'ERROR'}, current_error_msg)
+            STATE.error = describe_url_error(exc)
+            log_verbose('Connection test failed', context, error=STATE.error)
+            set_status('Failed: connection test did not succeed.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
             return {'CANCELLED'}
 
 
-class RENDERSPHERE_OT_unlock(bpy.types.Operator):
-    bl_idname = "rendersphere.unlock"
-    bl_label = "Unlock RenderSphere"
+class RENDERSPHERE_OT_connect(bpy.types.Operator):
+    bl_idname = 'rendersphere.connect'
+    bl_label = 'Connect Account'
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        global current_error_msg
-
         prefs = get_addon_preferences(context)
-        log_verbose("Connecting account", context, server=get_server_url(context))
+        log_verbose('Connecting account', context, server=get_server_url(context))
         if not prefs:
-            current_error_msg = "Could not find RenderSphere add-on preferences."
-            log_verbose("Connect blocked: preferences unavailable", context)
-            self.report({'ERROR'}, current_error_msg)
+            STATE.error = 'Could not find RenderSphere add-on preferences.'
+            self.report({'ERROR'}, STATE.error)
             return {'CANCELLED'}
 
         if not get_api_key(context):
-            current_error_msg = "Enter your RenderSphere access key."
-            log_verbose("Connect blocked: missing access key", context)
-            self.report({'ERROR'}, current_error_msg)
-            set_status("Render Failed")
+            STATE.error = 'Enter your RenderSphere access key.'
+            set_status('Failed: access key is missing.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
             return {'CANCELLED'}
 
         try:
             req = urllib.request.Request(f"{get_server_url(context)}/api/auth/me", headers=auth_headers(context))
             with urllib.request.urlopen(req, timeout=15) as response:
                 data = json.loads(response.read().decode())
-                user = data.get("user", {})
-                email = user.get("email", "account")
+                user = data.get('user', {})
+                email = user.get('email', 'account')
 
             try:
                 bpy.ops.wm.save_userpref()
             except Exception as exc:
-                log_verbose("Could not save user preferences after connect", context, error=exc)
+                log_verbose('Could not save user preferences after connect', context, error=exc)
 
-            current_error_msg = ""
-            log_verbose("Account connected", context, account=email)
-            set_status("Connection OK")
-            set_guided_wall(context.scene, "TARGET")
+            try:
+                fetch_projects(context)
+            except Exception as exc:
+                log_verbose('Project refresh after connect failed', context, error=exc)
+
+            STATE.connected_account = email
+            STATE.error = ''
+            log_verbose('Account connected', context, account=email)
+            set_status(f"Connected as {email}.", phase='connected', flow_state='SETUP', context=context)
             self.report({'INFO'}, f"RenderSphere connected for {email}")
             return {'FINISHED'}
         except Exception as exc:
-            current_error_msg = describe_url_error(exc)
-            log_verbose("Account connect failed", context, error=current_error_msg)
-            set_status("Render Failed")
-            self.report({'ERROR'}, current_error_msg)
+            STATE.error = describe_url_error(exc)
+            log_verbose('Account connect failed', context, error=STATE.error)
+            set_status('Failed: could not connect account.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
             return {'CANCELLED'}
 
 
 class RENDERSPHERE_OT_clear_access_key(bpy.types.Operator):
-    bl_idname = "rendersphere.clear_access_key"
-    bl_label = "Sign Out"
+    bl_idname = 'rendersphere.clear_access_key'
+    bl_label = 'Sign Out'
     bl_options = {'REGISTER'}
 
     def execute(self, context):
         prefs = get_addon_preferences(context)
         if prefs:
-            prefs.api_key = ""
+            prefs.api_key = ''
             try:
                 bpy.ops.wm.save_userpref()
             except Exception as exc:
-                log_verbose("Could not save user preferences after sign out", context, error=exc)
+                log_verbose('Could not save user preferences after sign out', context, error=exc)
 
-        log_verbose("Access key cleared", context)
-        reset_job_state()
-        set_guided_wall(context.scene, "AUTH")
-        self.report({'INFO'}, "RenderSphere access key removed.")
+        set_project_items([])
+        STATE.connected_account = ''
+        log_verbose('Access key cleared', context)
+        reset_job_state(context=context)
+        set_flow_state(context.scene, 'SETUP')
+        self.report({'INFO'}, 'RenderSphere access key removed.')
         return {'FINISHED'}
 
 
-class RENDERSPHERE_OT_goto_wall(bpy.types.Operator):
-    bl_idname = "rendersphere.goto_wall"
-    bl_label = "Open Guided Step"
+class RENDERSPHERE_OT_refresh_projects(bpy.types.Operator):
+    bl_idname = 'rendersphere.refresh_projects'
+    bl_label = 'Refresh Projects'
     bl_options = {'REGISTER'}
 
-    wall: bpy.props.EnumProperty(items=GUIDED_WALL_ITEMS)
-
     def execute(self, context):
-        set_guided_wall(context.scene, self.wall)
-        return {'FINISHED'}
+        if not get_api_key(context):
+            STATE.error = 'Connect your account before refreshing projects.'
+            set_status('Failed: access key is missing.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
+            return {'CANCELLED'}
+
+        try:
+            projects = fetch_projects(context)
+            STATE.error = ''
+            set_status(f"Projects refreshed: {len(projects)} available.", phase='connected', flow_state='SETUP', context=context)
+            self.report({'INFO'}, f"Loaded {len(projects)} RenderSphere projects")
+            return {'FINISHED'}
+        except Exception as exc:
+            STATE.error = describe_url_error(exc)
+            log_verbose('Project refresh failed', context, error=STATE.error)
+            set_status('Failed: could not refresh projects.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
+            return {'CANCELLED'}
 
 
-class RENDERSPHERE_OT_next_wall(bpy.types.Operator):
-    bl_idname = "rendersphere.next_wall"
-    bl_label = "Next Step"
+class RENDERSPHERE_OT_review_render(bpy.types.Operator):
+    bl_idname = 'rendersphere.review_render'
+    bl_label = 'Review Render'
     bl_options = {'REGISTER'}
 
     def execute(self, context):
         scene = context.scene
-        current_index = get_wall_index(get_guided_wall(scene))
-        next_index = min(current_index + 1, len(GUIDED_WALL_ORDER) - 1)
-        set_guided_wall(scene, GUIDED_WALL_ORDER[next_index])
+        if not get_api_key(context):
+            STATE.error = 'Connect your RenderSphere account before reviewing a render.'
+            set_status('Failed: account is not connected.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
+            return {'CANCELLED'}
+
+        start_frame, end_frame = get_render_frame_range(scene)
+        if end_frame < start_frame:
+            STATE.error = 'End frame must be greater than or equal to start frame.'
+            set_status('Failed: frame range is invalid.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
+            return {'CANCELLED'}
+
+        if not selected_render_camera(scene):
+            STATE.error = 'Choose a camera or assign a camera to the selected scene.'
+            set_status('Failed: camera is missing.', phase='failed', flow_state='FAILED', context=context)
+            self.report({'ERROR'}, STATE.error)
+            return {'CANCELLED'}
+
+        STATE.error = ''
+        set_status('Review the render settings before submitting.', phase='idle', flow_state='REVIEW', context=context)
         return {'FINISHED'}
 
 
-class RENDERSPHERE_OT_previous_wall(bpy.types.Operator):
-    bl_idname = "rendersphere.previous_wall"
-    bl_label = "Previous Step"
+class RENDERSPHERE_OT_edit_setup(bpy.types.Operator):
+    bl_idname = 'rendersphere.edit_setup'
+    bl_label = 'Edit Setup'
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        scene = context.scene
-        current_index = get_wall_index(get_guided_wall(scene))
-        previous_index = max(current_index - 1, 0)
-        set_guided_wall(scene, GUIDED_WALL_ORDER[previous_index])
+        if is_busy():
+            self.report({'WARNING'}, 'A render is active. Cancel it before changing setup.')
+            return {'CANCELLED'}
+        set_status('Ready to edit render setup.', phase='idle', flow_state='SETUP', context=context)
         return {'FINISHED'}
+
+
+class RENDERSPHERE_OT_open_last_output(bpy.types.Operator):
+    bl_idname = 'rendersphere.open_last_output'
+    bl_label = 'Open Output'
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        if not STATE.last_output_path or not os.path.exists(STATE.last_output_path):
+            self.report({'ERROR'}, 'No downloaded output file is available.')
+            return {'CANCELLED'}
+
+        try:
+            os.startfile(STATE.last_output_path)
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'ERROR'}, f"Could not open output: {exc}")
+            return {'CANCELLED'}
 
 
 class RENDER_OT_cloud_upload(bpy.types.Operator):
-    bl_idname = "render.cloud_upload"
-    bl_label = "Submit Render"
+    bl_idname = 'render.cloud_upload'
+    bl_label = 'Submit Render'
     bl_options = {'REGISTER', 'UNDO'}
 
     ignore_missing: bpy.props.BoolProperty(default=False, options={'HIDDEN'})
-    missing_summary: bpy.props.StringProperty(default="", options={'HIDDEN'})
+    missing_summary: bpy.props.StringProperty(default='', options={'HIDDEN'})
 
     def invoke(self, context, event):
         missing_files = get_missing_external_files()
-        self.missing_summary = ", ".join(missing_files[:5])
+        self.missing_summary = ', '.join(missing_files[:5])
         if len(missing_files) > 5:
             self.missing_summary += f" and {len(missing_files) - 5} more"
-
-        return context.window_manager.invoke_props_dialog(self, width=460)
+        return context.window_manager.invoke_props_dialog(self, width=480)
 
     def draw(self, context):
         layout = self.layout
@@ -705,43 +945,44 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         summary = describe_render_job(scene)
 
         if self.missing_summary:
-            layout.label(text="Warning: Missing External Files", icon='ERROR')
+            layout.label(text='Warning: Missing External Files', icon='ERROR')
             layout.label(text=self.missing_summary)
-            layout.label(text="Your final render might have missing textures.")
-            layout.prop(self, "ignore_missing", text="Proceed with missing files")
+            layout.label(text='The final render might have missing textures.')
+            layout.prop(self, 'ignore_missing', text='Proceed with missing files')
             layout.separator()
 
-        layout.label(text="Confirm Render Job", icon='RENDER_STILL')
+        layout.label(text='Submit RenderSphere Job', icon='RENDER_STILL')
         layout.label(text=f"Type: {summary['render_type']}")
         layout.label(text=f"Frames: {summary['start_frame']} - {summary['end_frame']} ({summary['frame_count']} total)")
         layout.label(text=f"Scene: {summary['scene']}")
         layout.label(text=f"Camera: {summary['camera']}")
+        layout.label(text=f"Quality: {summary['quality_preset']}")
         layout.label(text=f"Samples: {summary['samples']}")
         layout.label(text=f"Resolution: {summary['resolution_pct']}%")
         layout.label(text=f"Format: {summary['format']}")
         layout.separator()
-        layout.label(text="This will use render credits if the job starts.")
+        layout.label(text='This will package, upload, and use render credits once started.')
 
     def execute(self, context):
-        global current_job_id, job_start_time, last_api_check, current_error_msg
-        global is_current_job_animation, current_start_frame, current_end_frame, current_frame_step, current_download_extension
-        global ui_frame_current, ui_sample_current
-
         scene = context.scene
         server_url = get_server_url(context)
-        log_verbose("Preparing render submission", context, server=server_url)
+        log_verbose('Preparing render submission', context, server=server_url)
+
+        if is_busy():
+            STATE.error = 'A render job is already active.'
+            self.report({'ERROR'}, STATE.error)
+            return {'CANCELLED'}
+
         if not get_api_key(context):
-            current_error_msg = "Add your RenderSphere access key in the add-on preferences."
-            log_verbose("Render submission blocked: missing access key", context)
-            set_status("Render Failed")
-            set_guided_wall(scene, "AUTH")
+            STATE.error = 'Add your RenderSphere access key in the add-on preferences.'
+            set_status('Failed: account is not connected.', phase='failed', flow_state='FAILED', context=context)
             return {'CANCELLED'}
 
         missing_files = get_missing_external_files()
         if missing_files and not self.ignore_missing:
-            current_error_msg = "Missing external files must be acknowledged before rendering."
-            log_verbose("Render submission blocked: missing external files", context, missing_count=len(missing_files))
-            set_status("Render Failed")
+            STATE.error = 'Missing external files must be acknowledged before rendering.'
+            log_verbose('Render submission blocked: missing external files', context, missing_count=len(missing_files))
+            set_status('Failed: missing external files need confirmation.', phase='failed', flow_state='FAILED', context=context)
             return {'CANCELLED'}
 
         start_frame, end_frame = get_render_frame_range(scene)
@@ -749,180 +990,178 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         target_camera = selected_render_camera(scene)
 
         if end_frame < start_frame:
-            current_error_msg = "End frame must be greater than or equal to start frame."
-            log_verbose("Render submission blocked: invalid frame range", context, start_frame=start_frame, end_frame=end_frame)
-            set_status("Render Failed")
+            STATE.error = 'End frame must be greater than or equal to start frame.'
+            set_status('Failed: frame range is invalid.', phase='failed', flow_state='FAILED', context=context)
             return {'CANCELLED'}
 
-        current_start_frame = start_frame
-        current_end_frame = end_frame if scene.runpod_is_animation else start_frame
-        current_frame_step = get_frame_step(scene)
-        current_download_extension = OUTPUT_EXTENSIONS.get(scene.runpod_output_format, "png")
-        ui_frame_current = start_frame
-        ui_sample_current = 0
-        current_error_msg = ""
-
-        set_status("Packing .blend file...")
-        try:
-            log_verbose("Packing external files", context)
-            bpy.ops.file.pack_all()
-        except RuntimeError as e:
-            log_verbose("Skipped packing some files", context, error=e)
-
-        temp_path = os.path.join(bpy.app.tempdir, "rendersphere_payload.blend")
-        log_verbose("Saving temporary payload", context, path=temp_path)
-        bpy.ops.wm.save_as_mainfile(filepath=temp_path, copy=True)
-        file_size = os.path.getsize(temp_path)
-        max_upload_bytes = get_service_max_upload_bytes(context)
-        log_verbose("Temporary payload ready", context, file_size=file_size, max_upload_bytes=max_upload_bytes)
-
-        if file_size > max_upload_bytes:
-            current_error_msg = f"Packed file is larger than {max_upload_bytes // (1024 * 1024)} MB."
-            set_status("Render Failed")
-            remove_temp_payload(temp_path)
+        if not target_camera:
+            STATE.error = 'Choose a camera or assign a camera to the selected scene.'
+            set_status('Failed: camera is missing.', phase='failed', flow_state='FAILED', context=context)
             return {'CANCELLED'}
 
-        set_status("Securing upload link...")
-        api_endpoint = f"{server_url}/api/get-upload-url"
-        payload = json.dumps({
-            "fileName": "rendersphere_payload.blend",
-            "fileSizeBytes": file_size,
-        }).encode('utf-8')
+        STATE.start_frame = start_frame
+        STATE.end_frame = end_frame if scene.runpod_is_animation else start_frame
+        STATE.frame_step = get_frame_step(scene)
+        STATE.download_extension = OUTPUT_EXTENSIONS.get(scene.runpod_output_format, 'png')
+        STATE.frame_current = start_frame
+        STATE.sample_current = 0
+        STATE.error = ''
+        STATE.last_output_path = ''
+        STATE.last_output_kind = ''
+        STATE.is_animation = scene.runpod_is_animation
+
+        set_status('Packaging: packing external files and saving payload...', phase='packaging', flow_state='SUBMITTING', context=context)
+        temp_path = os.path.join(bpy.app.tempdir, 'rendersphere_payload.blend')
 
         try:
-            log_verbose("Requesting secure upload link", context, endpoint=api_endpoint, file_size=file_size)
-            req = urllib.request.Request(api_endpoint, data=payload, headers=auth_headers(context, 'application/json'))
-            with urllib.request.urlopen(req) as response:
-                res_data = json.loads(response.read().decode())
-                upload_url = res_data.get("uploadUrl")
-                file_key = res_data.get("key")
-            log_verbose("Secure upload link received", context, has_upload_url=bool(upload_url), has_file_key=bool(file_key))
-        except Exception as e:
-            current_error_msg = describe_url_error(e)
-            log_verbose("Upload link request failed", context, error=current_error_msg)
-            set_status("Render Failed")
-            remove_temp_payload(temp_path)
-            return {'CANCELLED'}
+            try:
+                log_verbose('Packing external files', context)
+                bpy.ops.file.pack_all()
+            except RuntimeError as exc:
+                log_verbose('Skipped packing some files', context, error=exc)
 
-        set_status("Uploading to cloud...")
-        try:
-            parsed_url = urlparse(upload_url)
-            conn = http.client.HTTPSConnection(parsed_url.netloc)
+            log_verbose('Saving temporary payload', context, path=temp_path)
+            bpy.ops.wm.save_as_mainfile(filepath=temp_path, copy=True)
+            file_size = os.path.getsize(temp_path)
+            max_upload_bytes = get_service_max_upload_bytes(context)
+            log_verbose('Temporary payload ready', context, file_size=file_size, max_upload_bytes=max_upload_bytes)
 
-            with open(temp_path, 'rb') as file_data:
-                conn.request(
-                    "PUT",
-                    parsed_url.path + "?" + parsed_url.query,
-                    body=file_data,
-                    headers={'Content-Type': 'application/octet-stream', 'Content-Length': str(file_size)}
-                )
-                upload_res = conn.getresponse()
+            if file_size > max_upload_bytes:
+                STATE.error = f"Packed file is larger than {max_upload_bytes // (1024 * 1024)} MB."
+                set_status('Failed: packed file is too large.', phase='failed', flow_state='FAILED', context=context)
+                return {'CANCELLED'}
 
-            if upload_res.status in [200, 201]:
-                log_verbose("Payload upload completed", context, status=upload_res.status)
-                set_status("Starting render worker...")
+            set_status('Uploading: requesting a secure upload link...', phase='uploading', flow_state='SUBMITTING', context=context)
+            api_endpoint = f"{server_url}/api/get-upload-url"
+            upload_payload = json.dumps({
+                'fileName': 'rendersphere_payload.blend',
+                'fileSizeBytes': file_size,
+            }).encode('utf-8')
 
-                is_current_job_animation = scene.runpod_is_animation
+            try:
+                log_verbose('Requesting secure upload link', context, endpoint=api_endpoint, file_size=file_size)
+                req = urllib.request.Request(api_endpoint, data=upload_payload, headers=auth_headers(context, 'application/json'))
+                with urllib.request.urlopen(req) as response:
+                    res_data = json.loads(response.read().decode())
+                    upload_url = res_data.get('uploadUrl')
+                    file_key = res_data.get('key')
+                if not upload_url or not file_key:
+                    raise RuntimeError('Upload URL response was missing uploadUrl or key.')
+                log_verbose('Secure upload link received', context, has_upload_url=bool(upload_url), has_file_key=bool(file_key))
+            except Exception as exc:
+                STATE.error = describe_url_error(exc)
+                log_verbose('Upload link request failed', context, error=STATE.error)
+                set_status('Failed: could not secure an upload link.', phase='failed', flow_state='FAILED', context=context)
+                return {'CANCELLED'}
 
-                trigger_endpoint = f"{server_url}/api/trigger-render"
-                project_id = scene.runpod_project.strip()
-                if not project_id or project_id == "NONE":
-                    project_id = None
+            set_status('Uploading: sending packed .blend to cloud storage...', phase='uploading', flow_state='SUBMITTING', context=context)
+            try:
+                upload_res = http_put_file(upload_url, temp_path, file_size)
+                upload_status = upload_res.status
+                upload_res.read()
+            except Exception as exc:
+                STATE.error = describe_url_error(exc)
+                log_verbose('Payload upload failed', context, error=STATE.error)
+                set_status('Failed: upload did not complete.', phase='failed', flow_state='FAILED', context=context)
+                return {'CANCELLED'}
 
-                trigger_payload = {
-                    "fileKey": file_key,
-                    "engine": scene.runpod_engine,
-                    "samples": scene.runpod_samples,
-                    "isAnimation": scene.runpod_is_animation,
-                    "startFrame": start_frame,
-                    "endFrame": end_frame,
-                    "outputFormat": scene.runpod_output_format,
-                    "resolutionPct": scene.runpod_resolution_pct,
-                    "denoiser": scene.runpod_denoiser,
-                    "noiseThreshold": scene.runpod_noise_threshold,
-                    "scene": target_scene.name if target_scene else "",
-                    "camera": target_camera.name if target_camera else "",
-                    "projectId": project_id,
-                    "advancedMode": scene.runpod_advanced_mode,
-                }
+            if upload_status not in [200, 201]:
+                STATE.error = f"Upload failed with status {upload_status}."
+                log_verbose('Payload upload failed', context, status=upload_status)
+                set_status('Failed: upload was rejected.', phase='failed', flow_state='FAILED', context=context)
+                return {'CANCELLED'}
 
-                if scene.runpod_advanced_mode:
-                    trigger_payload.update({
-                        "gpuDeviceType": scene.runpod_gpu_device_type,
-                        "allowCpuFallback": scene.runpod_allow_cpu_fallback,
-                        "transparentFilm": scene.runpod_transparent_film,
-                        "usePersistentData": scene.runpod_use_persistent_data,
-                        "frameStep": get_frame_step(scene),
-                        "viewTransform": scene.runpod_view_transform,
-                        "look": scene.runpod_look,
-                        "exposure": scene.runpod_exposure,
-                        "gamma": scene.runpod_gamma,
-                        "maxBounces": scene.runpod_max_bounces,
-                        "diffuseBounces": scene.runpod_diffuse_bounces,
-                        "glossyBounces": scene.runpod_glossy_bounces,
-                        "transmissionBounces": scene.runpod_transmission_bounces,
-                        "transparentBounces": scene.runpod_transparent_bounces,
-                        "causticsReflective": scene.runpod_caustics_reflective,
-                        "causticsRefractive": scene.runpod_caustics_refractive,
-                        "useSimplify": scene.runpod_use_simplify,
-                        "simplifySubdivisions": scene.runpod_simplify_subdivisions,
-                        "simplifyTextureLimit": scene.runpod_simplify_texture_limit,
-                    })
+            log_verbose('Payload upload completed', context, status=upload_status)
+            set_status('Submitted: starting render worker...', phase='submitted', flow_state='SUBMITTING', context=context)
 
-                trigger_payload = json.dumps(trigger_payload).encode('utf-8')
+            project_id = get_selected_project_id(scene)
+            trigger_endpoint = f"{server_url}/api/trigger-render"
+            trigger_payload = {
+                'fileKey': file_key,
+                'engine': scene.runpod_engine,
+                'samples': scene.runpod_samples,
+                'isAnimation': scene.runpod_is_animation,
+                'startFrame': start_frame,
+                'endFrame': end_frame,
+                'outputFormat': scene.runpod_output_format,
+                'resolutionPct': scene.runpod_resolution_pct,
+                'denoiser': scene.runpod_denoiser,
+                'noiseThreshold': scene.runpod_noise_threshold,
+                'scene': target_scene.name if target_scene else '',
+                'camera': target_camera.name if target_camera else '',
+                'projectId': project_id,
+                'advancedMode': scene.runpod_advanced_mode,
+            }
 
-                trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload, headers=auth_headers(context, 'application/json'))
+            if scene.runpod_advanced_mode:
+                trigger_payload.update({
+                    'gpuDeviceType': scene.runpod_gpu_device_type,
+                    'allowCpuFallback': scene.runpod_allow_cpu_fallback,
+                    'transparentFilm': scene.runpod_transparent_film,
+                    'usePersistentData': scene.runpod_use_persistent_data,
+                    'frameStep': get_frame_step(scene),
+                    'viewTransform': scene.runpod_view_transform,
+                    'look': scene.runpod_look,
+                    'exposure': scene.runpod_exposure,
+                    'gamma': scene.runpod_gamma,
+                    'maxBounces': scene.runpod_max_bounces,
+                    'diffuseBounces': scene.runpod_diffuse_bounces,
+                    'glossyBounces': scene.runpod_glossy_bounces,
+                    'transmissionBounces': scene.runpod_transmission_bounces,
+                    'transparentBounces': scene.runpod_transparent_bounces,
+                    'causticsReflective': scene.runpod_caustics_reflective,
+                    'causticsRefractive': scene.runpod_caustics_refractive,
+                    'useSimplify': scene.runpod_use_simplify,
+                    'simplifySubdivisions': scene.runpod_simplify_subdivisions,
+                    'simplifyTextureLimit': scene.runpod_simplify_texture_limit,
+                })
 
-                log_verbose("Triggering render job", context, endpoint=trigger_endpoint, is_animation=is_current_job_animation, start_frame=start_frame, end_frame=end_frame)
+            trigger_payload_bytes = json.dumps(trigger_payload).encode('utf-8')
+            trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload_bytes, headers=auth_headers(context, 'application/json'))
+
+            try:
+                log_verbose('Triggering render job', context, endpoint=trigger_endpoint, is_animation=STATE.is_animation, start_frame=start_frame, end_frame=end_frame)
                 with urllib.request.urlopen(trigger_req) as trigger_response:
                     job_data = json.loads(trigger_response.read().decode())
-                    current_job_id = job_data.get("jobId")
-
-                    job_start_time = time.time()
-                    last_api_check = time.time() - 5.0
-
-                    log_verbose("Render job created", context, job_id=current_job_id)
-                    set_status("In Queue...")
-                    set_guided_wall(scene, "PROGRESS")
-                    bpy.app.timers.register(check_job_status, first_interval=1.0)
-
-            else:
-                current_error_msg = f"Upload failed with status {upload_res.status}."
-                log_verbose("Payload upload failed", context, status=upload_res.status)
-                set_status("Render Failed")
-                remove_temp_payload(temp_path)
+                    STATE.job_id = job_data.get('jobId')
+                if not STATE.job_id:
+                    raise RuntimeError('Render trigger response did not include a jobId.')
+            except Exception as exc:
+                STATE.error = describe_url_error(exc)
+                log_verbose('Render trigger failed', context, error=STATE.error)
+                set_status('Failed: render worker did not start.', phase='failed', flow_state='FAILED', context=context)
                 return {'CANCELLED'}
-        except Exception as e:
-            current_error_msg = describe_url_error(e)
-            log_verbose("Upload or render trigger failed", context, error=current_error_msg)
-            set_status("Render Failed")
-            remove_temp_payload(temp_path)
-            return {'CANCELLED'}
 
-        self.ignore_missing = False
-        remove_temp_payload(temp_path)
+            STATE.job_start_time = time.time()
+            STATE.last_api_check = time.time() - 5.0
+            log_verbose('Render job created', context, job_id=STATE.job_id)
+            set_status('Submitted: waiting for a render worker...', phase='submitted', flow_state='RENDERING', context=context)
+            bpy.app.timers.register(check_job_status, first_interval=1.0)
+
+        finally:
+            self.ignore_missing = False
+            remove_temp_payload(temp_path)
+
         return {'FINISHED'}
 
 
 class RENDER_OT_cancel_job(bpy.types.Operator):
-    bl_idname = "render.cancel_job"
-    bl_label = "Cancel Job"
+    bl_idname = 'render.cancel_job'
+    bl_label = 'Cancel Render'
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        global current_job_id
-
-        if not current_job_id:
-            log_verbose("Cancel requested without an active job", context)
-            reset_job_state()
+        if not STATE.job_id:
+            log_verbose('Cancel requested without an active job', context)
+            reset_job_state(context=context)
             return {'CANCELLED'}
 
-        job_id = current_job_id
-        log_verbose("Cancelling render job", context, job_id=job_id)
-        set_status("Cancelling Job...")
+        job_id = STATE.job_id
+        log_verbose('Cancelling render job', context, job_id=job_id)
+        set_status('Cancelling: asking RenderSphere to stop the job...', phase='cancelling', flow_state='RENDERING', context=context)
 
         try:
-            payload = json.dumps({"jobId": job_id}).encode('utf-8')
+            payload = json.dumps({'jobId': job_id}).encode('utf-8')
             req = urllib.request.Request(
                 f"{get_server_url(context)}/api/cancel-job",
                 data=payload,
@@ -931,290 +1170,223 @@ class RENDER_OT_cancel_job(bpy.types.Operator):
             )
             with urllib.request.urlopen(req) as response:
                 response.read()
-            log_verbose("Cancel request completed", context, job_id=job_id)
-        except Exception as e:
-            log_verbose("Cancel request failed", context, error=e)
+            log_verbose('Cancel request completed', context, job_id=job_id)
+        except Exception as exc:
+            log_verbose('Cancel request failed', context, error=exc)
         finally:
-            reset_job_state()
-            set_guided_wall(context.scene, "PROGRESS")
+            STATE.job_id = None
+            STATE.error = 'The render was cancelled.'
+            set_status('Cancelled: render job stopped.', phase='cancelled', flow_state='FAILED', context=context)
 
         return {'FINISHED'}
 
 
-def draw_guided_wall_progress(layout, context):
+def draw_flow_banner(layout, context):
     scene = context.scene
-    current_wall = get_guided_wall(scene)
-    current_index = get_wall_index(current_wall)
-
-    box = layout.box()
-    box.label(text="Guided render setup", icon='SEQ_STRIP_META')
-    box.label(text=f"Step {current_index + 1} of {len(GUIDED_WALL_ORDER)}")
-
-    for index, (wall, label, description) in enumerate(GUIDED_WALL_ITEMS):
-        icon = 'RADIOBUT_ON' if wall == current_wall else ('CHECKMARK' if index < current_index else 'RADIOBUT_OFF')
-        row = box.row(align=True)
-        op = row.operator("rendersphere.goto_wall", text=label, icon=icon)
-        op.wall = wall
-        if wall == current_wall:
-            row.label(text=description)
-
-
-def draw_guided_wall_nav(layout, context):
-    scene = context.scene
-    current_wall = get_guided_wall(scene)
-    current_index = get_wall_index(current_wall)
-    can_go_next = current_index < len(GUIDED_WALL_ORDER) - 1
-
-    if current_wall == "AUTH" and not get_api_key(context):
-        can_go_next = False
-
-    row = layout.row(align=True)
-    previous_row = row.row(align=True)
-    previous_row.enabled = current_index > 0
-    previous_row.operator("rendersphere.previous_wall", text="Previous", icon='TRIA_LEFT')
-
-    next_row = row.row(align=True)
-    next_row.enabled = can_go_next
-    next_row.operator("rendersphere.next_wall", text="Next", icon='TRIA_RIGHT')
-
-
-def draw_status_summary(layout, context):
-    if current_status == "Idle" and not current_error_msg:
-        return
-
-    box = layout.box()
-    if current_status == "Render Failed":
-        box.label(text="Render failed", icon='ERROR')
-        if current_error_msg:
-            box.label(text=current_error_msg)
-    else:
-        icon = 'CHECKMARK' if current_status in ["Render Complete.", "Zip saved.", "Connection OK"] else 'TIME'
-        box.label(text=current_status, icon=icon)
-        if current_status in ACTIVE_RENDER_STATUSES or current_status in ["Render Complete.", "Zip saved."]:
-            box.label(text=f"Elapsed: {current_elapsed_str}")
-
-
-def draw_progress_details(layout, context):
-    scene = context.scene
+    flow = getattr(scene, 'rendersphere_flow_state', 'SETUP')
     pct = calculate_progress_percent(scene)
-    target_samples = scene.runpod_samples
+    icon = 'ERROR' if flow == 'FAILED' else ('CHECKMARK' if flow == 'COMPLETE' else ('TIME' if flow in {'SUBMITTING', 'RENDERING'} else 'RIGHTARROW'))
 
     box = layout.box()
-    box.label(text="Render progress", icon='TIME')
-    box.label(text=current_status if current_status != "Idle" else "No active render yet.")
-    box.label(text=f"Progress: {pct}%")
-
-    meter_blocks = 10
-    filled_blocks = int((pct / 100) * meter_blocks)
-    box.label(text="[" + "#" * filled_blocks + "-" * (meter_blocks - filled_blocks) + "]")
-
-    if current_job_id:
-        box.label(text=f"Job: {current_job_id[:8]}")
-        box.label(text=f"Elapsed: {current_elapsed_str}")
-        if ui_frame_current:
-            box.label(text=f"Frame: {ui_frame_current}")
-        if ui_sample_current:
-            box.label(text=f"Sample: {ui_sample_current}/{target_samples}")
-        box.operator("render.cancel_job", text="Cancel Render", icon='CANCEL')
-    elif current_status in ["Render Complete.", "Zip saved."]:
-        box.label(text="The completed output is ready.", icon='CHECKMARK')
-    elif current_status == "Render Failed" and current_error_msg:
-        box.label(text=current_error_msg, icon='ERROR')
+    box.label(text=f"RenderSphere · {dict((item[0], item[1]) for item in FLOW_ITEMS).get(flow, 'Setup')}", icon=icon)
+    box.label(text=STATE.status)
+    if flow in {'SUBMITTING', 'RENDERING'}:
+        box.label(text=f"Progress: {pct}%")
+        meter_blocks = 12
+        filled_blocks = int((pct / 100) * meter_blocks)
+        box.label(text='[' + '#' * filled_blocks + '-' * (meter_blocks - filled_blocks) + ']')
+    if STATE.error and flow == 'FAILED':
+        box.label(text=STATE.error, icon='ERROR')
 
 
-def draw_auth_wall(layout, context):
+def draw_account_section(layout, context):
     prefs = get_addon_preferences(context)
     box = layout.box()
-    box.label(text="Connect your account", icon='KEY_HLT')
-    box.label(text="Paste an access key from your RenderSphere dashboard.")
+    box.label(text='Account', icon='KEY_HLT')
 
     if prefs:
-        box.prop(prefs, "server_url", text="Server URL")
-        box.prop(prefs, "api_key", text="Access Key")
-        box.prop(prefs, "verbose_logging")
-
+        box.prop(prefs, 'server_url', text='Server')
+        box.prop(prefs, 'api_key', text='Access Key')
         row = box.row(align=True)
-        row.operator("rendersphere.unlock", text="Connect", icon='KEY_HLT')
-        row.operator("rendersphere.test_connection", text="Test", icon='URL')
+        row.operator('rendersphere.connect', text='Connect', icon='KEY_HLT')
+        row.operator('rendersphere.test_connection', text='Test', icon='URL')
 
     if get_api_key(context):
-        connected = layout.box()
-        connected.label(text="Access key saved", icon='CHECKMARK')
-        connected.label(text=f"Server: {get_server_url(context)}")
-        connected.operator("rendersphere.clear_access_key", text="Sign Out", icon='UNLINKED')
-    elif current_status == "Render Failed" and current_error_msg:
-        error_box = layout.box()
-        error_box.label(text="Connection issue", icon='ERROR')
-        error_box.label(text=current_error_msg)
-
-
-def draw_advanced_toggle(layout, scene):
-    box = layout.box()
-    box.label(text="Power user controls", icon='PREFERENCES')
-    box.prop(scene, "runpod_advanced_mode", text="Advanced Mode")
-    if scene.runpod_advanced_mode:
-        box.label(text="Advanced settings will be sent with this render.", icon='CHECKMARK')
+        connected_text = f"Connected as {STATE.connected_account}" if STATE.connected_account else 'Access key saved'
+        box.label(text=connected_text, icon='CHECKMARK')
+        box.operator('rendersphere.clear_access_key', text='Sign Out', icon='UNLINKED')
     else:
-        box.label(text="Keep this off for the safest guided defaults.")
+        box.label(text='Paste an access key from your RenderSphere dashboard.')
 
 
-def draw_target_wall(layout, context):
+def draw_project_section(layout, context):
     scene = context.scene
-    target_scene = selected_render_scene(scene)
-    target_camera = selected_render_camera(scene)
-
-    draw_advanced_toggle(layout, scene)
-
     box = layout.box()
-    box.label(text="Choose render target", icon='SCENE_DATA')
-    box.prop(scene, "runpod_scene", text="Scene")
-    box.prop(scene, "runpod_camera", text="Camera")
-    box.prop(scene, "runpod_project", text="Project ID")
-
-    if scene.runpod_advanced_mode:
-        advanced = layout.box()
-        advanced.label(text="Advanced worker settings", icon='CONSOLE')
-        advanced.prop(scene, "runpod_gpu_device_type", text="GPU Backend")
-        advanced.prop(scene, "runpod_allow_cpu_fallback", text="Allow CPU Fallback")
-
-    summary = layout.box()
-    summary.label(text="Target summary", icon='INFO')
-    summary.label(text=f"Scene: {target_scene.name if target_scene else 'Current scene'}")
-    summary.label(text=f"Camera: {target_camera.name if target_camera else 'Scene camera'}")
-    summary.label(text="Leave Project ID empty to submit without a project.")
+    box.label(text='Project', icon='FILE_FOLDER')
+    row = box.row(align=True)
+    row.prop(scene, 'runpod_project', text='')
+    row.operator('rendersphere.refresh_projects', text='', icon='FILE_REFRESH')
+    if PROJECT_LAST_REFRESH:
+        box.label(text=f"Projects loaded: {max(0, len(PROJECT_ITEMS) - 1)}")
+    else:
+        box.label(text='Optional. Refresh after connecting to load dashboard projects.')
 
 
-def draw_output_wall(layout, context):
+def draw_scene_section(layout, context):
     scene = context.scene
-    prefs = get_addon_preferences(context)
+    box = layout.box()
+    box.label(text='Scene & Camera', icon='SCENE_DATA')
+    box.prop(scene, 'runpod_scene', text='Scene')
+    box.prop(scene, 'runpod_camera', text='Camera')
+    box.prop(scene, 'runpod_render_type', text='Type')
 
-    draw_advanced_toggle(layout, scene)
-
-    image_box = layout.box()
-    image_box.label(text="Output settings", icon='OUTPUT')
-    image_box.prop(scene, "runpod_output_format", text="File Format")
-    image_box.prop(scene, "runpod_resolution_pct", text="Resolution %")
-
-    if scene.runpod_advanced_mode:
-        color_box = layout.box()
-        color_box.label(text="Advanced color and film", icon='IMAGE_DATA')
-        color_box.prop(scene, "runpod_transparent_film", text="Transparent Film")
-        color_box.prop(scene, "runpod_view_transform", text="View Transform")
-        color_box.prop(scene, "runpod_look", text="Look")
-        row = color_box.row(align=True)
-        row.prop(scene, "runpod_exposure", text="Exposure")
-        row.prop(scene, "runpod_gamma", text="Gamma")
-
-    range_box = layout.box()
-    range_box.label(text="Frame range", icon='RENDER_ANIMATION')
-    range_box.prop(scene, "runpod_is_animation", text="Render Animation")
     if scene.runpod_is_animation:
-        range_box.prop(scene, "runpod_use_scene_frames", text="Use Scene Frame Range")
-        row = range_box.row(align=True)
+        box.prop(scene, 'runpod_use_scene_frames', text='Use Scene Frame Range')
+        row = box.row(align=True)
         row.enabled = not scene.runpod_use_scene_frames
-        row.prop(scene, "runpod_frame_start", text="Start")
-        row.prop(scene, "runpod_frame_end", text="End")
-        if scene.runpod_advanced_mode:
-            range_box.prop(scene, "runpod_frame_step", text="Frame Step")
+        row.prop(scene, 'runpod_frame_start', text='Start')
+        row.prop(scene, 'runpod_frame_end', text='End')
+        if should_show_advanced_controls(scene):
+            box.prop(scene, 'runpod_frame_step', text='Frame Step')
+        prefs = get_addon_preferences(context)
         if prefs:
-            range_box.prop(prefs, "animation_output_dir", text="Download Folder")
+            box.prop(prefs, 'animation_output_dir', text='Zip Save Folder')
     else:
-        range_box.label(text=f"Still frame: {selected_render_scene(scene).frame_current if selected_render_scene(scene) else scene.frame_current}")
+        target_scene = selected_render_scene(scene)
+        box.label(text=f"Still frame: {target_scene.frame_current if target_scene else scene.frame_current}")
 
 
-def draw_quality_wall(layout, context):
+def draw_output_quality_section(layout, context):
     scene = context.scene
-
-    draw_advanced_toggle(layout, scene)
-
     box = layout.box()
-    box.label(text="Render quality", icon='SETTINGS')
-    box.prop(scene, "runpod_engine", text="Engine")
-    box.prop(scene, "runpod_samples", text="Samples")
+    box.label(text='Output & Quality', icon='OUTPUT')
+    box.prop(scene, 'runpod_output_format', text='Format')
+    box.prop(scene, 'runpod_quality_preset', text='Quality')
+    box.prop(scene, 'runpod_advanced_mode', text='Show Advanced')
+
+    if should_show_quality_controls(scene):
+        custom = layout.box()
+        custom.label(text='Custom Quality', icon='SETTINGS')
+        custom.prop(scene, 'runpod_engine', text='Engine')
+        custom.prop(scene, 'runpod_samples', text='Samples')
+        custom.prop(scene, 'runpod_resolution_pct', text='Resolution %')
+        if scene.runpod_engine == 'CYCLES':
+            custom.prop(scene, 'runpod_denoiser', text='Denoiser')
+            custom.prop(scene, 'runpod_noise_threshold', text='Noise Threshold')
+    else:
+        values = QUALITY_PRESETS.get(scene.runpod_quality_preset, QUALITY_PRESETS['BALANCED'])
+        box.label(text=f"Preset sends {values['samples']} samples at {values['resolution_pct']}% resolution.")
+
+
+def draw_advanced_section(layout, context):
+    scene = context.scene
+    if not should_show_advanced_controls(scene):
+        return
+
+    advanced = layout.box()
+    advanced.label(text='Advanced Render Settings', icon='PREFERENCES')
+    advanced.prop(scene, 'runpod_gpu_device_type', text='GPU Backend')
+    advanced.prop(scene, 'runpod_allow_cpu_fallback', text='Allow CPU Fallback')
+    advanced.prop(scene, 'runpod_transparent_film', text='Transparent Film')
 
     if scene.runpod_engine == 'CYCLES':
-        box.separator()
-        box.prop(scene, "runpod_denoiser", text="Denoiser")
-        box.prop(scene, "runpod_noise_threshold", text="Noise Threshold")
+        cycles_box = layout.box()
+        cycles_box.label(text='Cycles', icon='MOD_PHYSICS')
+        cycles_box.prop(scene, 'runpod_use_persistent_data', text='Persistent Data')
+        cycles_box.prop(scene, 'runpod_max_bounces', text='Max Bounces')
+        row = cycles_box.row(align=True)
+        row.prop(scene, 'runpod_diffuse_bounces', text='Diffuse')
+        row.prop(scene, 'runpod_glossy_bounces', text='Glossy')
+        row = cycles_box.row(align=True)
+        row.prop(scene, 'runpod_transmission_bounces', text='Transmission')
+        row.prop(scene, 'runpod_transparent_bounces', text='Transparent')
+        cycles_box.prop(scene, 'runpod_caustics_reflective', text='Reflective Caustics')
+        cycles_box.prop(scene, 'runpod_caustics_refractive', text='Refractive Caustics')
 
-        if scene.runpod_advanced_mode:
-            cycles_box = layout.box()
-            cycles_box.label(text="Advanced Cycles", icon='MOD_PHYSICS')
-            cycles_box.prop(scene, "runpod_use_persistent_data", text="Persistent Data")
-            cycles_box.prop(scene, "runpod_max_bounces", text="Max Bounces")
-            row = cycles_box.row(align=True)
-            row.prop(scene, "runpod_diffuse_bounces", text="Diffuse")
-            row.prop(scene, "runpod_glossy_bounces", text="Glossy")
-            row = cycles_box.row(align=True)
-            row.prop(scene, "runpod_transmission_bounces", text="Transmission")
-            row.prop(scene, "runpod_transparent_bounces", text="Transparent")
-            cycles_box.prop(scene, "runpod_caustics_reflective", text="Reflective Caustics")
-            cycles_box.prop(scene, "runpod_caustics_refractive", text="Refractive Caustics")
+    color_box = layout.box()
+    color_box.label(text='Color & Film', icon='IMAGE_DATA')
+    color_box.prop(scene, 'runpod_view_transform', text='View Transform')
+    color_box.prop(scene, 'runpod_look', text='Look')
+    row = color_box.row(align=True)
+    row.prop(scene, 'runpod_exposure', text='Exposure')
+    row.prop(scene, 'runpod_gamma', text='Gamma')
 
-    if scene.runpod_advanced_mode:
-        perf_box = layout.box()
-        perf_box.label(text="Advanced performance", icon='MEMORY')
-        perf_box.prop(scene, "runpod_use_simplify", text="Use Simplify")
-        if scene.runpod_use_simplify:
-            perf_box.prop(scene, "runpod_simplify_subdivisions", text="Max Subdivision")
-            perf_box.prop(scene, "runpod_simplify_texture_limit", text="Texture Limit")
+    perf_box = layout.box()
+    perf_box.label(text='Performance', icon='MEMORY')
+    perf_box.prop(scene, 'runpod_use_simplify', text='Use Simplify')
+    if scene.runpod_use_simplify:
+        perf_box.prop(scene, 'runpod_simplify_subdivisions', text='Max Subdivision')
+        perf_box.prop(scene, 'runpod_simplify_texture_limit', text='Texture Limit')
 
 
-def draw_review_wall(layout, context):
+def draw_review_section(layout, context):
     scene = context.scene
     summary = describe_render_job(scene)
     missing_files = get_missing_external_files()
 
     box = layout.box()
-    box.label(text="Review render job", icon='RENDER_STILL')
+    box.label(text='Review', icon='RENDER_STILL')
     box.label(text=f"Type: {summary['render_type']}")
     box.label(text=f"Frames: {summary['start_frame']} - {summary['end_frame']} ({summary['frame_count']} total)")
     box.label(text=f"Scene: {summary['scene']}")
     box.label(text=f"Camera: {summary['camera']}")
-    box.label(text=f"Samples: {summary['samples']}")
-    box.label(text=f"Resolution: {summary['resolution_pct']}%")
+    box.label(text=f"Project: {summary['project']}")
+    box.label(text=f"Engine: {summary['engine']}")
+    box.label(text=f"Quality: {summary['quality_preset']} · {summary['samples']} samples · {summary['resolution_pct']}%")
     box.label(text=f"Format: {summary['format']}")
     if scene.runpod_advanced_mode:
-        box.label(text=f"Frame step: {summary['frame_step']}")
-        box.label(text=f"GPU backend: {scene.runpod_gpu_device_type}")
-        box.label(text="Advanced mode: On")
+        box.label(text=f"Advanced: On · GPU {scene.runpod_gpu_device_type} · frame step {summary['frame_step']}")
 
     if missing_files:
         warning = layout.box()
-        warning.label(text="Missing external files", icon='ERROR')
-        warning.label(text=", ".join(missing_files[:4]))
+        warning.label(text='Missing external files', icon='ERROR')
+        warning.label(text=', '.join(missing_files[:4]))
         if len(missing_files) > 4:
             warning.label(text=f"and {len(missing_files) - 4} more")
-        warning.label(text="The final render may have missing textures.")
+        warning.label(text='The submit dialog must acknowledge this before upload.')
 
-    submit_box = layout.box()
-    submit_box.label(text="Ready to submit", icon='CHECKMARK' if can_submit_render(context) else 'ERROR')
+    row = box.row(align=True)
+    edit_row = row.row(align=True)
+    edit_row.enabled = not is_busy()
+    edit_row.operator('rendersphere.edit_setup', text='Edit Setup', icon='PREFERENCES')
+    submit_row = row.row(align=True)
+    submit_row.enabled = can_submit_render(context)
+    submit_row.operator('render.cloud_upload', text='Submit Render', icon='WORLD')
+
     if not get_api_key(context):
-        submit_box.label(text="Connect your account before submitting.")
-    elif current_job_id:
-        submit_box.label(text="A render is already running.")
-    else:
-        submit_box.label(text="The next step will package, upload, and start rendering.")
-
-    row = submit_box.row()
-    row.enabled = can_submit_render(context)
-    button_text = "Submit Animation" if scene.runpod_is_animation else "Submit Frame"
-    row.operator("render.cloud_upload", text=button_text, icon='WORLD')
+        box.label(text='Connect your account before submitting.', icon='ERROR')
+    elif is_busy():
+        box.label(text='A render is already active.', icon='TIME')
 
 
-def draw_progress_wall(layout, context):
-    draw_progress_details(layout, context)
+def draw_progress_section(layout, context):
+    if getattr(context.scene, 'rendersphere_flow_state', 'SETUP') not in {'SUBMITTING', 'RENDERING', 'COMPLETE', 'FAILED'}:
+        return
 
-    if current_status in ["Idle", "Connection OK", "Cancelled."]:
-        hint = layout.box()
-        hint.label(text="No render is currently running.", icon='INFO')
-        hint.label(text="Submit from the review step to see live progress here.")
-        hint.operator("rendersphere.goto_wall", text="Back to Review", icon='TRIA_LEFT').wall = "REVIEW"
+    box = layout.box()
+    box.label(text='Render Status', icon='TIME')
+    if STATE.job_id:
+        box.label(text=f"Job: {STATE.job_id[:8]}")
+        box.label(text=f"Elapsed: {STATE.elapsed}")
+        if STATE.frame_current:
+            box.label(text=f"Frame: {STATE.frame_current}")
+        if STATE.sample_current:
+            box.label(text=f"Sample: {STATE.sample_current}/{context.scene.runpod_samples}")
+        box.operator('render.cancel_job', text='Cancel Render', icon='CANCEL')
+    elif STATE.phase == 'complete':
+        box.label(text='Output downloaded successfully.', icon='CHECKMARK')
+        if STATE.last_output_path:
+            box.label(text=STATE.last_output_path)
+            box.operator('rendersphere.open_last_output', text='Open Output', icon='FILE_TICK')
+        box.operator('rendersphere.edit_setup', text='Start Another Render', icon='PLUS')
+    elif STATE.phase in {'failed', 'cancelled'}:
+        box.label(text=STATE.error or STATE.status, icon='ERROR')
+        box.operator('rendersphere.edit_setup', text='Back to Setup', icon='PREFERENCES')
 
 
 class RENDER_PT_main_panel(bpy.types.Panel):
-    bl_label = "RenderSphere Guided Render"
-    bl_idname = "RENDER_PT_main_panel"
+    bl_label = 'RenderSphere Render'
+    bl_idname = 'RENDER_PT_main_panel'
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'RenderSphere'
@@ -1222,292 +1394,237 @@ class RENDER_PT_main_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        current_wall = get_guided_wall(scene)
+        flow = getattr(scene, 'rendersphere_flow_state', 'SETUP')
 
-        draw_guided_wall_progress(layout, context)
+        draw_flow_banner(layout, context)
         layout.separator()
 
-        wall_box = layout.box()
-        wall_box.label(text=GUIDED_WALL_LABELS.get(current_wall, "Guided Step"), icon='RIGHTARROW')
-        wall_box.label(text=GUIDED_WALL_DESCRIPTIONS.get(current_wall, "Configure this step."))
-
-        if current_wall == "AUTH":
-            draw_auth_wall(layout, context)
-        elif current_wall == "TARGET":
-            draw_target_wall(layout, context)
-        elif current_wall == "OUTPUT":
-            draw_output_wall(layout, context)
-        elif current_wall == "QUALITY":
-            draw_quality_wall(layout, context)
-        elif current_wall == "REVIEW":
-            draw_review_wall(layout, context)
-        elif current_wall == "PROGRESS":
-            draw_progress_wall(layout, context)
-
-        draw_status_summary(layout, context)
-        layout.separator()
-        draw_guided_wall_nav(layout, context)
-
-
-class RENDER_PT_scene_panel(bpy.types.Panel):
-    bl_label = "Scene"
-    bl_idname = "RENDER_PT_scene_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'RenderSphere'
-    bl_parent_id = "RENDER_PT_main_panel"
-
-    @classmethod
-    def poll(cls, context):
-        return False
-
-    def draw(self, context):
-        pass
-
-
-class RENDER_PT_output_panel(bpy.types.Panel):
-    bl_label = "Output"
-    bl_idname = "RENDER_PT_output_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'RenderSphere'
-    bl_parent_id = "RENDER_PT_main_panel"
-
-    @classmethod
-    def poll(cls, context):
-        return False
-
-    def draw(self, context):
-        pass
-
-
-class RENDER_PT_quality_panel(bpy.types.Panel):
-    bl_label = "Quality"
-    bl_idname = "RENDER_PT_quality_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'RenderSphere'
-    bl_parent_id = "RENDER_PT_main_panel"
-
-    @classmethod
-    def poll(cls, context):
-        return False
-
-    def draw(self, context):
-        pass
-
-
-class RENDER_PT_account_panel(bpy.types.Panel):
-    bl_label = "Account"
-    bl_idname = "RENDER_PT_account_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'RenderSphere'
-    bl_parent_id = "RENDER_PT_main_panel"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        return False
-
-    def draw(self, context):
-        pass
+        if flow == 'REVIEW':
+            draw_review_section(layout, context)
+        elif flow in {'SUBMITTING', 'RENDERING', 'COMPLETE', 'FAILED'}:
+            draw_progress_section(layout, context)
+            if flow == 'FAILED':
+                layout.separator()
+                draw_account_section(layout, context)
+        else:
+            draw_account_section(layout, context)
+            draw_project_section(layout, context)
+            draw_scene_section(layout, context)
+            draw_output_quality_section(layout, context)
+            draw_advanced_section(layout, context)
+            layout.separator()
+            row = layout.row()
+            row.enabled = not is_busy()
+            row.operator('rendersphere.review_render', text='Review & Submit', icon='CHECKMARK')
 
 
 classes = (
     RENDERSPHERE_AddonPreferences,
     RENDERSPHERE_OT_test_connection,
-    RENDERSPHERE_OT_unlock,
+    RENDERSPHERE_OT_connect,
     RENDERSPHERE_OT_clear_access_key,
-    RENDERSPHERE_OT_goto_wall,
-    RENDERSPHERE_OT_next_wall,
-    RENDERSPHERE_OT_previous_wall,
+    RENDERSPHERE_OT_refresh_projects,
+    RENDERSPHERE_OT_review_render,
+    RENDERSPHERE_OT_edit_setup,
+    RENDERSPHERE_OT_open_last_output,
     RENDER_OT_cloud_upload,
     RENDER_OT_cancel_job,
     RENDER_PT_main_panel,
-    RENDER_PT_scene_panel,
-    RENDER_PT_output_panel,
-    RENDER_PT_quality_panel,
-    RENDER_PT_account_panel,
 )
 
 
 def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
     bpy.types.Scene.runpod_engine = bpy.props.EnumProperty(
-        name="Engine",
+        name='Engine',
         items=[('CYCLES', 'Cycles', ''), ('BLENDER_EEVEE_NEXT', 'Eevee', '')],
-        default='CYCLES'
+        default='CYCLES',
+    )
+    bpy.types.Scene.runpod_quality_preset = bpy.props.EnumProperty(
+        name='Quality Preset',
+        description='Choose a simple quality target or Custom for detailed controls',
+        items=QUALITY_PRESET_ITEMS,
+        default='BALANCED',
+        update=apply_quality_preset,
     )
     bpy.types.Scene.runpod_samples = bpy.props.IntProperty(
-        name="Samples",
-        description="Ray-tracing samples per pixel",
-        default=256,
+        name='Samples',
+        description='Ray-tracing samples per pixel',
+        default=128,
         min=1,
-        max=8192
+        max=8192,
+    )
+    bpy.types.Scene.runpod_render_type = bpy.props.EnumProperty(
+        name='Render Type',
+        items=RENDER_TYPE_ITEMS,
+        default='STILL',
+        update=sync_render_type,
     )
     bpy.types.Scene.runpod_is_animation = bpy.props.BoolProperty(
-        name="Render Animation",
-        description="Renders a sequence of frames and returns a .zip file",
-        default=False
+        name='Render Animation',
+        description='Renders a sequence of frames and returns a .zip file',
+        default=False,
     )
     bpy.types.Scene.runpod_frame_start = bpy.props.IntProperty(
-        name="Start",
+        name='Start',
         default=1,
-        min=0
+        min=0,
     )
     bpy.types.Scene.runpod_frame_end = bpy.props.IntProperty(
-        name="End",
+        name='End',
         default=250,
-        min=1
+        min=1,
     )
     bpy.types.Scene.runpod_output_format = bpy.props.EnumProperty(
-        name="Format",
+        name='Format',
         items=[
             ('PNG', 'PNG', ''),
             ('JPEG', 'JPEG', ''),
             ('OPEN_EXR', 'OpenEXR', ''),
             ('OPEN_EXR_MULTILAYER', 'Multilayer OpenEXR', ''),
         ],
-        default='PNG'
+        default='PNG',
     )
     bpy.types.Scene.runpod_resolution_pct = bpy.props.IntProperty(
-        name="Resolution %",
-        description="Resolution scale percentage",
+        name='Resolution %',
+        description='Resolution scale percentage',
         default=100,
         min=1,
-        max=200
+        max=200,
     )
     bpy.types.Scene.runpod_use_scene_frames = bpy.props.BoolProperty(
-        name="Use Scene Frame Range",
-        description="Read start and end from the scene frame range when submitting the job",
-        default=False
+        name='Use Scene Frame Range',
+        description='Read start and end from the scene frame range when submitting the job',
+        default=False,
     )
     bpy.types.Scene.runpod_denoiser = bpy.props.EnumProperty(
-        name="Denoiser",
+        name='Denoiser',
         items=[
             ('NONE', 'None', ''),
             ('OPTIX', 'OptiX', ''),
             ('OPENIMAGEDENOISE', 'OpenImageDenoise', ''),
         ],
-        default='NONE'
+        default='OPENIMAGEDENOISE',
     )
     bpy.types.Scene.runpod_noise_threshold = bpy.props.FloatProperty(
-        name="Noise Threshold",
-        description="Cycles adaptive sampling threshold. 0 disables adaptive sampling.",
-        default=0.01,
+        name='Noise Threshold',
+        description='Cycles adaptive sampling threshold. 0 disables adaptive sampling.',
+        default=0.02,
         min=0.0,
-        max=1.0
+        max=1.0,
     )
     bpy.types.Scene.runpod_advanced_mode = bpy.props.BoolProperty(
-        name="Advanced Mode",
-        description="Show power-user render controls and send them with this job",
-        default=False
+        name='Show Advanced',
+        description='Show power-user render controls and send them with this job',
+        default=False,
     )
     bpy.types.Scene.runpod_gpu_device_type = bpy.props.EnumProperty(
-        name="GPU Backend",
-        description="Preferred GPU backend for Cycles on the render worker",
+        name='GPU Backend',
+        description='Preferred GPU backend for Cycles on the render worker',
         items=GPU_BACKEND_ITEMS,
-        default='AUTO'
+        default='AUTO',
     )
     bpy.types.Scene.runpod_allow_cpu_fallback = bpy.props.BoolProperty(
-        name="Allow CPU Fallback",
-        description="Allow CPU rendering if GPU setup fails. Slower, but useful for diagnostics.",
-        default=False
+        name='Allow CPU Fallback',
+        description='Allow CPU rendering if GPU setup fails. Slower, but useful for diagnostics.',
+        default=False,
     )
     bpy.types.Scene.runpod_frame_step = bpy.props.IntProperty(
-        name="Frame Step",
-        description="Render every Nth frame for animation jobs",
+        name='Frame Step',
+        description='Render every Nth frame for animation jobs',
         default=1,
         min=1,
-        max=1000
+        max=1000,
     )
     bpy.types.Scene.runpod_transparent_film = bpy.props.BoolProperty(
-        name="Transparent Film",
-        description="Render with transparent film/background when supported",
-        default=False
+        name='Transparent Film',
+        description='Render with transparent film/background when supported',
+        default=False,
     )
     bpy.types.Scene.runpod_use_persistent_data = bpy.props.BoolProperty(
-        name="Persistent Data",
-        description="Keep render data in memory between frames for animation performance",
-        default=True
+        name='Persistent Data',
+        description='Keep render data in memory between frames for animation performance',
+        default=True,
     )
     bpy.types.Scene.runpod_view_transform = bpy.props.StringProperty(
-        name="View Transform",
-        description="Optional color management view transform. Leave empty to keep scene settings.",
-        default=""
+        name='View Transform',
+        description='Optional color management view transform. Leave empty to keep scene settings.',
+        default='',
     )
     bpy.types.Scene.runpod_look = bpy.props.StringProperty(
-        name="Look",
-        description="Optional color management look. Leave empty to keep scene settings.",
-        default=""
+        name='Look',
+        description='Optional color management look. Leave empty to keep scene settings.',
+        default='',
     )
     bpy.types.Scene.runpod_exposure = bpy.props.FloatProperty(
-        name="Exposure",
-        description="Color management exposure override",
+        name='Exposure',
+        description='Color management exposure override',
         default=0.0,
         min=-10.0,
-        max=10.0
+        max=10.0,
     )
     bpy.types.Scene.runpod_gamma = bpy.props.FloatProperty(
-        name="Gamma",
-        description="Color management gamma override",
+        name='Gamma',
+        description='Color management gamma override',
         default=1.0,
         min=0.01,
-        max=5.0
+        max=5.0,
     )
     bpy.types.Scene.runpod_max_bounces = bpy.props.IntProperty(
-        name="Max Bounces",
-        description="Cycles maximum light bounces",
+        name='Max Bounces',
+        description='Cycles maximum light bounces',
         default=12,
         min=0,
-        max=128
+        max=128,
     )
     bpy.types.Scene.runpod_diffuse_bounces = bpy.props.IntProperty(
-        name="Diffuse Bounces",
+        name='Diffuse Bounces',
         default=4,
         min=0,
-        max=128
+        max=128,
     )
     bpy.types.Scene.runpod_glossy_bounces = bpy.props.IntProperty(
-        name="Glossy Bounces",
+        name='Glossy Bounces',
         default=4,
         min=0,
-        max=128
+        max=128,
     )
     bpy.types.Scene.runpod_transmission_bounces = bpy.props.IntProperty(
-        name="Transmission Bounces",
+        name='Transmission Bounces',
         default=12,
         min=0,
-        max=128
+        max=128,
     )
     bpy.types.Scene.runpod_transparent_bounces = bpy.props.IntProperty(
-        name="Transparent Bounces",
+        name='Transparent Bounces',
         default=8,
         min=0,
-        max=128
+        max=128,
     )
     bpy.types.Scene.runpod_caustics_reflective = bpy.props.BoolProperty(
-        name="Reflective Caustics",
-        default=True
+        name='Reflective Caustics',
+        default=True,
     )
     bpy.types.Scene.runpod_caustics_refractive = bpy.props.BoolProperty(
-        name="Refractive Caustics",
-        default=True
+        name='Refractive Caustics',
+        default=True,
     )
     bpy.types.Scene.runpod_use_simplify = bpy.props.BoolProperty(
-        name="Use Simplify",
-        description="Enable Blender simplify settings on the render worker",
-        default=False
+        name='Use Simplify',
+        description='Enable Blender simplify settings on the render worker',
+        default=False,
     )
     bpy.types.Scene.runpod_simplify_subdivisions = bpy.props.IntProperty(
-        name="Max Subdivision",
+        name='Max Subdivision',
         default=2,
         min=0,
-        max=12
+        max=12,
     )
     bpy.types.Scene.runpod_simplify_texture_limit = bpy.props.EnumProperty(
-        name="Texture Limit",
-        description="Texture limit applied when simplify is enabled",
+        name='Texture Limit',
+        description='Texture limit applied when simplify is enabled',
         items=[
             ('OFF', 'Off', ''),
             ('128', '128 px', ''),
@@ -1517,76 +1634,77 @@ def register():
             ('2048', '2048 px', ''),
             ('4096', '4096 px', ''),
         ],
-        default='OFF'
+        default='OFF',
     )
-    
     bpy.types.Scene.runpod_scene = bpy.props.PointerProperty(
-        name="Scene",
+        name='Scene',
         type=bpy.types.Scene,
-        description="Scene to render. Empty means the current scene."
+        description='Scene to render. Empty means the current scene.',
     )
     bpy.types.Scene.runpod_camera = bpy.props.PointerProperty(
-        name="Camera",
+        name='Camera',
         type=bpy.types.Object,
-        description="Camera to render from. Empty means the selected scene camera.",
-        poll=lambda self, obj: obj.type == 'CAMERA'
+        description='Camera to render from. Empty means the selected scene camera.',
+        poll=lambda self, obj: obj.type == 'CAMERA',
     )
-    bpy.types.Scene.runpod_project = bpy.props.StringProperty(
-        name="Project ID",
-        description="Optional dashboard project UUID. Leave empty to submit as unassigned.",
-        default=""
+    bpy.types.Scene.runpod_project = bpy.props.EnumProperty(
+        name='Project',
+        description='Optional dashboard project. Refresh projects after connecting.',
+        items=project_items,
     )
-    bpy.types.Scene.rendersphere_guided_wall = bpy.props.EnumProperty(
-        name="Guided Step",
-        description="Current RenderSphere guided setup step",
-        items=GUIDED_WALL_ITEMS,
-        default='AUTH'
+    bpy.types.Scene.rendersphere_flow_state = bpy.props.EnumProperty(
+        name='RenderSphere Flow State',
+        description='Current RenderSphere render workflow state',
+        items=FLOW_ITEMS,
+        default='SETUP',
     )
-
-    for cls in classes:
-        bpy.utils.register_class(cls)
 
 
 def unregister():
+    for prop_name in [
+        'runpod_engine',
+        'runpod_quality_preset',
+        'runpod_samples',
+        'runpod_render_type',
+        'runpod_is_animation',
+        'runpod_frame_start',
+        'runpod_frame_end',
+        'runpod_output_format',
+        'runpod_resolution_pct',
+        'runpod_use_scene_frames',
+        'runpod_denoiser',
+        'runpod_noise_threshold',
+        'runpod_advanced_mode',
+        'runpod_gpu_device_type',
+        'runpod_allow_cpu_fallback',
+        'runpod_frame_step',
+        'runpod_transparent_film',
+        'runpod_use_persistent_data',
+        'runpod_view_transform',
+        'runpod_look',
+        'runpod_exposure',
+        'runpod_gamma',
+        'runpod_max_bounces',
+        'runpod_diffuse_bounces',
+        'runpod_glossy_bounces',
+        'runpod_transmission_bounces',
+        'runpod_transparent_bounces',
+        'runpod_caustics_reflective',
+        'runpod_caustics_refractive',
+        'runpod_use_simplify',
+        'runpod_simplify_subdivisions',
+        'runpod_simplify_texture_limit',
+        'runpod_scene',
+        'runpod_camera',
+        'runpod_project',
+        'rendersphere_flow_state',
+    ]:
+        if hasattr(bpy.types.Scene, prop_name):
+            delattr(bpy.types.Scene, prop_name)
+
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-    del bpy.types.Scene.runpod_engine
-    del bpy.types.Scene.runpod_samples
-    del bpy.types.Scene.runpod_is_animation
-    del bpy.types.Scene.runpod_frame_start
-    del bpy.types.Scene.runpod_frame_end
-    del bpy.types.Scene.runpod_output_format
-    del bpy.types.Scene.runpod_resolution_pct
-    del bpy.types.Scene.runpod_use_scene_frames
-    del bpy.types.Scene.runpod_denoiser
-    del bpy.types.Scene.runpod_noise_threshold
-    del bpy.types.Scene.runpod_advanced_mode
-    del bpy.types.Scene.runpod_gpu_device_type
-    del bpy.types.Scene.runpod_allow_cpu_fallback
-    del bpy.types.Scene.runpod_frame_step
-    del bpy.types.Scene.runpod_transparent_film
-    del bpy.types.Scene.runpod_use_persistent_data
-    del bpy.types.Scene.runpod_view_transform
-    del bpy.types.Scene.runpod_look
-    del bpy.types.Scene.runpod_exposure
-    del bpy.types.Scene.runpod_gamma
-    del bpy.types.Scene.runpod_max_bounces
-    del bpy.types.Scene.runpod_diffuse_bounces
-    del bpy.types.Scene.runpod_glossy_bounces
-    del bpy.types.Scene.runpod_transmission_bounces
-    del bpy.types.Scene.runpod_transparent_bounces
-    del bpy.types.Scene.runpod_caustics_reflective
-    del bpy.types.Scene.runpod_caustics_refractive
-    del bpy.types.Scene.runpod_use_simplify
-    del bpy.types.Scene.runpod_simplify_subdivisions
-    del bpy.types.Scene.runpod_simplify_texture_limit
-    
-    del bpy.types.Scene.runpod_scene
-    del bpy.types.Scene.runpod_camera
-    del bpy.types.Scene.runpod_project
-    del bpy.types.Scene.rendersphere_guided_wall
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     register()

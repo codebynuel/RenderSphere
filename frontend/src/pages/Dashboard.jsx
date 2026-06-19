@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -6,18 +6,15 @@ import { io } from 'socket.io-client';
 import {
     Activity,
     CheckCircle2,
-    ChevronDown,
-    ChevronUp,
     Clock3,
     Copy,
     Download,
     Edit3,
     ExternalLink,
-    Eye,
-    EyeOff,
     FileArchive,
     FolderKanban,
     FolderPlus,
+    HelpCircle,
     KeyRound,
     Plus,
     RefreshCcw,
@@ -39,6 +36,50 @@ const STATUS_OPTIONS = [
     { id: 'COMPLETED', label: 'Completed' },
     { id: 'FAILED', label: 'Failed' },
     { id: 'CANCELLED', label: 'Cancelled' },
+];
+
+const DASHBOARD_TOUR_STORAGE_KEY = 'rendersphere.dashboardProductTour.v1';
+const DASHBOARD_TOUR_STEPS = [
+    {
+        id: 'navigation',
+        view: 'overview',
+        target: '[data-tour="sidebar-nav"]',
+        title: 'Navigate your workspace',
+        text: 'Use the sidebar to switch between the overview, projects, render queue, rendered files, and access keys without changing the data scope.',
+        placement: 'right',
+    },
+    {
+        id: 'access-keys',
+        view: 'access',
+        target: '[data-tour="access-panel"]',
+        title: 'Connect Blender with access keys',
+        text: 'Create secure keys for Blender workstations or automation clients. Full tokens are shown once, so copy them immediately after creation.',
+        placement: 'left',
+    },
+    {
+        id: 'render-queue',
+        view: 'renders',
+        target: '[data-tour="render-queue-panel"]',
+        title: 'Monitor every render job',
+        text: 'Track active work first, search job history, filter by status, refresh the queue, inspect details, cancel active jobs, and download completed output when available.',
+        placement: 'left',
+    },
+    {
+        id: 'files',
+        view: 'files',
+        target: '[data-tour="files-panel"]',
+        title: 'Review and download rendered files',
+        text: 'Completed deliveries stay searchable by file name, job ID, project, and metadata. Open, copy, or download authenticated file links from here.',
+        placement: 'left',
+    },
+    {
+        id: 'projects',
+        view: 'projects',
+        target: '[data-tour="projects-panel"]',
+        title: 'Organize work with projects',
+        text: 'Create and rename project containers, then jump to related jobs or files from explicit project actions while the dashboard still shows all data by default.',
+        placement: 'left',
+    },
 ];
 
 function sortByCreatedDesc(items) {
@@ -181,25 +222,6 @@ function ErrorState({ title = 'Could not load this section', message, onRetry })
     );
 }
 
-function ScopeControls({ value, projects, counts, onChange, compact = false }) {
-    return (
-        <div className={`scope-controls ${compact ? 'compact' : ''}`} aria-label="Project scope filter">
-            <label>
-                <span>Project scope</span>
-                <select value={value} onChange={(event) => onChange(event.target.value)}>
-                    <option value="all">All projects ({counts.all || 0})</option>
-                    <option value="unassigned">Unassigned ({counts.unassigned || 0})</option>
-                    {projects.map((project) => (
-                        <option value={project.id} key={project.id}>
-                            {project.name} ({counts.byProject.get(project.id) || 0})
-                        </option>
-                    ))}
-                </select>
-            </label>
-        </div>
-    );
-}
-
 function SearchBox({ value, onChange, placeholder }) {
     return (
         <label className="search-box">
@@ -219,27 +241,32 @@ export default function Dashboard() {
     const navigate = useNavigate();
 
     const [activeView, setActiveView] = useState('overview');
-    const [projectScope, setProjectScope] = useState('all');
     const [jobStatusFilter, setJobStatusFilter] = useState('all');
     const [jobSearchQuery, setJobSearchQuery] = useState('');
     const [fileSearchQuery, setFileSearchQuery] = useState('');
-    const [socketConnected, setSocketConnected] = useState(false);
     const [accessKeys, setAccessKeys] = useState([]);
     const [files, setFiles] = useState([]);
     const [jobs, setJobs] = useState([]);
     const [projects, setProjects] = useState([]);
-    const [visibleKeyIds, setVisibleKeyIds] = useState(new Set());
     const [expandedJobId, setExpandedJobId] = useState(null);
     const [newKeyName, setNewKeyName] = useState('');
+    const [accessKeyDialogOpen, setAccessKeyDialogOpen] = useState(false);
+    const [createdAccessKey, setCreatedAccessKey] = useState(null);
+    const [pendingDeleteKey, setPendingDeleteKey] = useState(null);
+    const [deletingKeyId, setDeletingKeyId] = useState(null);
     const [newProjectName, setNewProjectName] = useState('');
     const [editingProjectId, setEditingProjectId] = useState(null);
     const [editingProjectName, setEditingProjectName] = useState('');
     const [creatingKey, setCreatingKey] = useState(false);
     const [creatingProject, setCreatingProject] = useState(false);
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
-    const [showWorkflow, setShowWorkflow] = useState(true);
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true });
     const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '' });
+    const [tourOpen, setTourOpen] = useState(false);
+    const [tourStepIndex, setTourStepIndex] = useState(0);
+    const [tourTargetRect, setTourTargetRect] = useState(null);
+    const dashboardMainRef = useRef(null);
+    const tourDialogRef = useRef(null);
 
     useEffect(() => {
         if (!authLoading && !user) navigate('/auth');
@@ -327,9 +354,6 @@ export default function Dashboard() {
         if (!user?.id) return undefined;
 
         const socket = io('/', { withCredentials: true });
-        socket.on('connect', () => setSocketConnected(true));
-        socket.on('disconnect', () => setSocketConnected(false));
-        socket.on('connect_error', () => setSocketConnected(false));
         socket.on('job_update', (job) => {
             setJobs((current) => mergeJob(current, job));
             if (job?.status === 'COMPLETED') {
@@ -342,15 +366,8 @@ export default function Dashboard() {
 
         return () => {
             socket.disconnect();
-            setSocketConnected(false);
         };
     }, [user?.id, loadFiles, loadJobs]);
-
-    const scopeMatches = useCallback((item) => {
-        if (projectScope === 'all') return true;
-        if (projectScope === 'unassigned') return !item.projectId;
-        return item.projectId === projectScope;
-    }, [projectScope]);
 
     const stats = useMemo(() => {
         const jobsByProject = new Map();
@@ -397,70 +414,15 @@ export default function Dashboard() {
         };
     }, [files, jobs]);
 
-    const projectScopeName = useMemo(() => {
-        if (projectScope === 'all') return 'All projects';
-        if (projectScope === 'unassigned') return 'Unassigned';
-        return projects.find((project) => project.id === projectScope)?.name || 'Selected project';
-    }, [projects, projectScope]);
-
-    const scopedJobs = useMemo(() => jobs.filter(scopeMatches), [jobs, scopeMatches]);
-    const scopedFiles = useMemo(() => files.filter(scopeMatches), [files, scopeMatches]);
-
-    const visibleJobs = useMemo(() => scopedJobs
+    const visibleJobs = useMemo(() => jobs
         .filter((job) => statusMatches(job, jobStatusFilter))
-        .filter((job) => matchesSearch(job, jobSearchQuery)), [jobSearchQuery, jobStatusFilter, scopedJobs]);
+        .filter((job) => matchesSearch(job, jobSearchQuery)), [jobSearchQuery, jobStatusFilter, jobs]);
 
     const activeJobs = useMemo(() => visibleJobs.filter((job) => ACTIVE_STATUSES.has(job.status)), [visibleJobs]);
     const historyJobs = useMemo(() => visibleJobs.filter((job) => TERMINAL_STATUSES.has(job.status) || !ACTIVE_STATUSES.has(job.status)), [visibleJobs]);
 
-    const visibleFiles = useMemo(() => scopedFiles.filter((file) => matchesSearch(file, fileSearchQuery)), [fileSearchQuery, scopedFiles]);
-
-    const scopedStats = useMemo(() => {
-        let activeJobCount = 0;
-        let completedJobs = 0;
-        let failedJobs = 0;
-        let cancelledJobs = 0;
-        let totalSpend = 0;
-        let billableSeconds = 0;
-
-        scopedJobs.forEach((job) => {
-            if (ACTIVE_STATUSES.has(job.status)) activeJobCount += 1;
-            if (job.status === 'COMPLETED') completedJobs += 1;
-            if (job.status === 'FAILED') failedJobs += 1;
-            if (job.status === 'CANCELLED') cancelledJobs += 1;
-            totalSpend += Number(job.priceUsd || 0);
-            billableSeconds += Number(job.billableSeconds || 0);
-        });
-
-        return {
-            activeJobs: activeJobCount,
-            billableSeconds,
-            cancelledJobs,
-            completedJobs,
-            failedJobs,
-            totalFiles: scopedFiles.length,
-            totalJobs: scopedJobs.length,
-            totalSpend,
-        };
-    }, [scopedFiles.length, scopedJobs]);
-
-    const scopeCounts = useMemo(() => ({
-        all: jobs.length,
-        unassigned: stats.unassignedJobs,
-        byProject: stats.jobsByProject,
-    }), [jobs.length, stats.jobsByProject, stats.unassignedJobs]);
-
-    const fileScopeCounts = useMemo(() => ({
-        all: files.length,
-        unassigned: stats.unassignedFiles,
-        byProject: stats.filesByProject,
-    }), [files.length, stats.filesByProject, stats.unassignedFiles]);
-
-    const scopeDetail = useMemo(() => {
-        if (projectScope === 'all') return `${projects.length} projects / ${stats.unassignedJobs} unassigned jobs`;
-        if (projectScope === 'unassigned') return 'Jobs and files without a project';
-        return `${stats.jobsByProject.get(projectScope) || 0} jobs / ${stats.filesByProject.get(projectScope) || 0} files`;
-    }, [projectScope, projects.length, stats.filesByProject, stats.jobsByProject, stats.unassignedJobs]);
+    const visibleFiles = useMemo(() => files.filter((file) => matchesSearch(file, fileSearchQuery)), [fileSearchQuery, files]);
+    const sortedAccessKeys = useMemo(() => sortByCreatedDesc(accessKeys), [accessKeys]);
 
     const viewMeta = useMemo(() => {
         const copy = {
@@ -472,17 +434,17 @@ export default function Dashboard() {
             projects: {
                 eyebrow: 'Organize work',
                 title: 'Projects',
-                description: 'Create, rename, review, and route project work without hiding list filters in the sidebar.',
+                description: 'Create, rename, and review production containers without scoping the dashboard to one project.',
             },
             renders: {
                 eyebrow: 'Render operations',
                 title: 'Render queue',
-                description: 'Active jobs are prioritized first, with searchable history and explicit project scope controls.',
+                description: 'Active jobs are prioritized first, with searchable history and status controls.',
             },
             files: {
                 eyebrow: 'Delivery library',
                 title: 'Rendered files',
-                description: 'Find completed outputs by project scope, file metadata, scene, or job ID.',
+                description: 'Find completed outputs by file metadata, project name, scene, or job ID.',
             },
             access: {
                 eyebrow: 'Blender connection',
@@ -493,69 +455,148 @@ export default function Dashboard() {
         return copy[activeView] || copy.overview;
     }, [activeView]);
 
-    const workflowSteps = useMemo(() => [
-        {
-            id: 'connect',
-            icon: KeyRound,
-            title: 'Connect Blender',
-            text: 'Create an access key and paste it into the RenderSphere Blender add-on preferences.',
-            complete: accessKeys.length > 0,
-            actionLabel: accessKeys.length > 0 ? 'Manage keys' : 'Create access key',
-            view: 'access',
-        },
-        {
-            id: 'project',
-            icon: FolderPlus,
-            title: 'Create project',
-            text: 'Group renders by client, shot, sequence, or experiment before production starts.',
-            complete: projects.length > 0,
-            actionLabel: projects.length > 0 ? 'View projects' : 'Create project',
-            view: 'projects',
-        },
-        {
-            id: 'submit',
-            icon: Activity,
-            title: 'Submit render',
-            text: 'Use the Blender add-on to send still frames or animations to the cloud render queue.',
-            complete: jobs.length > 0,
-            actionLabel: 'Download add-on',
-            href: '/downloads/rendersphere-blender-addon.zip',
-        },
-        {
-            id: 'monitor',
-            icon: Clock3,
-            title: 'Monitor jobs',
-            text: 'Track live progress, cost, duration, status changes, and failures in one queue.',
-            complete: jobs.length > 0,
-            actionLabel: 'Monitor jobs',
-            view: 'renders',
-        },
-        {
-            id: 'download',
-            icon: Download,
-            title: 'Download files',
-            text: 'Open completed results, copy download links, and review billed render time.',
-            complete: files.length > 0,
-            actionLabel: 'View files',
-            view: 'files',
-        },
-    ], [accessKeys.length, files.length, jobs.length, projects.length]);
+    const hasJobFilters = jobStatusFilter !== 'all' || Boolean(jobSearchQuery.trim());
+    const hasFileFilters = Boolean(fileSearchQuery.trim());
+    const currentTourStep = DASHBOARD_TOUR_STEPS[tourStepIndex] || DASHBOARD_TOUR_STEPS[0];
+    const isFirstTourStep = tourStepIndex === 0;
+    const isLastTourStep = tourStepIndex === DASHBOARD_TOUR_STEPS.length - 1;
 
-    const hasJobFilters = projectScope !== 'all' || jobStatusFilter !== 'all' || Boolean(jobSearchQuery.trim());
-    const hasFileFilters = projectScope !== 'all' || Boolean(fileSearchQuery.trim());
+    const markTourDismissed = useCallback(() => {
+        try {
+            window.localStorage.setItem(DASHBOARD_TOUR_STORAGE_KEY, 'done');
+        } catch {
+            // Storage may be unavailable in private contexts; still dismiss for this session.
+        }
+        setTourOpen(false);
+        setTourTargetRect(null);
+    }, []);
+
+    const restartTour = useCallback(() => {
+        setTourStepIndex(0);
+        setTourOpen(true);
+    }, []);
+
+    const updateTourTarget = useCallback(() => {
+        if (!tourOpen || !currentTourStep) return;
+        const target = document.querySelector(currentTourStep.target);
+        if (!target) {
+            setTourTargetRect(null);
+            return;
+        }
+        const rect = target.getBoundingClientRect();
+        setTourTargetRect({
+            top: rect.top,
+            left: rect.left,
+            right: rect.right,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height,
+        });
+    }, [currentTourStep, tourOpen]);
+
+    const goToNextTourStep = useCallback(() => {
+        if (isLastTourStep) {
+            markTourDismissed();
+            return;
+        }
+        setTourStepIndex((current) => Math.min(current + 1, DASHBOARD_TOUR_STEPS.length - 1));
+    }, [isLastTourStep, markTourDismissed]);
+
+    const goToPreviousTourStep = useCallback(() => {
+        setTourStepIndex((current) => Math.max(current - 1, 0));
+    }, []);
+
+    useEffect(() => {
+        if (authLoading || !user?.id) return undefined;
+        try {
+            if (window.localStorage.getItem(DASHBOARD_TOUR_STORAGE_KEY) === 'done') return undefined;
+        } catch {
+            // If storage cannot be read, show the tour for the current session.
+        }
+        const openTimer = window.setTimeout(() => {
+            setTourStepIndex(0);
+            setTourOpen(true);
+        }, 0);
+        return () => window.clearTimeout(openTimer);
+    }, [authLoading, user?.id]);
+
+    useEffect(() => {
+        if (!tourOpen || !currentTourStep?.view || activeView === currentTourStep.view) return undefined;
+        const viewTimer = window.setTimeout(() => {
+            setActiveView(currentTourStep.view);
+        }, 0);
+        return () => window.clearTimeout(viewTimer);
+    }, [activeView, currentTourStep, tourOpen]);
+
+    useEffect(() => {
+        if (!tourOpen || !currentTourStep) return undefined;
+
+        const dashboardMain = dashboardMainRef.current;
+        const focusTimer = window.setTimeout(() => {
+            tourDialogRef.current?.focus();
+        }, 0);
+        const measureTimer = window.setTimeout(updateTourTarget, 0);
+        let scrollMeasureTimer;
+
+        const scrollTimer = window.setTimeout(() => {
+            const target = document.querySelector(currentTourStep.target);
+            target?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+            scrollMeasureTimer = window.setTimeout(updateTourTarget, 180);
+        }, 60);
+
+        window.addEventListener('resize', updateTourTarget);
+        window.addEventListener('scroll', updateTourTarget, true);
+        dashboardMain?.addEventListener('scroll', updateTourTarget, { passive: true });
+
+        return () => {
+            window.clearTimeout(focusTimer);
+            window.clearTimeout(measureTimer);
+            window.clearTimeout(scrollTimer);
+            window.clearTimeout(scrollMeasureTimer);
+            window.removeEventListener('resize', updateTourTarget);
+            window.removeEventListener('scroll', updateTourTarget, true);
+            dashboardMain?.removeEventListener('scroll', updateTourTarget);
+        };
+    }, [activeView, currentTourStep, tourOpen, updateTourTarget]);
+
+    useEffect(() => {
+        if (!tourOpen) return undefined;
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape') markTourDismissed();
+            if (event.key === 'ArrowRight') goToNextTourStep();
+            if (event.key === 'ArrowLeft' && !isFirstTourStep) goToPreviousTourStep();
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [goToNextTourStep, goToPreviousTourStep, isFirstTourStep, markTourDismissed, tourOpen]);
+
+    const openCreateKeyDialog = () => {
+        setNewKeyName('');
+        setCreatedAccessKey(null);
+        setAccessKeyDialogOpen(true);
+    };
+
+    const closeCreateKeyDialog = () => {
+        if (creatingKey) return;
+        setAccessKeyDialogOpen(false);
+        setNewKeyName('');
+        setCreatedAccessKey(null);
+    };
 
     const handleCreateKey = async (event) => {
         event.preventDefault();
-        if (!newKeyName.trim()) return;
+        const trimmedName = newKeyName.trim();
+        if (!trimmedName) return;
         setCreatingKey(true);
         try {
             const data = await api('/api/auth/access-keys', {
                 method: 'POST',
-                body: JSON.stringify({ name: newKeyName.trim() }),
+                body: JSON.stringify({ name: trimmedName }),
             });
             const createdKey = data.accessKey;
-            setAccessKeys((current) => [...current, createdKey]);
-            setVisibleKeyIds((current) => new Set([...current, createdKey.id]));
+            const listedKey = { ...createdKey, token: null };
+            setAccessKeys((current) => sortByCreatedDesc([listedKey, ...current.filter((key) => key.id !== createdKey.id)]));
+            setCreatedAccessKey(createdKey);
             setNewKeyName('');
             toast.success('Access key created. Copy it now; the full token is shown once.');
         } catch (error) {
@@ -565,19 +606,18 @@ export default function Dashboard() {
         }
     };
 
-    const handleDeleteKey = async (id, name) => {
-        if (!window.confirm(`Delete "${name || 'Access key'}"? This action cannot be undone.`)) return;
+    const handleDeleteKey = async () => {
+        if (!pendingDeleteKey?.id) return;
+        setDeletingKeyId(pendingDeleteKey.id);
         try {
-            await api(`/api/auth/access-keys/${id}`, { method: 'DELETE', body: '{}' });
-            setVisibleKeyIds((current) => {
-                const next = new Set(current);
-                next.delete(id);
-                return next;
-            });
-            setAccessKeys((current) => current.filter((key) => key.id !== id));
-            toast.success('Access key deleted.');
+            await api(`/api/auth/access-keys/${pendingDeleteKey.id}`, { method: 'DELETE', body: '{}' });
+            setAccessKeys((current) => current.filter((key) => key.id !== pendingDeleteKey.id));
+            setPendingDeleteKey(null);
+            toast.success('Access key revoked.');
         } catch (error) {
-            toast.error(error.message || 'Failed to delete key');
+            toast.error(error.message || 'Failed to revoke key');
+        } finally {
+            setDeletingKeyId(null);
         }
     };
 
@@ -591,7 +631,6 @@ export default function Dashboard() {
                 body: JSON.stringify({ name: newProjectName.trim() }),
             });
             setProjects((current) => [data.project, ...current]);
-            setProjectScope(data.project.id);
             setNewProjectName('');
             setActiveView('projects');
             toast.success('Project created.');
@@ -645,7 +684,6 @@ export default function Dashboard() {
             setProjects((current) => current.filter((item) => item.id !== project.id));
             setJobs((current) => current.map((job) => (job.projectId === project.id ? { ...job, projectId: null, project: null } : job)));
             setFiles((current) => current.map((file) => (file.projectId === project.id ? { ...file, projectId: null, project: null } : file)));
-            if (projectScope === project.id) setProjectScope('all');
             toast.success('Project deleted.');
         } catch (error) {
             toast.error(error.message || 'Failed to delete project');
@@ -666,15 +704,6 @@ export default function Dashboard() {
         }
     };
 
-    const toggleKeyVisibility = (id) => {
-        setVisibleKeyIds((current) => {
-            const next = new Set(current);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    };
-
     const copyToClipboard = async (text, name) => {
         if (!text) return;
         try {
@@ -686,26 +715,22 @@ export default function Dashboard() {
     };
 
     const resetJobFilters = () => {
-        setProjectScope('all');
         setJobStatusFilter('all');
         setJobSearchQuery('');
     };
 
     const resetFileFilters = () => {
-        setProjectScope('all');
         setFileSearchQuery('');
     };
 
-    const viewProjectRenders = (projectId) => {
-        setProjectScope(projectId);
+    const viewProjectRenders = (project) => {
         setJobStatusFilter('all');
-        setJobSearchQuery('');
+        setJobSearchQuery(project.name || project.id);
         setActiveView('renders');
     };
 
-    const viewProjectFiles = (projectId) => {
-        setProjectScope(projectId);
-        setFileSearchQuery('');
+    const viewProjectFiles = (project) => {
+        setFileSearchQuery(project.name || project.id);
         setActiveView('files');
     };
 
@@ -778,61 +803,184 @@ export default function Dashboard() {
     );
 
     const renderAccessKeys = () => (
-        <motion.div className="panel dashboard-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="panel-head">
+        <motion.div className="panel dashboard-panel access-management-panel" data-tour="access-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+            <div className="panel-head access-panel-head">
                 <div>
                     <h2>Access keys</h2>
-                    <p className="muted">Create keys for Blender and automation. Full keys are shown once, then only the preview remains.</p>
+                    <p className="muted">Manage Blender and automation credentials without showing full secrets after creation.</p>
+                </div>
+                <button className="button primary" type="button" onClick={openCreateKeyDialog}>
+                    <Plus size={16} /> New access key
+                </button>
+            </div>
+
+            <div className="access-guidance-card">
+                <KeyRound size={18} />
+                <div>
+                    <strong>Full keys are revealed one time only.</strong>
+                    <p>After you create a key, copy it into the Blender add-on preferences before leaving the success screen. Existing keys can only show their saved preview.</p>
                 </div>
             </div>
-            <form className="inline-form" onSubmit={handleCreateKey}>
-                <input
-                    type="text"
-                    maxLength={80}
-                    placeholder="Key name, for example Blender workstation"
-                    value={newKeyName}
-                    onChange={(event) => setNewKeyName(event.target.value)}
-                    disabled={creatingKey}
-                />
-                <button className="button primary" type="submit" disabled={creatingKey || !newKeyName.trim()}>
-                    <Plus size={16} /> Create access key
-                </button>
-            </form>
 
-            <div className="stack-list">
+            <div className="access-key-list" aria-live="polite">
                 {loading.keys ? <LoadingState label="Loading access keys..." /> : null}
                 {!loading.keys && errors.keys ? <ErrorState message={errors.keys} onRetry={loadAccessKeys} /> : null}
-                {!loading.keys && !errors.keys && accessKeys.length === 0 ? <EmptyState icon={KeyRound} title="No access keys yet" text="Create a key and paste it into the Blender add-on preferences." /> : null}
-                {!loading.keys && !errors.keys && accessKeys.map((key) => (
-                    <div className="stack-item" key={key.id}>
-                        <div className="stack-meta">
-                            <strong>{key.name || 'Access key'}</strong>
-                            <div className="subtle">Created {formatDate(key.createdAt)}{key.lastUsedAt ? ` / Last used ${formatDate(key.lastUsedAt)}` : ''}</div>
+                {!loading.keys && !errors.keys && sortedAccessKeys.length === 0 ? (
+                    <EmptyState
+                        icon={KeyRound}
+                        title="No access keys yet"
+                        text="Create a named key for each Blender workstation or automation client, then paste the one-time token into that client."
+                        action={<button className="button primary" type="button" onClick={openCreateKeyDialog}><Plus size={16} /> Create first key</button>}
+                    />
+                ) : null}
+                {!loading.keys && !errors.keys && sortedAccessKeys.map((key) => (
+                    <article className="access-key-row" key={key.id}>
+                        <div className="access-key-icon"><KeyRound size={18} /></div>
+                        <div className="access-key-main">
+                            <div className="access-key-title-row">
+                                <strong>{key.name || 'Access key'}</strong>
+                                <span className="pill access-status active">Active</span>
+                            </div>
+                            <div className="access-key-meta">
+                                <span>Created {formatDate(key.createdAt)}</span>
+                                <span>{key.lastUsedAt ? `Last used ${formatDate(key.lastUsedAt)}` : 'Never used'}</span>
+                                <span>Preview {key.preview || 'Unavailable'}</span>
+                            </div>
+                            <div className="access-key-preview" aria-label="Masked access key preview">
+                                <code>{key.preview || 'rs_live_••••••••••••••••••••'}</code>
+                                <span>Full token hidden after creation</span>
+                            </div>
                         </div>
-                        <input readOnly value={visibleKeyIds.has(key.id) ? (key.token || key.preview) : key.preview} type={visibleKeyIds.has(key.id) ? 'text' : 'password'} />
-                        <div className="button-row compact-row">
-                            <button className="button" type="button" disabled={!key.token} onClick={() => toggleKeyVisibility(key.id)} title={!key.token ? 'Full access keys are only shown when first created.' : ''}>
-                                {visibleKeyIds.has(key.id) ? <><EyeOff size={16} /> Hide</> : <><Eye size={16} /> Show</>}
-                            </button>
-                            <button className="button" type="button" disabled={!key.token} onClick={() => copyToClipboard(key.token, key.name || 'access key')} title={!key.token ? 'Full access keys are only shown when first created.' : ''}>
-                                <Copy size={16} /> Copy
-                            </button>
-                            <button className="button danger" type="button" onClick={() => handleDeleteKey(key.id, key.name)}>
-                                <Trash2 size={16} /> Delete
+                        <div className="access-key-actions">
+                            <button className="button danger compact-button" type="button" onClick={() => setPendingDeleteKey(key)}>
+                                <Trash2 size={15} /> Revoke
                             </button>
                         </div>
-                    </div>
+                    </article>
                 ))}
             </div>
         </motion.div>
     );
 
+    const renderCreateKeyDialog = () => {
+        if (!accessKeyDialogOpen) return null;
+        const hasCreatedToken = Boolean(createdAccessKey?.token);
+        return (
+            <div className="confirm-overlay access-modal-overlay" role="presentation">
+                <motion.section
+                    className="confirm-box access-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="access-key-dialog-title"
+                    initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                >
+                    <div className="access-modal-head">
+                        <div>
+                            <p className="eyebrow">Credential setup</p>
+                            <h3 id="access-key-dialog-title">{hasCreatedToken ? 'Copy your new access key' : 'Create access key'}</h3>
+                        </div>
+                        {!hasCreatedToken && (
+                            <button className="button compact-button ghost-button" type="button" onClick={closeCreateKeyDialog} disabled={creatingKey} aria-label="Close access key dialog">
+                                <X size={15} />
+                            </button>
+                        )}
+                    </div>
+
+                    {hasCreatedToken ? (
+                        <div className="access-reveal-state">
+                            <div className="access-success-icon"><CheckCircle2 size={22} /></div>
+                            <p className="muted">This is the only time RenderSphere will show the full key. Copy it now and store it somewhere safe before continuing.</p>
+                            <div className="one-time-key-box">
+                                <code>{createdAccessKey.token}</code>
+                                <button className="button primary" type="button" onClick={() => copyToClipboard(createdAccessKey.token, createdAccessKey.name || 'access key')}>
+                                    <Copy size={16} /> Copy key
+                                </button>
+                            </div>
+                            <div className="access-modal-note">
+                                <strong>Next step</strong>
+                                <span>Paste this unchanged <code>rs_live_</code> key into the RenderSphere Blender add-on preferences.</span>
+                            </div>
+                            <button className="button primary access-modal-full-button" type="button" onClick={closeCreateKeyDialog}>
+                                I saved it
+                            </button>
+                        </div>
+                    ) : (
+                        <form className="access-create-form" onSubmit={handleCreateKey}>
+                            <p className="muted">Use a clear label so you can revoke one workstation or automation client without disrupting others.</p>
+                            <label>
+                                <span>Key label</span>
+                                <input
+                                    type="text"
+                                    maxLength={80}
+                                    placeholder="For example: Studio Blender workstation"
+                                    value={newKeyName}
+                                    onChange={(event) => setNewKeyName(event.target.value)}
+                                    disabled={creatingKey}
+                                    autoFocus
+                                />
+                            </label>
+                            <div className="access-modal-note warning-note">
+                                <strong>One-time secret</strong>
+                                <span>The full key will be shown once after creation. Existing keys only show a masked preview.</span>
+                            </div>
+                            <div className="access-modal-actions">
+                                <button className="button" type="button" onClick={closeCreateKeyDialog} disabled={creatingKey}>Cancel</button>
+                                <button className="button primary" type="submit" disabled={creatingKey || !newKeyName.trim()}>
+                                    <Plus size={16} /> {creatingKey ? 'Creating...' : 'Create key'}
+                                </button>
+                            </div>
+                        </form>
+                    )}
+                </motion.section>
+            </div>
+        );
+    };
+
+    const renderDeleteKeyDialog = () => {
+        if (!pendingDeleteKey) return null;
+        const isDeleting = deletingKeyId === pendingDeleteKey.id;
+        return (
+            <div className="confirm-overlay access-modal-overlay" role="presentation">
+                <motion.section
+                    className="confirm-box access-modal danger-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="delete-access-key-title"
+                    initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                >
+                    <div className="access-modal-head">
+                        <div>
+                            <p className="eyebrow">Revoke credential</p>
+                            <h3 id="delete-access-key-title">Revoke “{pendingDeleteKey.name || 'Access key'}”?</h3>
+                        </div>
+                        <button className="button compact-button ghost-button" type="button" onClick={() => setPendingDeleteKey(null)} disabled={isDeleting} aria-label="Close revoke confirmation">
+                            <X size={15} />
+                        </button>
+                    </div>
+                    <p className="muted">Any Blender workstation or automation client using this key will stop authenticating immediately. This cannot be undone.</p>
+                    <div className="access-modal-note">
+                        <strong>Key preview</strong>
+                        <span>{pendingDeleteKey.preview || 'Preview unavailable'}</span>
+                    </div>
+                    <div className="access-modal-actions">
+                        <button className="button" type="button" onClick={() => setPendingDeleteKey(null)} disabled={isDeleting}>Keep key</button>
+                        <button className="button danger" type="button" onClick={handleDeleteKey} disabled={isDeleting}>
+                            <Trash2 size={16} /> {isDeleting ? 'Revoking...' : 'Revoke key'}
+                        </button>
+                    </div>
+                </motion.section>
+            </div>
+        );
+    };
+
     const renderProjects = () => (
-        <motion.div className="panel dashboard-panel full" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+        <motion.div className="panel dashboard-panel full" data-tour="projects-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-head project-panel-head">
                 <div>
                     <h2>Projects</h2>
-                    <p className="muted">Manage production containers and jump into scoped renders or files from explicit actions.</p>
+                    <p className="muted">Manage production containers and jump into related renders or files from explicit actions.</p>
                 </div>
                 <div className="project-summary-strip">
                     <span><strong>{projects.length}</strong> projects</span>
@@ -896,10 +1044,10 @@ export default function Dashboard() {
                             </div>
                             <code>{project.id}</code>
                             <div className="button-row compact-row project-actions">
-                                <button className="button" type="button" onClick={() => viewProjectRenders(project.id)}>
+                                <button className="button" type="button" onClick={() => viewProjectRenders(project)}>
                                     View jobs
                                 </button>
-                                <button className="button" type="button" onClick={() => viewProjectFiles(project.id)}>
+                                <button className="button" type="button" onClick={() => viewProjectFiles(project)}>
                                     View files
                                 </button>
                                 {!isEditing && (
@@ -919,13 +1067,13 @@ export default function Dashboard() {
     );
 
     const renderJobs = ({ overview = false } = {}) => {
-        const previewJobs = overview ? scopedJobs.slice(0, 6) : null;
+        const previewJobs = overview ? jobs.slice(0, 6) : null;
         return (
-            <motion.div className="panel dashboard-panel full" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+            <motion.div className="panel dashboard-panel full" data-tour={overview ? 'queue-snapshot-panel' : 'render-queue-panel'} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
                 <div className="panel-head queue-panel-head">
                     <div>
-                        <h2>{overview ? 'Queue snapshot' : `Render queue / ${projectScopeName}`}</h2>
-                        <p className="muted">{overview ? 'Most recent work across the selected scope.' : 'Active jobs stay above historical outcomes with explicit filtering.'}</p>
+                        <h2>{overview ? 'Queue snapshot' : 'Render queue'}</h2>
+                        <p className="muted">{overview ? 'Most recent work across the workspace.' : 'Active jobs stay above historical outcomes with explicit filtering.'}</p>
                     </div>
                     <button className="button" type="button" onClick={loadJobs} disabled={loading.jobs}>
                         <RefreshCcw size={16} className={loading.jobs ? 'spin' : ''} /> Refresh jobs
@@ -933,8 +1081,7 @@ export default function Dashboard() {
                 </div>
 
                 {!overview && (
-                    <div className="list-toolbar">
-                        <ScopeControls value={projectScope} projects={projects} counts={scopeCounts} onChange={setProjectScope} />
+                    <div className="list-toolbar list-toolbar-simple">
                         <label>
                             <span>Status</span>
                             <select value={jobStatusFilter} onChange={(event) => setJobStatusFilter(event.target.value)}>
@@ -947,8 +1094,7 @@ export default function Dashboard() {
                 )}
 
                 <div className="filter-summary">
-                    <span className="scope-chip">Scope: {projectScopeName}</span>
-                    <span>{overview ? `${previewJobs.length} of ${scopedJobs.length} recent jobs` : `${visibleJobs.length} matching jobs`}</span>
+                    <span>{overview ? `${previewJobs.length} of ${jobs.length} recent jobs` : `${visibleJobs.length} matching jobs`}</span>
                     {!overview && <span>{activeJobs.length} active / {historyJobs.length} history</span>}
                 </div>
 
@@ -964,7 +1110,7 @@ export default function Dashboard() {
                         <EmptyState
                             icon={Activity}
                             title="No jobs match these controls"
-                            text="Adjust the project scope, status, or search query to find submitted render jobs."
+                            text="Adjust the status or search query to find submitted render jobs."
                             action={<button className="button" type="button" onClick={resetJobFilters}>Clear filters</button>}
                         />
                     ) : (
@@ -979,12 +1125,12 @@ export default function Dashboard() {
     };
 
     const renderFiles = ({ overview = false } = {}) => {
-        const previewFiles = overview ? scopedFiles.slice(0, 5) : visibleFiles;
+        const previewFiles = overview ? files.slice(0, 5) : visibleFiles;
         return (
-            <motion.div className="panel dashboard-panel full" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+            <motion.div className="panel dashboard-panel full" data-tour={overview ? 'latest-files-panel' : 'files-panel'} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
                 <div className="panel-head queue-panel-head">
                     <div>
-                        <h2>{overview ? 'Latest deliveries' : `Rendered files / ${projectScopeName}`}</h2>
+                        <h2>{overview ? 'Latest deliveries' : 'Rendered files'}</h2>
                         <p className="muted">Completed outputs are served through authenticated downloads.</p>
                     </div>
                     <button className="button" type="button" onClick={loadFiles} disabled={loading.files}>
@@ -993,15 +1139,13 @@ export default function Dashboard() {
                 </div>
 
                 {!overview && (
-                    <div className="list-toolbar file-toolbar">
-                        <ScopeControls value={projectScope} projects={projects} counts={fileScopeCounts} onChange={setProjectScope} />
+                    <div className="list-toolbar file-toolbar list-toolbar-simple">
                         <SearchBox value={fileSearchQuery} onChange={setFileSearchQuery} placeholder="Search file, job ID, project..." />
                         <button className="button" type="button" onClick={resetFileFilters} disabled={!hasFileFilters}>Clear filters</button>
                     </div>
                 )}
 
                 <div className="filter-summary">
-                    <span className="scope-chip">Scope: {projectScopeName}</span>
                     <span>{overview ? `${previewFiles.length} latest files` : `${visibleFiles.length} matching files`}</span>
                 </div>
 
@@ -1010,8 +1154,8 @@ export default function Dashboard() {
                 {!loading.files && !errors.files && previewFiles.length === 0 ? (
                     <EmptyState
                         icon={FileArchive}
-                        title={overview ? 'No delivered files yet' : 'No files match this scope'}
-                        text={overview ? 'Completed jobs with result files will show download links here.' : 'Adjust the project scope or search query to find rendered outputs.'}
+                        title={overview ? 'No delivered files yet' : 'No files match this search'}
+                        text={overview ? 'Completed jobs with result files will show download links here.' : 'Adjust the search query to find rendered outputs.'}
                         action={!overview && hasFileFilters ? <button className="button" type="button" onClick={resetFileFilters}>Clear filters</button> : null}
                     />
                 ) : null}
@@ -1058,46 +1202,79 @@ export default function Dashboard() {
         );
     };
 
-    const renderWorkflowGuide = () => (
-        <motion.div className="panel dashboard-panel full workflow-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="panel-head workflow-head">
-                <div>
-                    <h2>Get from Blender to delivered files</h2>
-                    <p className={`muted${showWorkflow ? '' : ' hide-mobile'}`}>{showWorkflow ? 'Follow these steps in order. Completed steps are marked automatically as your workspace fills with keys, projects, jobs, and files.' : ''}</p>
-                </div>
-                <button className="button workflow-toggle" type="button" onClick={() => setShowWorkflow(!showWorkflow)} aria-label={showWorkflow ? 'Collapse workflow guide' : 'Expand workflow guide'}>
-                    {showWorkflow ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    <span className="toggle-label">{showWorkflow ? 'Hide steps' : 'Show steps'}</span>
-                </button>
+    const getTourPanelStyle = () => {
+        if (!tourTargetRect || typeof window === 'undefined' || window.innerWidth <= 760) return {};
+        const margin = 18;
+        const panelWidth = Math.min(360, window.innerWidth - 32);
+        const maxTop = Math.max(16, window.innerHeight - 290);
+        const top = Math.min(Math.max(16, tourTargetRect.top), maxTop);
+        const preferredLeft = currentTourStep.placement === 'right'
+            ? tourTargetRect.right + margin
+            : tourTargetRect.left - panelWidth - margin;
+        const left = Math.min(Math.max(16, preferredLeft), window.innerWidth - panelWidth - 16);
+        return { top, left, width: panelWidth };
+    };
+
+    const renderProductTour = () => {
+        if (!tourOpen || !currentTourStep) return null;
+        const spotlightStyle = tourTargetRect ? {
+            top: Math.max(8, tourTargetRect.top - 8),
+            left: Math.max(8, tourTargetRect.left - 8),
+            width: Math.min(window.innerWidth - 16, tourTargetRect.width + 16),
+            height: Math.min(window.innerHeight - 16, tourTargetRect.height + 16),
+        } : undefined;
+        const spotlightBounds = spotlightStyle ? {
+            ...spotlightStyle,
+            right: Math.min(window.innerWidth - 8, spotlightStyle.left + spotlightStyle.width),
+            bottom: Math.min(window.innerHeight - 8, spotlightStyle.top + spotlightStyle.height),
+        } : null;
+        const backdropSegments = spotlightBounds ? [
+            { top: 0, left: 0, right: 0, height: spotlightBounds.top },
+            { top: spotlightBounds.bottom, left: 0, right: 0, bottom: 0 },
+            { top: spotlightBounds.top, left: 0, width: spotlightBounds.left, height: spotlightBounds.height },
+            { top: spotlightBounds.top, left: spotlightBounds.right, right: 0, height: spotlightBounds.height },
+        ] : [];
+
+        return (
+            <div className="product-tour" aria-live="polite">
+                {spotlightBounds ? backdropSegments.map((segmentStyle, index) => (
+                    <div className="product-tour-backdrop product-tour-backdrop-segment" style={segmentStyle} aria-hidden="true" key={index} />
+                )) : <div className="product-tour-backdrop" aria-hidden="true" />}
+                {spotlightStyle && <div className="product-tour-spotlight" style={spotlightStyle} aria-hidden="true" />}
+                <motion.section
+                    className={`product-tour-card placement-${currentTourStep.placement}`}
+                    ref={tourDialogRef}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="product-tour-title"
+                    aria-describedby="product-tour-copy"
+                    tabIndex={-1}
+                    style={getTourPanelStyle()}
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ duration: 0.18 }}
+                >
+                    <div className="product-tour-topline">
+                        <span>Product tour</span>
+                        <button className="button compact-button ghost-button" type="button" onClick={markTourDismissed}>Skip</button>
+                    </div>
+                    <h2 id="product-tour-title">{currentTourStep.title}</h2>
+                    <p id="product-tour-copy">{currentTourStep.text}</p>
+                    <div className="product-tour-progress" aria-label={`Step ${tourStepIndex + 1} of ${DASHBOARD_TOUR_STEPS.length}`}>
+                        {DASHBOARD_TOUR_STEPS.map((step, index) => (
+                            <span className={index === tourStepIndex ? 'active' : ''} key={step.id} />
+                        ))}
+                    </div>
+                    <div className="product-tour-actions">
+                        <button className="button" type="button" onClick={goToPreviousTourStep} disabled={isFirstTourStep}>Back</button>
+                        <span>{tourStepIndex + 1} / {DASHBOARD_TOUR_STEPS.length}</span>
+                        <button className="button primary" type="button" onClick={goToNextTourStep}>{isLastTourStep ? 'Done' : 'Next'}</button>
+                    </div>
+                    <p className="product-tour-hint">Use ArrowLeft, ArrowRight, or Escape to navigate.</p>
+                </motion.section>
             </div>
-            {showWorkflow && (
-                <div className="workflow-steps">
-                    {workflowSteps.map((step, index) => {
-                        const Icon = step.icon;
-                        return (
-                            <article className={`workflow-step ${step.complete ? 'complete' : ''}`} key={step.id}>
-                                <div className="workflow-step-number">{step.complete ? <CheckCircle2 size={16} /> : index + 1}</div>
-                                <div className="workflow-step-icon"><Icon size={20} /></div>
-                                <div className="workflow-step-copy">
-                                    <h3>{step.title}</h3>
-                                    <p>{step.text}</p>
-                                </div>
-                                {step.href ? (
-                                    <a className="link-button" href={step.href} download>
-                                        {step.actionLabel}
-                                    </a>
-                                ) : (
-                                    <button className="button" type="button" onClick={() => setActiveView(step.view)}>
-                                        {step.actionLabel}
-                                    </button>
-                                )}
-                            </article>
-                        );
-                    })}
-                </div>
-            )}
-        </motion.div>
-    );
+        );
+    };
 
     if (authLoading || !user) return null;
 
@@ -1106,41 +1283,32 @@ export default function Dashboard() {
             <Sidebar
                 activeView={activeView}
                 onChangeView={setActiveView}
-                stats={stats}
-                socketConnected={socketConnected}
-                balanceUsd={user.starterBalanceUsd}
             />
 
-            <section className="dashboard-main">
+            <section className="dashboard-main" ref={dashboardMainRef}>
                 <div className="dashboard-titlebar operations-titlebar">
                     <div>
                         <p className="eyebrow">{viewMeta.eyebrow}</p>
                         <h1>{viewMeta.title}</h1>
                         <p className="muted">{viewMeta.description}</p>
-                        <div className="titlebar-status-row">
-                            <span className={`socket-state inline ${socketConnected ? 'connected' : ''}`}>{socketConnected ? 'Live socket connected' : 'Live socket offline'}</span>
-                            <span className="scope-chip">Current scope: {projectScopeName}</span>
-                        </div>
                     </div>
                     <div className="titlebar-actions">
-                        {(activeView === 'overview' || activeView === 'renders' || activeView === 'files') && (
-                            <ScopeControls value={projectScope} projects={projects} counts={scopeCounts} onChange={setProjectScope} compact />
-                        )}
+                        <button className="button" type="button" onClick={restartTour}>
+                            <HelpCircle size={16} /> Tour
+                        </button>
                         <button className="button" type="button" onClick={loadAll}>
                             <RefreshCcw size={16} /> Refresh all
                         </button>
                     </div>
                 </div>
 
-                {activeView === 'overview' && renderWorkflowGuide()}
-
                 {activeView === 'overview' && (
                     <div className="dashboard-metrics-grid operations-metrics">
-                        <MetricCard icon={FolderKanban} label="Current scope" value={projectScopeName} detail={scopeDetail} />
-                        <MetricCard icon={Activity} label="Active jobs" value={scopedStats.activeJobs} detail={`${scopedStats.totalJobs} jobs in scope`} tone="active" />
-                        <MetricCard icon={CheckCircle2} label="Completed" value={scopedStats.completedJobs} detail={`${scopedStats.totalFiles} downloadable files`} tone="good" />
-                        <MetricCard icon={XCircle} label="Failed" value={scopedStats.failedJobs} detail={`${scopedStats.cancelledJobs} cancelled`} tone="danger" />
-                        <MetricCard icon={Clock3} label="Spend" value={formatUsd(scopedStats.totalSpend)} detail={`${formatDuration(scopedStats.billableSeconds)} billed / Balance ${formatUsd(user.starterBalanceUsd)}`} />
+                        <MetricCard icon={FolderKanban} label="Projects" value={projects.length} detail={`${stats.unassignedJobs} unassigned jobs`} />
+                        <MetricCard icon={Activity} label="Active jobs" value={stats.activeJobs} detail={`${stats.totalJobs} total jobs`} tone="active" />
+                        <MetricCard icon={CheckCircle2} label="Completed" value={stats.completedJobs} detail={`${stats.totalFiles} downloadable files`} tone="good" />
+                        <MetricCard icon={XCircle} label="Failed" value={stats.failedJobs} detail={`${stats.cancelledJobs} cancelled`} tone="danger" />
+                        <MetricCard icon={Clock3} label="Spend" value={formatUsd(stats.totalSpend)} detail={`${formatDuration(stats.billableSeconds)} billed / Balance ${formatUsd(user.starterBalanceUsd)}`} />
                     </div>
                 )}
 
@@ -1156,6 +1324,9 @@ export default function Dashboard() {
                 {activeView === 'files' && <div className="dashboard-grid operations-grid">{renderFiles()}</div>}
                 {activeView === 'access' && <div className="dashboard-grid two-col"><div className="helper-panel"><KeyRound size={22} /><h2>Connect Blender</h2><p className="muted">Create an access key, paste it into the RenderSphere add-on preferences, then use the Scene and Output panels to submit jobs.</p></div>{renderAccessKeys()}</div>}
             </section>
+            {renderCreateKeyDialog()}
+            {renderDeleteKeyDialog()}
+            {renderProductTour()}
         </main>
     );
 }

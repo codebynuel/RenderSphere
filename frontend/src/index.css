@@ -85,6 +85,7 @@ body {
         var(--bg);
     color: var(--text);
     font-family: "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
     letter-spacing: 0;
 }
 
@@ -190,7 +191,7 @@ button {
 
 .brand {
     color: var(--text);
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 800;
     line-height: 1;
     text-decoration: none;
@@ -204,7 +205,7 @@ button {
 
 .nav-link {
     color: var(--muted);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     text-decoration: none;
 }
@@ -215,27 +216,8 @@ button {
 
 .account-label {
     color: var(--muted);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
-}
-
-.route-chip,
-.balance-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 34px;
-    padding: 0 12px;
-    border: 1px solid var(--line-soft);
-    border-radius: 10px;
-    color: var(--text);
-    background: var(--panel-section);
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.balance-chip {
-    border-color: rgba(255, 107, 53, 0.38);
-    background: rgba(255, 107, 53, 0.16);
 }
 
 .button,
@@ -257,7 +239,7 @@ button {
     justify-content: center;
     gap: 10px;
     padding: 0 16px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 800;
     text-decoration: none;
 }
@@ -294,7 +276,7 @@ button {
 .eyebrow {
     margin: 0 0 28px;
     color: var(--muted);
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 700;
 }
 
@@ -304,7 +286,7 @@ button {
     margin: 0;
     max-width: 940px;
     color: var(--text);
-    font-size: clamp(54px, 8.2vw, 108px);
+    font-size: clamp(42px, 6.8vw, 82px);
     font-weight: 650;
     line-height: 0.92;
     letter-spacing: -0.06em;
@@ -314,7 +296,7 @@ button {
     max-width: 660px;
     margin: 28px 0 0;
     color: var(--muted);
-    font-size: 18px;
+    font-size: 16px;
     line-height: 1.7;
 }
 
@@ -334,7 +316,7 @@ button {
     padding: 0;
     color: rgba(246, 247, 244, 0.76);
     list-style: none;
-    font-size: 15px;
+    font-size: 14px;
 }
 
 .check-list li::before {
@@ -457,7 +439,7 @@ button {
     display: block;
     margin-top: 18px;
     color: var(--text);
-    font-size: clamp(24px, 3vw, 34px);
+    font-size: clamp(21px, 2.5vw, 29px);
     line-height: 1;
 }
 
@@ -531,7 +513,7 @@ button {
     margin: 0;
     max-width: 760px;
     color: var(--text);
-    font-size: clamp(34px, 5vw, 64px);
+    font-size: clamp(28px, 4vw, 48px);
     font-weight: 500;
     line-height: 1.02;
 }
@@ -597,7 +579,7 @@ button {
 .metric strong {
     display: block;
     color: var(--text);
-    font-size: 30px;
+    font-size: 24px;
     font-weight: 700;
 }
 
@@ -619,7 +601,7 @@ button {
     padding: 34px clamp(24px, 5vw, 56px);
     border-top: 1px solid var(--line-soft);
     color: var(--muted);
-    font-size: 14px;
+    font-size: 13px;
 }
 
 .footer-links {
@@ -670,7 +652,7 @@ button {
     margin: 0;
     max-width: 720px;
     color: var(--text);
-    font-size: clamp(34px, 5vw, 62px);
+    font-size: clamp(28px, 4vw, 48px);
     font-weight: 650;
     line-height: 0.98;
     letter-spacing: -0.04em;
@@ -746,7 +728,7 @@ label {
 label {
     gap: 8px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
 }
 
@@ -949,14 +931,14 @@ input:focus {
 
 .legal h1 {
     margin: 0 0 18px;
-    font-size: clamp(48px, 8vw, 88px);
+    font-size: clamp(38px, 6vw, 66px);
     font-weight: 650;
     line-height: 0.94;
     letter-spacing: -0.055em;
 }
 
 .legal-lede {
-    font-size: 18px;
+    font-size: 16px;
 }
 
 .legal h2 {
@@ -964,7 +946,7 @@ input:focus {
     padding-top: 22px;
     border-top: 1px solid var(--line-soft);
     color: var(--text);
-    font-size: 18px;
+    font-size: 16px;
 }
 
 .legal p {
@@ -1013,7 +995,7 @@ input:focus {
 @media (max-width: 560px) {
     .hero h1,
     .page-title {
-        font-size: clamp(48px, 17vw, 72px);
+        font-size: clamp(38px, 14vw, 58px);
     }
 
     .nav {
@@ -1123,7 +1105,7 @@ input:focus {
 .dashboard-metric span,
 .dashboard-metric small {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1131,28 +1113,8 @@ input:focus {
 
 .sidebar-hero h2 {
     margin-top: 6px;
-    font-size: 18px;
+    font-size: 16px;
     line-height: 1.16;
-}
-
-.socket-state {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 14px;
-    border: 1px solid var(--line-soft);
-    border-radius: 999px;
-    padding: 7px 10px;
-    color: var(--muted);
-    background: var(--button-bg);
-    font-size: 12px;
-    font-weight: 800;
-}
-
-.socket-state.connected {
-    border-color: rgba(183, 255, 221, 0.34);
-    color: var(--good);
-    background: rgba(183, 255, 221, 0.08);
 }
 
 .sidebar-nav,
@@ -1174,7 +1136,7 @@ input:focus {
     gap: 10px;
     padding: 0 10px;
     text-align: left;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 750;
 }
 
@@ -1241,24 +1203,10 @@ input:focus {
 }
 
 .dashboard-titlebar h1 {
-    font-size: clamp(32px, 4vw, 52px);
+    font-size: clamp(26px, 3.2vw, 40px);
     font-weight: 650;
     line-height: 1;
     letter-spacing: -0.04em;
-}
-
-.scope-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 30px;
-    margin-top: 14px;
-    border: 1px solid var(--line-soft);
-    border-radius: 999px;
-    padding: 0 11px;
-    color: var(--muted);
-    background: var(--panel-section);
-    font-size: 12px;
-    font-weight: 800;
 }
 
 .dashboard-metrics-grid,
@@ -1316,7 +1264,7 @@ input:focus {
     text-overflow: ellipsis;
     overflow-wrap: anywhere;
     color: var(--text);
-    font-size: clamp(19px, 1.8vw, 24px);
+    font-size: clamp(17px, 1.5vw, 21px);
     line-height: 1.05;
 }
 
@@ -1356,7 +1304,7 @@ input:focus {
 
 .project-card h3 {
     margin-top: 12px;
-    font-size: 20px;
+    font-size: 17px;
 }
 
 .project-card p {
@@ -1502,101 +1450,139 @@ input:focus {
     to { transform: rotate(360deg); }
 }
 
-.workflow-panel {
-    overflow: visible;
+.product-tour {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    pointer-events: none;
+}
+
+.product-tour-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.58);
+    backdrop-filter: blur(2px);
+    pointer-events: auto;
+}
+
+.product-tour-backdrop-segment {
+    inset: auto;
+}
+
+.product-tour-spotlight {
+    position: fixed;
+    z-index: 71;
+    border: 1px solid color-mix(in srgb, var(--accent) 58%, white);
+    border-radius: 18px;
+    box-shadow:
+        0 0 0 9999px rgba(0, 0, 0, 0.34),
+        0 0 34px rgba(255, 107, 53, 0.24),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+    pointer-events: auto;
+    transition: inset 0.18s ease, width 0.18s ease, height 0.18s ease;
+}
+
+.product-tour-card {
+    position: fixed;
+    z-index: 72;
+    width: min(360px, calc(100vw - 32px));
+    border: 1px solid var(--line);
+    border-radius: 20px;
     padding: 18px;
-    margin-bottom: 4px;
+    color: var(--text);
+    background:
+        radial-gradient(circle at 100% 0%, var(--accent-soft), transparent 34%),
+        var(--panel-solid);
+    box-shadow: 0 22px 80px rgba(0, 0, 0, 0.46), inset 0 1px 0 var(--frame-ring);
+    pointer-events: auto;
+    outline: none;
 }
 
-.workflow-toggle {
-    gap: 6px;
-    min-height: 36px;
-    padding: 0 12px;
-    flex-shrink: 0;
+.product-tour-card::before {
+    content: "";
+    position: absolute;
+    top: 24px;
+    width: 14px;
+    height: 14px;
+    border-left: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-solid);
+    transform: rotate(45deg);
 }
 
-.workflow-toggle .toggle-label {
-    display: inline;
+.product-tour-card.placement-right::before {
+    left: -8px;
 }
 
-@media (max-width: 560px) {
-    .workflow-toggle .toggle-label {
-        display: none;
-    }
+.product-tour-card.placement-left::before {
+    right: -8px;
+    transform: rotate(225deg);
 }
 
-.workflow-head .eyebrow {
-    margin-bottom: 10px;
+.product-tour-topline,
+.product-tour-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
 }
 
-.workflow-steps {
+.product-tour-topline > span {
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.product-tour-card h2 {
+    margin: 14px 0 0;
+    font-size: 18px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+
+.product-tour-card p {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.product-tour-progress {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 10px;
+    gap: 6px;
+    margin: 16px 0;
 }
 
-.workflow-step {
-    display: grid;
-    align-content: space-between;
-    gap: 12px;
-    min-height: 210px;
-    border: 1px solid var(--line-soft);
-    border-radius: 14px;
-    padding: 14px;
-    background: var(--panel-section);
+.product-tour-progress span {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--line-soft);
 }
 
-.workflow-step.complete {
-    border-color: rgba(183, 255, 221, 0.34);
+.product-tour-progress span.active {
+    background: linear-gradient(90deg, var(--accent), #f5f0e7);
 }
 
-.workflow-step-number,
-.workflow-step-icon {
-    width: 36px;
-    height: 36px;
-    display: grid;
-    place-items: center;
-    border-radius: 12px;
-    font-size: 13px;
+.product-tour-actions > span {
+    color: var(--subtle);
+    font-size: 12px;
     font-weight: 900;
 }
 
-.workflow-step-number {
-    color: var(--text);
-    background: var(--button-bg);
-}
-
-.workflow-step.complete .workflow-step-number {
-    color: #07100b;
-    background: var(--good);
-}
-
-.workflow-step-icon {
-    color: var(--accent);
-    background: var(--accent-soft);
-}
-
-.workflow-step .button,
-.workflow-step .link-button {
-    width: 100%;
-    min-height: 36px;
-    padding: 0 12px;
-}
-
-.workflow-step-copy h3,
-.workflow-step-copy p {
-    margin: 0;
-}
-
-.workflow-step-copy h3 {
-    font-size: 15px;
-}
-
-.workflow-step-copy p {
-    margin-top: 6px;
+.product-tour-card .ghost-button {
+    min-height: 32px;
+    padding: 0 10px;
     color: var(--muted);
-    font-size: 13px;
-    line-height: 1.5;
+    background: transparent;
+}
+
+.product-tour-card .product-tour-hint {
+    margin-top: 12px;
+    color: var(--subtle);
+    font-size: 11px;
 }
 
 .product-console {
@@ -1704,7 +1690,6 @@ input:focus {
 }
 
 @media (max-width: 1180px) {
-    .workflow-steps,
     .feature-grid,
     .assurance-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1765,12 +1750,7 @@ input:focus {
         padding: 18px 14px 22px;
     }
 
-    .workflow-steps {
-        grid-template-columns: 1fr;
-    }
-
     .dashboard-titlebar,
-    .workflow-step,
     .job-card-main,
     .job-actions,
     .file-item {
@@ -1847,27 +1827,20 @@ input:focus-visible {
     box-shadow: inset 0 1px 0 var(--frame-ring);
 }
 
-.titlebar-status-row,
 .titlebar-actions,
 .filter-summary,
 .project-summary-strip,
 .project-stats-row,
-.file-meta-row,
-.sidebar-stat-row {
+.file-meta-row {
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
-.titlebar-status-row,
 .filter-summary,
 .file-meta-row,
 .project-stats-row {
     flex-wrap: wrap;
-}
-
-.titlebar-status-row {
-    margin-top: 14px;
 }
 
 .titlebar-actions {
@@ -1877,28 +1850,18 @@ input:focus-visible {
     min-width: min(420px, 42vw);
 }
 
-.socket-state.inline {
-    margin-top: 0;
-}
-
-.scope-controls label,
 .list-toolbar label {
     display: grid;
     gap: 7px;
     min-width: 190px;
 }
 
-.scope-controls label > span,
 .list-toolbar label > span {
     color: var(--subtle);
     font-size: 11px;
     font-weight: 900;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-}
-
-.scope-controls.compact label {
-    min-width: 230px;
 }
 
 .operations-grid {
@@ -1931,51 +1894,6 @@ input:focus-visible {
     background: var(--danger);
 }
 
-.sidebar-status-card,
-.sidebar-balance-card {
-    border: 1px solid var(--line-soft);
-    border-radius: 14px;
-    background: var(--panel-section);
-    padding: 14px;
-}
-
-.sidebar-status-card {
-    display: grid;
-    gap: 10px;
-}
-
-.sidebar-stat-row {
-    justify-content: space-between;
-    color: var(--muted);
-    font-size: 13px;
-    font-weight: 750;
-}
-
-.sidebar-stat-row strong {
-    color: var(--text);
-}
-
-.sidebar-balance-card {
-    display: grid;
-    gap: 8px;
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-.sidebar-balance-card svg {
-    color: var(--accent);
-}
-
-.sidebar-balance-card strong {
-    color: var(--text);
-    font-size: 24px;
-    letter-spacing: -0.03em;
-    text-transform: none;
-}
-
 .sidebar-note {
     margin: 0;
     padding: 0 8px;
@@ -1998,6 +1916,14 @@ input:focus-visible {
 
 .list-toolbar.file-toolbar {
     grid-template-columns: minmax(210px, 0.9fr) minmax(260px, 1fr) auto;
+}
+
+.list-toolbar.list-toolbar-simple {
+    grid-template-columns: minmax(150px, 0.55fr) minmax(240px, 1.2fr) auto;
+}
+
+.list-toolbar.file-toolbar.list-toolbar-simple {
+    grid-template-columns: minmax(260px, 1fr) auto;
 }
 
 .search-box {
@@ -2300,6 +2226,264 @@ input:focus-visible {
         var(--panel-card-strong);
 }
 
+.access-management-panel {
+    overflow: hidden;
+}
+
+.access-panel-head {
+    align-items: flex-start;
+}
+
+.access-panel-head .button {
+    flex: 0 0 auto;
+}
+
+.access-guidance-card,
+.access-key-row,
+.access-modal-note,
+.one-time-key-box {
+    border: 1px solid var(--line-soft);
+    border-radius: 16px;
+    background: var(--panel-section);
+}
+
+.access-guidance-card {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px;
+    margin-bottom: 14px;
+}
+
+.access-guidance-card svg,
+.access-key-icon,
+.access-success-icon {
+    color: var(--accent);
+    flex: 0 0 auto;
+}
+
+.access-guidance-card strong,
+.access-modal-note strong {
+    display: block;
+    color: var(--text);
+    font-size: 13px;
+}
+
+.access-guidance-card p {
+    margin: 5px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.access-key-list,
+.access-create-form,
+.access-reveal-state {
+    display: grid;
+    gap: 12px;
+}
+
+.access-key-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: start;
+    padding: 16px;
+    background: var(--panel-card-strong);
+}
+
+.access-key-icon,
+.access-success-icon {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 13px;
+    background: var(--accent-soft);
+}
+
+.access-key-main {
+    min-width: 0;
+    display: grid;
+    gap: 9px;
+}
+
+.access-key-title-row,
+.access-key-meta,
+.access-modal-head,
+.access-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.access-key-title-row {
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.access-key-title-row strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.access-status.active {
+    color: #07100b;
+    background: var(--good);
+}
+
+.access-key-meta {
+    flex-wrap: wrap;
+    color: var(--subtle);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.access-key-meta span:not(:last-child)::after {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    margin-left: 10px;
+    border-radius: 999px;
+    background: var(--line);
+    vertical-align: middle;
+}
+
+.access-key-preview {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+}
+
+.access-key-preview code,
+.one-time-key-box code,
+.access-modal-note code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.access-key-preview code {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line-soft);
+    border-radius: 999px;
+    padding: 0 10px;
+    color: var(--text);
+    background: var(--input-bg);
+    font-size: 12px;
+}
+
+.access-key-preview span {
+    color: var(--subtle);
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.access-key-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.access-modal-overlay {
+    z-index: 80;
+    backdrop-filter: blur(4px);
+}
+
+.access-modal {
+    width: min(540px, 100%);
+    display: grid;
+    gap: 16px;
+    padding: 20px;
+    border-radius: 20px;
+    background:
+        radial-gradient(circle at 92% 0%, var(--accent-soft), transparent 34%),
+        var(--panel-solid);
+}
+
+.access-modal-head {
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.access-modal-head .eyebrow {
+    margin: 0 0 8px;
+}
+
+.access-modal-head h3 {
+    margin: 0;
+    font-size: 19px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+
+.ghost-button {
+    background: transparent;
+}
+
+.access-create-form .muted,
+.access-reveal-state .muted,
+.danger-modal > .muted {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.access-create-form label > span {
+    color: var(--subtle);
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.access-modal-note {
+    display: grid;
+    gap: 5px;
+    padding: 13px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.warning-note {
+    border-color: rgba(255, 107, 53, 0.26);
+    background: var(--accent-soft);
+}
+
+.one-time-key-box {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 12px;
+    background: var(--input-bg);
+}
+
+.one-time-key-box code {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.access-modal-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.access-modal-full-button {
+    width: 100%;
+}
+
+.danger-modal {
+    border-color: rgba(255, 123, 141, 0.32);
+}
+
 @keyframes skeleton-shimmer {
     0% { background-position: 180% 0; }
     100% { background-position: -180% 0; }
@@ -2328,6 +2512,8 @@ input:focus-visible {
     .operations-titlebar,
     .titlebar-actions,
     .panel-head,
+    .access-panel-head,
+    .access-key-row,
     .project-panel-head,
     .queue-panel-head,
     .file-card,
@@ -2339,8 +2525,6 @@ input:focus-visible {
     }
 
     .titlebar-actions,
-    .scope-controls.compact label,
-    .scope-controls label,
     .list-toolbar label,
     .search-box {
         min-width: 0;
@@ -2370,6 +2554,15 @@ input:focus-visible {
         justify-items: start;
     }
 
+    .access-key-actions,
+    .access-key-actions .button {
+        width: 100%;
+    }
+
+    .access-key-actions .button {
+        justify-content: center;
+    }
+
     .file-copy strong {
         white-space: normal;
         overflow-wrap: anywhere;
@@ -2379,6 +2572,8 @@ input:focus-visible {
 @media (max-width: 560px) {
     .operations-titlebar,
     .queue-section,
+    .access-key-row,
+    .access-modal,
     .file-card {
         border-radius: 16px;
         padding: 14px;
@@ -2388,7 +2583,9 @@ input:focus-visible {
     .file-meta-row,
     .project-actions,
     .file-actions,
-    .queue-actions {
+    .queue-actions,
+    .one-time-key-box,
+    .access-modal-actions {
         display: grid;
         grid-template-columns: 1fr;
     }
@@ -2400,8 +2597,32 @@ input:focus-visible {
     .file-actions .button,
     .file-actions .link-button,
     .queue-actions .button,
-    .queue-actions .link-button {
+    .queue-actions .link-button,
+    .access-modal-actions .button,
+    .one-time-key-box .button {
         width: 100%;
         justify-content: center;
+    }
+    .product-tour-card {
+        inset: auto 12px 12px !important;
+        width: auto !important;
+        max-height: min(440px, calc(100vh - 24px));
+        overflow-y: auto;
+        border-radius: 16px;
+        padding: 16px;
+    }
+
+    .product-tour-card::before {
+        display: none;
+    }
+
+    .product-tour-actions {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+    }
+
+    .product-tour-actions .button {
+        min-width: 0;
+        padding: 0 12px;
     }
 }

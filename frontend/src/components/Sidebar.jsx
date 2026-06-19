@@ -1,5 +1,4 @@
-import { Activity, Download, FolderKanban, KeyRound, LayoutDashboard, Radio, WalletCards } from 'lucide-react';
-import { formatUsd } from '../utils/api';
+import { Activity, Download, FolderKanban, KeyRound, LayoutDashboard } from 'lucide-react';
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -12,21 +11,15 @@ const navItems = [
 export default function Sidebar({
   activeView,
   onChangeView,
-  stats,
-  socketConnected,
-  balanceUsd,
 }) {
   return (
     <aside className="dashboard-sidebar">
       <div className="sidebar-section sidebar-hero">
         <div className="sidebar-kicker">RenderSphere</div>
         <h2>Operations workspace</h2>
-        <div className={`socket-state ${socketConnected ? 'connected' : ''}`}>
-          <Radio size={14} /> {socketConnected ? 'Live updates connected' : 'Live updates offline'}
-        </div>
       </div>
 
-      <nav className="sidebar-section sidebar-nav" aria-label="Dashboard navigation">
+      <nav className="sidebar-section sidebar-nav" aria-label="Dashboard navigation" data-tour="sidebar-nav">
         {navItems.map((item) => {
           const Icon = item.icon;
           return (
@@ -43,36 +36,8 @@ export default function Sidebar({
         })}
       </nav>
 
-      <div className="sidebar-section sidebar-status-card">
-        <div className="sidebar-section-head">
-          <span>Workspace status</span>
-        </div>
-        <div className="sidebar-stat-row">
-          <span>Active jobs</span>
-          <strong>{stats.activeJobs}</strong>
-        </div>
-        <div className="sidebar-stat-row">
-          <span>Completed</span>
-          <strong>{stats.completedJobs}</strong>
-        </div>
-        <div className="sidebar-stat-row">
-          <span>Files</span>
-          <strong>{stats.totalFiles}</strong>
-        </div>
-        <div className="sidebar-stat-row">
-          <span>Spend</span>
-          <strong>{formatUsd(stats.totalSpend)}</strong>
-        </div>
-      </div>
-
-      <div className="sidebar-section sidebar-balance-card">
-        <WalletCards size={18} />
-        <span>Starter balance</span>
-        <strong>{formatUsd(balanceUsd)}</strong>
-      </div>
-
       <p className="sidebar-note">
-        Project scoping now lives in each list toolbar so queue and file filters are explicit.
+        Navigate workspace tools without status cards, balance cards, or project-scoped side filters.
       </p>
     </aside>
   );

@@ -1,6 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { formatBalance } from '../utils/api';
 import { LogOut, Moon, Sun } from 'lucide-react';
 
 export default function Navbar({ theme = 'dark', onToggleTheme }) {
@@ -25,12 +24,6 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                 </button>
                 {isApp && (
                     <>
-                        <span className="route-chip">/app</span>
-                        {user && (
-                            <span className="balance-chip">
-                                Balance {formatBalance(user.starterBalanceUsd)}
-                            </span>
-                        )}
                         <span className="account-label">{user?.email || 'Not signed in'}</span>
                         <button className="button" type="button" onClick={logout} title="Sign out">
                             <LogOut size={16} /> Sign out

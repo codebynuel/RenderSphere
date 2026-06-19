@@ -1,4 +1,5 @@
 import { config } from '../../helpers/config.js';
+import { logger, withRequest } from '../../helpers/logger.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
 import { buildPaginationMeta, parseJobStatusFilter, parsePaginationQuery, parseSearchQuery } from './pagination.js';
@@ -22,7 +23,7 @@ function buildJobSearchWhere(search) {
 export function createJobController({ emitJobUpdate = null } = {}) {
   return {
     async listJobs(req, res) {
-      await syncActiveJobsForUser(req.user.id, emitJobUpdate);
+      await syncActiveJobsForUser(req.user.id, emitJobUpdate, { requestId: req.id || req.requestId || null });
 
       const pagination = parsePaginationQuery(req.query);
       const statusFilter = parseJobStatusFilter(req.query.status);
@@ -54,7 +55,7 @@ export function createJobController({ emitJobUpdate = null } = {}) {
     },
 
     async listRenderedFiles(req, res) {
-      await syncActiveJobsForUser(req.user.id, emitJobUpdate);
+      await syncActiveJobsForUser(req.user.id, emitJobUpdate, { requestId: req.id || req.requestId || null });
 
       const pagination = parsePaginationQuery(req.query);
       const search = parseSearchQuery(req.query);
@@ -111,7 +112,7 @@ export function createJobController({ emitJobUpdate = null } = {}) {
         res.end(body);
         return undefined;
       } catch (error) {
-        console.error(`Could not proxy rendered file ${job.resultKey}:`, error);
+        logger.error('Could not proxy rendered file', withRequest(req, { context: 'storage', jobId, resultKey: job.resultKey, error }));
         return res.status(502).json({ error: 'Rendered file is temporarily unavailable' });
       }
     },
@@ -127,8 +128,8 @@ export function createJobController({ emitJobUpdate = null } = {}) {
           return res.json({ status: job.status, stream: [], job: serializeJob(job) });
         }
 
-        const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job));
-        const updatedJob = await persistRunpodStatus(req.user.id, jobId, rpData);
+        const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job), { requestId: req.id || req.requestId || null });
+        const updatedJob = await persistRunpodStatus(req.user.id, jobId, rpData, { requestId: req.id || req.requestId || null });
         if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
 
         if (rpData.status === 'COMPLETED') {
@@ -151,7 +152,7 @@ export function createJobController({ emitJobUpdate = null } = {}) {
 
         return res.json({ status: rpData.status, stream: rpData.stream || [], job: serializeJob(updatedJob || job, rpData) });
       } catch (error) {
-        console.error(error);
+        logger.error('Failed to check render job status', withRequest(req, { context: 'job_status', jobId, providerJobId: providerJobIdForJob(job), error }));
         return res.status(500).json({ error: 'Failed to check status' });
       }
     },

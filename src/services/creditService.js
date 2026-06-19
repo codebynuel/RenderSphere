@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { logger } from '../../helpers/logger.js';
 import { prisma } from '../db.js';
 
 export const CREDIT_TRANSACTION_TYPES = Object.freeze({
@@ -118,7 +119,7 @@ export async function writeCreditAuditEvent({
   metadata = null,
 }) {
   const normalizedActor = normalizeActor(actor);
-  return client.creditAuditEvent.create({
+  const auditEvent = await client.creditAuditEvent.create({
     data: {
       eventType: String(eventType || '').trim().slice(0, 160) || 'credit.audit_event',
       targetUserId,
@@ -131,6 +132,19 @@ export async function writeCreditAuditEvent({
       metadata,
     },
   });
+
+  logger.info('Credit audit event written', {
+    context: 'billing_audit',
+    requestId: metadata?.requestId || null,
+    eventType: auditEvent.eventType,
+    targetUserId,
+    creditTransactionId,
+    jobId,
+    referenceType,
+    referenceId,
+  });
+
+  return auditEvent;
 }
 
 export async function applyCreditTransaction({
@@ -210,10 +224,24 @@ export async function applyCreditTransaction({
       idempotencyKey: normalizedIdempotencyKey,
       metadata: {
         ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {}),
-        amountUsd: transaction.amountUsd,
-        balanceBeforeUsd: transaction.balanceBeforeUsd,
-        balanceAfterUsd: transaction.balanceAfterUsd,
+        amountUsd: decimalLikeToString(transaction.amountUsd),
+        balanceBeforeUsd: decimalLikeToString(transaction.balanceBeforeUsd),
+        balanceAfterUsd: decimalLikeToString(transaction.balanceAfterUsd),
       },
+    });
+
+    logger.info('Credit transaction applied', {
+      context: 'billing_ledger',
+      requestId: metadata?.requestId || null,
+      userId,
+      transactionId: transaction.id,
+      type,
+      jobId,
+      referenceType,
+      referenceId,
+      idempotencyKey: normalizedIdempotencyKey,
+      amountUsd: decimalLikeToString(transaction.amountUsd),
+      balanceAfterUsd: decimalLikeToString(transaction.balanceAfterUsd),
     });
 
     return { transaction, idempotent: false };
@@ -246,6 +274,16 @@ export async function reserveRenderCredits({
   actor = { actorType: CREDIT_ACTOR_TYPES.SYSTEM },
   metadata = {},
 }) {
+  logger.info('Reserving render credits', {
+    context: 'billing',
+    requestId: metadata?.requestId || null,
+    userId,
+    jobId,
+    referenceId,
+    amountUsd,
+    estimatedCostUsd,
+    maxBudgetUsd,
+  });
   return applyCreditTransaction({
     client,
     userId,
@@ -274,6 +312,15 @@ export async function releaseRenderReservation({
   actor = { actorType: CREDIT_ACTOR_TYPES.SYSTEM },
   metadata = {},
 }) {
+  logger.info('Releasing render credit reservation', {
+    context: 'billing',
+    requestId: metadata?.requestId || null,
+    userId,
+    jobId,
+    referenceId,
+    amountUsd,
+    reason: metadata?.reason || metadata?.status || undefined,
+  });
   return applyCreditTransaction({
     client,
     userId,
@@ -299,6 +346,15 @@ export async function chargeRenderCredits({
   actor = { actorType: CREDIT_ACTOR_TYPES.SYSTEM },
   metadata = {},
 }) {
+  logger.info('Charging render credits', {
+    context: 'billing',
+    requestId: metadata?.requestId || null,
+    userId,
+    jobId,
+    amountUsd,
+    billableSeconds,
+    pricePerSecondUsd,
+  });
   return applyCreditTransaction({
     client,
     userId,

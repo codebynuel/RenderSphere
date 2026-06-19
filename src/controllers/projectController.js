@@ -24,7 +24,7 @@ export function createProjectController() {
           error.status = 409;
           error.message = 'A project with this name already exists';
         }
-        sendControllerError(res, error, 'Failed to create project');
+        sendControllerError(req, res, error, 'Failed to create project');
       }
     },
 
@@ -37,7 +37,7 @@ export function createProjectController() {
           error.status = 409;
           error.message = 'A project with this name already exists';
         }
-        sendControllerError(res, error, 'Failed to update project');
+        sendControllerError(req, res, error, 'Failed to update project');
       }
     },
 
@@ -46,7 +46,7 @@ export function createProjectController() {
         const result = await deleteProjectForUser(req.user.id, req.params.projectId);
         res.json(result);
       } catch (error) {
-        sendControllerError(res, error, 'Failed to delete project');
+        sendControllerError(req, res, error, 'Failed to delete project');
       }
     },
   };

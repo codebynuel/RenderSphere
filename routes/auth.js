@@ -14,6 +14,7 @@ import {
   verifyPassword,
 } from '../src/services/authService.js';
 import { config } from '../helpers/config.js';
+import { logger, withRequest } from '../helpers/logger.js';
 import { prisma } from '../src/db.js';
 import { buildPaginationMeta, parsePaginationQuery } from '../src/controllers/pagination.js';
 
@@ -55,7 +56,7 @@ function createAuthRouter({
         return res.status(409).json({ error: 'An account with this email already exists' });
       }
 
-      console.error('Register Error:', error);
+      logger.error('Register failed', withRequest(req, { context: 'auth', error }));
       return res.status(500).json({ error: 'Failed to create account' });
     }
   });
@@ -74,7 +75,7 @@ function createAuthRouter({
       setSessionCookie(req, res, session.token);
       return res.json({ user: publicUser(user), token: session.token });
     } catch (error) {
-      console.error('Login Error:', error);
+      logger.error('Login failed', withRequest(req, { context: 'auth', error }));
       return res.status(500).json({ error: 'Failed to log in' });
     }
   });
@@ -116,7 +117,7 @@ function createAuthRouter({
       const created = await createAccessKeyForUser(req.user.id, requestedName);
       return res.status(201).json({ accessKey: publicAccessKey(created.accessKey, created.token) });
     } catch (error) {
-      console.error('Access key create error:', error);
+      logger.error('Access key create failed', withRequest(req, { context: 'auth', error }));
       return res.status(500).json({ error: 'Failed to create access key' });
     }
   });
@@ -133,7 +134,7 @@ function createAuthRouter({
       if (deleted.count === 0) return res.status(404).json({ error: 'Access key not found' });
       return res.json({ success: true });
     } catch (error) {
-      console.error('Access key delete error:', error);
+      logger.error('Access key delete failed', withRequest(req, { context: 'auth', accessKeyId: req.params.accessKeyId, error }));
       return res.status(500).json({ error: 'Failed to delete access key' });
     }
   });
@@ -143,7 +144,7 @@ function createAuthRouter({
       const created = await createAccessKeyForUser(req.user.id, 'Access key');
       return res.json({ apiKey: created.token, accessKey: publicAccessKey(created.accessKey, created.token) });
     } catch (error) {
-      console.error('Legacy API key create error:', error);
+      logger.error('Legacy API key create failed', withRequest(req, { context: 'auth', error }));
       return res.status(500).json({ error: 'Failed to create access key' });
     }
   });

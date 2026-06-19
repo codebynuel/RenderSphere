@@ -7,6 +7,9 @@ import { fileURLToPath } from 'url';
 import { Server as SocketIOServer } from 'socket.io';
 
 import { ACTIVE_JOB_STATUSES, SESSION_COOKIE_NAME, config, validateRequiredEnv } from './helpers/config.js';
+import { publicErrorPayload, statusCodeForError } from './helpers/errors.js';
+import { logger } from './helpers/logger.js';
+import { buildOperationalSnapshot, requestIdMiddleware, requestLoggingMiddleware, responseRequestIdMiddleware } from './helpers/observability.js';
 import { accountRateLimitKey, authAttemptRateLimitKey, createRateLimiter, createRateLimitStore, requireSameOriginForBrowserWrites, securityHeaders } from './helpers/security.js';
 import { prisma } from './src/db.js';
 import { authenticateToken, parseCookieHeader, requireAdmin, requireAuth } from './src/services/authService.js';
@@ -31,9 +34,12 @@ const publicHttpPort = Number(process.env.PUBLIC_HTTP_PORT || 0);
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
+app.use(requestIdMiddleware);
+app.use(responseRequestIdMiddleware);
 app.use(securityHeaders);
 app.use(requireSameOriginForBrowserWrites);
 app.use(express.json({ limit: '1mb' }));
+app.use(requestLoggingMiddleware);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const rateLimitStore = createRateLimitStore({
@@ -102,7 +108,7 @@ io.use(async (socket, next) => {
 
 io.on('connection', (socket) => {
   socket.join(`user:${socket.user.id}`);
-  console.log(`Socket connected for user ${socket.user.id}`);
+  logger.info('Socket connected', { context: 'socket', userId: socket.user.id });
 
   socket.on('subscribe_job', async (jobId) => {
     if (typeof jobId !== 'string' || !jobId.trim()) return;
@@ -115,15 +121,15 @@ io.on('connection', (socket) => {
   });
 });
 
-app.use(createSystemRouter({ config }));
-app.use('/api/admin', createAdminRouter({ requireAdmin }));
+app.use(createSystemRouter({ buildOperationalSnapshot, config }));
+app.use('/api/admin', createAdminRouter({ buildOperationalSnapshot, requireAdmin }));
 app.use('/api/auth', createAuthRouter({ accountRateLimit, authRateLimit, requireAuth }));
 app.use('/api/projects', createProjectsRouter({ accountRateLimit, requireAuth }));
 app.use('/api', createJobsRouter({ emitJobUpdate, requireAuth }));
 app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth }));
 
 app.use((req, res, next) => {
-  const systemPaths = new Set(['/healthz', '/readyz']);
+  const systemPaths = new Set(['/healthz', '/readyz', '/metrics']);
   if (req.method === 'GET' && !req.path.startsWith('/api') && !systemPaths.has(req.path)) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
@@ -133,9 +139,23 @@ app.use((req, res, next) => {
 
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
-  console.error(error);
-  return res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+  const status = statusCodeForError(error);
+  logger.error('Unhandled request error', {
+    ...loggerRequestMeta(req),
+    statusCode: status,
+    error,
+  });
+  return res.status(status).json(publicErrorPayload(error, req, 'Internal server error', { production: config.isProduction }));
 });
+
+function loggerRequestMeta(req) {
+  return {
+    requestId: req?.id || req?.requestId || null,
+    method: req?.method,
+    path: req?.originalUrl || req?.url,
+    userId: req?.user?.id || undefined,
+  };
+}
 
 const activeJobPollIntervalMs = Number(process.env.RENDERSPHERE_JOB_POLL_INTERVAL_MS || 5000);
 const activeJobPoller = setInterval(async () => {
@@ -152,16 +172,21 @@ const activeJobPoller = setInterval(async () => {
         const updatedJob = await persistRunpodStatus(job.userId, job.jobId, rpData);
         emitJobUpdate(updatedJob || job, rpData);
       } catch (error) {
-        console.error(`Could not poll RunPod job ${job.jobId}:`, error.message || error);
+        logger.warn('Could not poll RunPod job', {
+          context: 'job_poller',
+          jobId: job.jobId,
+          providerJobId: providerJobIdForJob(job),
+          error,
+        });
       }
     }));
   } catch (error) {
-    console.error('Active job poller failed:', error);
+    logger.error('Active job poller failed', { context: 'job_poller', error });
   }
 }, activeJobPollIntervalMs);
 
 function listen(httpServer, listenPort, label) {
-  httpServer.listen(listenPort, () => console.log(`${label} running on port ${listenPort}`));
+  httpServer.listen(listenPort, () => logger.info('HTTP listener started', { context: 'server', label, port: listenPort }));
 }
 
 listen(server, port, 'Gateway');
@@ -171,7 +196,7 @@ if (Number.isInteger(publicHttpPort) && publicHttpPort > 0) {
 }
 
 async function shutdown(signal) {
-  console.log(`${signal} received; shutting down.`);
+  logger.info('Shutdown signal received', { context: 'server', signal });
   clearInterval(activeJobPoller);
   io.close();
   server.close(async () => {

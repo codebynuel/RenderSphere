@@ -1,3 +1,7 @@
+import { config } from '../../helpers/config.js';
+import { publicErrorPayload, statusCodeForError } from '../../helpers/errors.js';
+import { logger, withRequest } from '../../helpers/logger.js';
+
 export function asyncHandler(handler) {
   return async (req, res, next) => {
     try {
@@ -8,8 +12,10 @@ export function asyncHandler(handler) {
   };
 }
 
-export function sendControllerError(res, error, fallbackMessage = 'Request failed') {
-  const status = Number(error.status || error.statusCode || 500);
-  if (status >= 500) console.error(error);
-  return res.status(status).json({ error: error.message || fallbackMessage });
+export function sendControllerError(req, res, error, fallbackMessage = 'Request failed') {
+  const status = statusCodeForError(error);
+  if (status >= 500) {
+    logger.error('Controller error', withRequest(req, { statusCode: status, error }));
+  }
+  return res.status(status).json(publicErrorPayload(error, req, fallbackMessage, { production: config.isProduction }));
 }

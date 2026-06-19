@@ -70,12 +70,18 @@ const serverEnv = {
   RENDERSPHERE_RENDER_RATE_LIMIT_MAX: '100',
   RENDERSPHERE_AUTH_RATE_LIMIT_WINDOW_MS: '60000',
   RENDERSPHERE_AUTH_RATE_LIMIT_MAX: '100',
+  RENDERSPHERE_LOG_LEVEL: 'debug',
+  RENDERSPHERE_LOG_FORMAT: 'json',
+  RENDERSPHERE_REQUEST_LOGGING: 'true',
+  RENDERSPHERE_PUBLIC_METRICS: 'false',
 };
 
 await runCommand('npx', ['prisma', 'generate'], serverEnv);
 await runCommand('npx', ['prisma', 'db', 'push', '--force-reset'], serverEnv);
 Object.assign(process.env, serverEnv);
 
+const { publicErrorPayload } = await import('../helpers/errors.js');
+const { logger, redactSecrets } = await import('../helpers/logger.js');
 const { prisma } = await import('../src/db.js');
 const { CREDIT_TRANSACTION_TYPES, applyCreditTransaction, chargeRenderCredits, grantCredits } = await import('../src/services/creditService.js');
 const { persistRunpodStatus } = await import('../src/services/jobService.js');
@@ -125,6 +131,22 @@ async function verifyRunpodRetryHelper() {
 
 await verifyRunpodRetryHelper();
 
+const sanitizedPayload = publicErrorPayload(new Error('database password leaked internally'), { requestId: 'smoke-helper-request' }, 'Internal server error', { production: true });
+if (sanitizedPayload.error !== 'Internal server error' || sanitizedPayload.requestId !== 'smoke-helper-request') {
+  throw new Error('Production error payload helper did not sanitize an internal server error.');
+}
+
+const safeClientPayload = publicErrorPayload(Object.assign(new Error('Project name required'), { status: 400 }), { requestId: 'smoke-helper-request' }, 'Request failed', { production: true });
+if (safeClientPayload.error !== 'Project name required') {
+  throw new Error('Production error payload helper did not preserve a client-safe validation error.');
+}
+
+const redacted = redactSecrets({ Authorization: 'Bearer smoke-secret-token', nested: { apiKey: 'rs_live_secret' } });
+if (redacted.Authorization !== '[REDACTED]' || redacted.nested.apiKey !== '[REDACTED]') {
+  throw new Error('Logger redaction helper did not redact secret-like keys.');
+}
+logger.info('Smoke observability helper check', { context: 'smoke_test', requestId: 'smoke-helper-request' });
+
 const server = spawn(process.execPath, ['server.js'], {
   cwd: process.cwd(),
   env: serverEnv,
@@ -166,6 +188,19 @@ async function rawRequest(pathname, options = {}) {
   return { response, data };
 }
 
+function assertRequestId(result, label, expectedRequestId = null) {
+  const headerRequestId = result.response.headers.get('x-request-id');
+  if (!headerRequestId) throw new Error(`${label} did not include X-Request-Id.`);
+  if (!result.data?.requestId) throw new Error(`${label} JSON body did not include requestId.`);
+  if (result.data.requestId !== headerRequestId) {
+    throw new Error(`${label} response header/body request IDs did not match.`);
+  }
+  if (expectedRequestId && headerRequestId !== expectedRequestId) {
+    throw new Error(`${label} did not echo the expected inbound request ID.`);
+  }
+  return headerRequestId;
+}
+
 async function waitForServer() {
   const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
@@ -183,9 +218,38 @@ async function waitForServer() {
 try {
   await waitForServer();
 
-  const initialSummary = await request('/api/admin/summary', {
+  const health = await rawRequest('/healthz', { headers: { 'X-Request-Id': 'smoke-request-health-0001' } });
+  if (!health.response.ok || health.data.status !== 'ok') throw new Error('/healthz did not return ok status.');
+  assertRequestId(health, '/healthz', 'smoke-request-health-0001');
+
+  const readiness = await rawRequest('/readyz');
+  if (!readiness.response.ok || readiness.data.status !== 'ready' || typeof readiness.data.alertHints?.databaseUnavailable !== 'boolean') {
+    throw new Error('/readyz did not return alert-ready readiness information.');
+  }
+  assertRequestId(readiness, '/readyz');
+
+  const publicMetrics = await rawRequest('/metrics');
+  if (publicMetrics.response.status !== 404) throw new Error(`Expected public /metrics to be disabled by default, got ${publicMetrics.response.status}.`);
+  assertRequestId(publicMetrics, '/metrics disabled response');
+
+  const initialSummaryResult = await rawRequest('/api/admin/summary', {
     headers: { Authorization: 'Bearer smoke-admin' },
   });
+  if (!initialSummaryResult.response.ok) {
+    throw new Error(`GET /api/admin/summary failed: ${initialSummaryResult.response.status} ${initialSummaryResult.data.error || ''}`);
+  }
+  assertRequestId(initialSummaryResult, '/api/admin/summary');
+  const initialSummary = initialSummaryResult.data;
+
+  const initialMetrics = await rawRequest('/api/admin/metrics', {
+    headers: { Authorization: 'Bearer smoke-admin' },
+  });
+  if (!initialMetrics.response.ok) throw new Error(`GET /api/admin/metrics failed: ${initialMetrics.response.status} ${initialMetrics.data.error || ''}`);
+  assertRequestId(initialMetrics, '/api/admin/metrics');
+  if (!Array.isArray(initialMetrics.data.http) || !initialMetrics.data.jobs?.byStatus || !initialMetrics.data.billing?.byState || !initialMetrics.data.providers?.database || initialMetrics.data.readiness?.status !== 'ok') {
+    throw new Error('/api/admin/metrics did not return the expected operational metrics snapshot.');
+  }
+
   if (initialSummary.database !== 'postgres') throw new Error(`Expected postgres database summary, got ${initialSummary.database}.`);
 
   const email = `smoke-${Date.now()}@example.com`;
@@ -196,6 +260,8 @@ try {
   if (!registerResult.response.ok) {
     throw new Error(`POST /api/auth/register failed: ${registerResult.response.status} ${registerResult.data.error || ''}`);
   }
+
+  assertRequestId(registerResult, 'POST /api/auth/register');
 
   const registered = registerResult.data;
   if (!registered.token || !registered.accessKey || registered.user.email !== email) {
@@ -230,7 +296,13 @@ try {
   const me = await request('/api/auth/me', { headers: cookieHeaders });
   if (me.user.email !== email) throw new Error('/api/auth/me returned the wrong user.');
 
-  const appConfig = await request('/api/config');
+  const appConfigResult = await rawRequest('/api/config');
+  if (!appConfigResult.response.ok) throw new Error(`GET /api/config failed: ${appConfigResult.response.status}`);
+  assertRequestId(appConfigResult, '/api/config');
+  const appConfig = appConfigResult.data;
+  if (appConfig.observability?.requestIdHeader !== 'X-Request-Id' || appConfig.observability?.publicMetricsEnabled !== false) {
+    throw new Error('/api/config did not include expected observability configuration.');
+  }
   if (appConfig.limits?.minRenderStartBalanceUsd !== 6) {
     throw new Error(`Expected minimum render start balance 6, got ${appConfig.limits?.minRenderStartBalanceUsd}.`);
   }
@@ -251,6 +323,10 @@ try {
   const invalidProjectPageSize = await rawRequest('/api/projects?pageSize=4', { headers: cookieHeaders });
   if (invalidProjectPageSize.response.status !== 400) {
     throw new Error(`Expected over-limit project page size to return 400, got ${invalidProjectPageSize.response.status}.`);
+  }
+  assertRequestId(invalidProjectPageSize, 'invalid project page-size response');
+  if (!invalidProjectPageSize.data.error?.includes('less than or equal')) {
+    throw new Error('Expected validation error details to remain client-safe in production-style responses.');
   }
 
   const ledgerJobId = `smoke-ledger-${Date.now()}`;
@@ -348,6 +424,7 @@ try {
   if (!underfundedRender.data.error?.includes('Insufficient prepaid credits')) {
     throw new Error(`Expected underfunded render to return a clear prepaid credit error, got ${underfundedRender.data.error || 'no error'}.`);
   }
+  assertRequestId(underfundedRender, 'underfunded render response');
 
   await grantCredits({
     userId: registered.user.id,
@@ -601,6 +678,22 @@ try {
   const userAfterFailure = await prisma.user.findUnique({ where: { id: registered.user.id } });
   if (releasedFailedJob?.billingState !== 'RELEASED' || !failedRelease || Number(userAfterFailure.starterBalanceUsd) !== 12.75) {
     throw new Error('Failed render did not release/refund its reservation hold.');
+  }
+
+  const metrics = await rawRequest('/api/admin/metrics', {
+    headers: { Authorization: 'Bearer smoke-admin' },
+  });
+  if (!metrics.response.ok) throw new Error(`GET /api/admin/metrics after activity failed: ${metrics.response.status} ${metrics.data.error || ''}`);
+  assertRequestId(metrics, '/api/admin/metrics after activity');
+  const triggerRenderMetrics = metrics.data.http.find((item) => item.route === 'POST /api/trigger-render' && ['2xx', '4xx', '5xx'].includes(item.statusClass));
+  if (!triggerRenderMetrics || triggerRenderMetrics.count < 1 || typeof triggerRenderMetrics.avgDurationMs !== 'number') {
+    throw new Error('HTTP metrics did not include trigger-render counts and durations.');
+  }
+  if ((metrics.data.jobs?.byStatus?.COMPLETED || 0) < 1 || (metrics.data.billing?.creditTransactionsByType?.RENDER_CHARGE || 0) < 1) {
+    throw new Error('Operational metrics did not include expected job and billing counts after smoke activity.');
+  }
+  if (metrics.data.billing.unreleasedReservations !== 0) {
+    throw new Error(`Expected no unreleased reservations after terminal smoke jobs, got ${metrics.data.billing.unreleasedReservations}.`);
   }
 
   const summary = await request('/api/admin/summary', {

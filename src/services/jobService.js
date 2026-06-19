@@ -1,4 +1,5 @@
 import { ACTIVE_JOB_STATUSES, VALID_DENOISERS, VALID_ENGINES, VALID_OUTPUT_FORMATS, config } from '../../helpers/config.js';
+import { logger } from '../../helpers/logger.js';
 import { prisma } from '../db.js';
 import { chargeRenderCredits, releaseRenderReservation } from './creditService.js';
 import { fetchRunpodJobStatus, getRunpodExecutionSeconds, getRunpodResultKey } from './runpodService.js';
@@ -381,6 +382,7 @@ export async function releaseJobReservation({
   status = job?.status,
   amountUsd = unreleasedReservationAmount(job),
   extraMetadata = {},
+  requestId = extraMetadata?.requestId || null,
 }) {
   const releaseAmount = roundMoney(amountUsd);
   if (!job || releaseAmount <= 0 || job.reservationReleasedAt) return null;
@@ -394,6 +396,7 @@ export async function releaseJobReservation({
     jobId: persistedJobId,
     amountUsd: releaseAmount,
     metadata: {
+      requestId,
       reason,
       status,
       reservedCreditsUsd: reservedAmount(job),
@@ -426,7 +429,7 @@ export function jobIsProviderDispatched(job) {
   return Boolean(providerJobIdForJob(job) && job?.dispatchStatus === 'DISPATCHED');
 }
 
-export async function persistRunpodStatus(userId, jobId, rpData) {
+export async function persistRunpodStatus(userId, jobId, rpData, { requestId = null } = {}) {
   const status = rpData.status || 'UNKNOWN';
   const resultKey = getRunpodResultKey(rpData);
   const progress = extractProgressFromRunpodData(rpData);
@@ -459,6 +462,8 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
     updateData.cancelledAt = job.cancelledAt || new Date();
   }
 
+  logger.debug('Persisting RunPod status', { context: 'job_status', requestId, userId, jobId, status, resultKey });
+
   return prisma.$transaction(async (tx) => {
     if (status === 'COMPLETED' && updateData.resultKey && !job.billedAt) {
       const billableSeconds = getRunpodExecutionSeconds(rpData, job);
@@ -489,6 +494,17 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
       });
 
       if (billedJob.count > 0) {
+        logger.info('Settling completed render billing', {
+          context: 'billing',
+          requestId,
+          userId,
+          jobId,
+          billableSeconds,
+          priceUsd,
+          uncappedPriceUsd,
+          maxBudgetUsd,
+          releaseAmount,
+        });
         const currentJob = { ...job, billingMetadata };
         if (releaseAmount > 0) {
           await releaseJobReservation({
@@ -497,7 +513,7 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
             reason: 'completed',
             status,
             amountUsd: releaseAmount,
-            extraMetadata: { chargedUsd: priceUsd, uncappedPriceUsd, maxBudgetUsd },
+            extraMetadata: { requestId, chargedUsd: priceUsd, uncappedPriceUsd, maxBudgetUsd },
           });
         }
 
@@ -509,20 +525,21 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
             amountUsd: priceUsd,
             billableSeconds,
             pricePerSecondUsd: config.renderPricePerSecondUsd,
-            metadata: { status, resultKey: updateData.resultKey, uncappedPriceUsd, maxBudgetUsd, reservationReleasedUsd: releaseAmount },
+            metadata: { requestId, status, resultKey: updateData.resultKey, uncappedPriceUsd, maxBudgetUsd, reservationReleasedUsd: releaseAmount },
           });
         }
 
         await tx.job.updateMany({ where: { jobId, userId }, data: { billingState: 'SETTLED', billingMetadata } });
       }
     } else if ((status === 'FAILED' || status === 'CANCELLED') && !job.reservationReleasedAt) {
+      logger.info('Releasing render reservation after terminal provider status', { context: 'billing', requestId, userId, jobId, status });
       await tx.job.updateMany({ where: { jobId, userId }, data: { ...updateData, billingState: 'RELEASING' } });
       await releaseJobReservation({
         client: tx,
         job,
         reason: status.toLowerCase(),
         status,
-        extraMetadata: { error: updateData.error || null },
+        extraMetadata: { requestId, error: updateData.error || null },
       });
     } else {
       await tx.job.updateMany({ where: { jobId, userId }, data: updateData });
@@ -532,7 +549,7 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
   });
 }
 
-export async function syncActiveJobsForUser(userId, emitJobUpdate = null) {
+export async function syncActiveJobsForUser(userId, emitJobUpdate = null, { requestId = null } = {}) {
   const syncableJobs = await prisma.job.findMany({
     where: {
       userId,
@@ -547,11 +564,11 @@ export async function syncActiveJobsForUser(userId, emitJobUpdate = null) {
   await Promise.all(syncableJobs.map(async (job) => {
     try {
       if (!jobIsProviderDispatched(job)) return;
-      const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job));
-      const updatedJob = await persistRunpodStatus(userId, job.jobId, rpData);
+      const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job), { requestId });
+      const updatedJob = await persistRunpodStatus(userId, job.jobId, rpData, { requestId });
       if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
     } catch (error) {
-      console.error(`Could not sync render job ${job.jobId}:`, error);
+      logger.warn('Could not sync render job', { context: 'job_sync', requestId, userId, jobId: job.jobId, providerJobId: providerJobIdForJob(job), error });
     }
   }));
 }

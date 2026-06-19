@@ -1,5 +1,6 @@
 import { config } from '../../helpers/config.js';
 import { readResponseJson } from '../../helpers/http.js';
+import { logger } from '../../helpers/logger.js';
 
 export class RunpodProviderError extends Error {
   constructor(message, { status = 502, data = null, code = 'RUNPOD_PROVIDER_ERROR', retryable = false, operation = 'runpod_request', cause = null } = {}) {
@@ -105,6 +106,7 @@ async function runpodFetch(pathname, {
   timeoutMs = config.runpodRequestTimeoutMs,
   retries = 0,
   retryUnsafe = false,
+  requestId = null,
 } = {}) {
   const maxAttempts = Math.max(1, Number(retries) + 1);
   let lastError = null;
@@ -124,12 +126,27 @@ async function runpodFetch(pathname, {
       clearTimeout(timeout);
 
       if (!response.ok) throw classifyProviderError({ status: response.status, data, operation });
+      if (attempt > 1) {
+        logger.info('RunPod request recovered after retry', { context: 'runpod', requestId, operation, attempt, statusCode: response.status });
+      }
       return { response, data };
     } catch (error) {
       clearTimeout(timeout);
       lastError = error instanceof RunpodProviderError
         ? error
         : classifyProviderError({ operation, cause: error });
+
+      logger.warn('RunPod request failed', {
+        context: 'runpod',
+        requestId,
+        operation,
+        attempt,
+        maxAttempts,
+        statusCode: lastError.status,
+        code: lastError.code,
+        retryable: lastError.retryable,
+        error: lastError,
+      });
 
       const mayRetryMethod = method === 'GET' || method === 'HEAD' || method === 'DELETE' || retryUnsafe;
       if (attempt >= maxAttempts || !lastError.retryable || !mayRetryMethod) break;
@@ -142,15 +159,16 @@ async function runpodFetch(pathname, {
   throw lastError;
 }
 
-export async function fetchRunpodJobStatus(providerJobId) {
+export async function fetchRunpodJobStatus(providerJobId, { requestId = null } = {}) {
   const { data } = await runpodFetch(`/status/${encodeURIComponent(providerJobId)}`, {
     operation: 'status',
     retries: config.runpodStatusMaxRetries,
+    requestId,
   });
   return data;
 }
 
-export async function startRunpodRender(input, { idempotencyKey = null } = {}) {
+export async function startRunpodRender(input, { idempotencyKey = null, requestId = null } = {}) {
   if (mockRunpodEnabled()) {
     const failurePattern = mockDispatchFailurePattern();
     if (failurePattern && String(input?.fileKey || '').includes(failurePattern)) {
@@ -174,6 +192,7 @@ export async function startRunpodRender(input, { idempotencyKey = null } = {}) {
     method: 'POST',
     operation: 'dispatch',
     retries: 0,
+    requestId,
     headers: {
       'Content-Type': 'application/json',
       ...(idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {}),
@@ -184,7 +203,7 @@ export async function startRunpodRender(input, { idempotencyKey = null } = {}) {
   return data;
 }
 
-export async function cancelRunpodJob(providerJobId) {
+export async function cancelRunpodJob(providerJobId, { requestId = null } = {}) {
   if (mockRunpodEnabled()) return { ok: true, status: 200, data: { id: providerJobId, status: 'CANCELLED' } };
 
   try {
@@ -192,6 +211,7 @@ export async function cancelRunpodJob(providerJobId) {
       method: 'DELETE',
       operation: 'cancel',
       retries: config.runpodCancelMaxRetries,
+      requestId,
     });
     return { ok: true, status: response.status, data };
   } catch (error) {

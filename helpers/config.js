@@ -20,6 +20,8 @@ const PRODUCTION_REQUIRED_ENV_VARS = [
 ];
 
 const VALID_RATE_LIMIT_STORES = new Set(['memory', 'redis']);
+const VALID_LOG_LEVELS = new Set(['debug', 'info', 'warn', 'error', 'silent']);
+const VALID_LOG_FORMATS = new Set(['auto', 'json', 'pretty']);
 const VALID_ENGINES = new Set(['CYCLES', 'BLENDER_EEVEE_NEXT']);
 const VALID_OUTPUT_FORMATS = new Set(['PNG', 'JPEG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER']);
 const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
@@ -46,6 +48,19 @@ function parseNonNegativeNumberEnv(name, fallback) {
   const value = Number(process.env[name]);
   if (!Number.isFinite(value) || value < 0) return fallback;
   return value;
+}
+
+function parseBooleanEnv(name, fallback = false) {
+  const value = String(process.env[name] || '').trim().toLowerCase();
+  if (!value) return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+  if (['0', 'false', 'no', 'off'].includes(value)) return false;
+  return fallback;
+}
+
+function normalizedChoiceEnv(name, allowed, fallback) {
+  const value = String(process.env[name] || '').trim().toLowerCase();
+  return allowed.has(value) ? value : fallback;
 }
 
 function isProductionEnv() {
@@ -96,6 +111,12 @@ const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   isProduction: isProductionEnv(),
   publicUrl: process.env.RENDERSPHERE_PUBLIC_URL || '',
+  logLevel: normalizedChoiceEnv('RENDERSPHERE_LOG_LEVEL', VALID_LOG_LEVELS, isProductionEnv() ? 'info' : 'debug'),
+  logFormat: normalizedChoiceEnv('RENDERSPHERE_LOG_FORMAT', VALID_LOG_FORMATS, 'auto') === 'auto'
+    ? (isProductionEnv() ? 'json' : 'pretty')
+    : normalizedChoiceEnv('RENDERSPHERE_LOG_FORMAT', VALID_LOG_FORMATS, 'auto'),
+  requestLoggingEnabled: parseBooleanEnv('RENDERSPHERE_REQUEST_LOGGING', true),
+  publicMetricsEnabled: parseBooleanEnv('RENDERSPHERE_PUBLIC_METRICS', false),
   maxUploadBytes: parsePositiveIntegerEnv('RENDERSPHERE_MAX_UPLOAD_MB', DEFAULT_MAX_UPLOAD_MB) * MB,
   defaultPageSize: parsePositiveIntegerEnv('RENDERSPHERE_DEFAULT_PAGE_SIZE', 25),
   maxPageSize: parsePositiveIntegerEnv('RENDERSPHERE_MAX_PAGE_SIZE', 100),
@@ -150,6 +171,14 @@ function environmentValidation({ production = config.isProduction } = {}) {
     invalid.push('RENDERSPHERE_RATE_LIMIT_REDIS_URL is required when RENDERSPHERE_RATE_LIMIT_STORE=redis');
   }
 
+  if (!VALID_LOG_LEVELS.has(config.logLevel)) {
+    invalid.push('RENDERSPHERE_LOG_LEVEL must be debug, info, warn, error, or silent');
+  }
+
+  if (!VALID_LOG_FORMATS.has(config.logFormat)) {
+    invalid.push('RENDERSPHERE_LOG_FORMAT must be auto, json, or pretty');
+  }
+
   if (config.defaultPageSize > config.maxPageSize) {
     invalid.push('RENDERSPHERE_DEFAULT_PAGE_SIZE must be less than or equal to RENDERSPHERE_MAX_PAGE_SIZE');
   }
@@ -184,6 +213,10 @@ function getEnvironmentReadiness({ production = config.isProduction } = {}) {
     publicUrlConfigured: envPresent('RENDERSPHERE_PUBLIC_URL'),
     rateLimitStore: config.rateLimitStore,
     redisRateLimitConfigured: config.rateLimitStore === 'redis' ? Boolean(config.rateLimitRedisUrl) : null,
+    logLevel: config.logLevel,
+    logFormat: config.logFormat,
+    requestLoggingEnabled: config.requestLoggingEnabled,
+    publicMetricsEnabled: config.publicMetricsEnabled,
   };
 }
 
@@ -208,6 +241,8 @@ export {
   SESSION_TTL_MS,
   VALID_DENOISERS,
   VALID_ENGINES,
+  VALID_LOG_FORMATS,
+  VALID_LOG_LEVELS,
   VALID_OUTPUT_FORMATS,
   config,
   environmentValidation,

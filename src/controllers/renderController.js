@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
 import { ACTIVE_JOB_STATUSES, config } from '../../helpers/config.js';
+import { logger, withRequest } from '../../helpers/logger.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
 import { reserveRenderCredits } from '../services/creditService.js';
@@ -62,7 +63,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
 
         return res.json({ uploadUrl, key });
       } catch (error) {
-        console.error(error);
+        logger.error('Failed to generate R2 upload URL', withRequest(req, { context: 'storage', error }));
         return res.status(500).json({ error: 'Failed to generate R2 pre-signed URL' });
       }
     },
@@ -172,6 +173,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               },
               dispatchMetadata: dispatchMetadata({}, {
                 dispatchReference: localJobId,
+                requestId: req.id || req.requestId || null,
                 requestIdempotencyKey: requestIdempotencyKey || null,
                 phase: 'local_job_created',
               }),
@@ -189,6 +191,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
             estimatedCostUsd: costEstimate.estimatedCostUsd,
             maxBudgetUsd: budget.maxBudgetUsd,
             metadata: {
+              requestId: req.id || req.requestId || null,
               fileKey,
               projectId: project?.id || null,
               requestedBudgetUsd: budget.requestedBudgetUsd,
@@ -217,7 +220,11 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
 
         if (emitJobUpdate) emitJobUpdate(job, null);
 
-        const data = await startRunpodRender({ ...runpodInput, dispatchReference: localJobId, idempotencyKey: scopedIdempotencyKey }, { idempotencyKey: scopedIdempotencyKey || localJobId });
+        logger.info('Dispatching render job to provider', withRequest(req, { context: 'render_dispatch', jobId: localJobId, idempotencyKey: scopedIdempotencyKey || localJobId }));
+        const data = await startRunpodRender(
+          { ...runpodInput, dispatchReference: localJobId, idempotencyKey: scopedIdempotencyKey },
+          { idempotencyKey: scopedIdempotencyKey || localJobId, requestId: req.id || req.requestId || null }
+        );
         providerData = data;
         providerJobId = data.id;
         if (!providerJobId) throw new Error('RunPod accepted dispatch without returning a provider job id');
@@ -240,11 +247,11 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         });
 
         if (emitJobUpdate) emitJobUpdate(job, data);
-        console.log(`Render job dispatched. Local Job ID: ${localJobId}; RunPod Job ID: ${providerJobId}`);
+        logger.info('Render job dispatched', withRequest(req, { context: 'render_dispatch', jobId: localJobId, providerJobId }));
         const refreshedUser = await prisma.user.findUnique({ where: { id: req.user.id } });
         return res.json({ success: true, jobId: job.jobId, providerJobId, status: job.status, dispatchStatus: job.dispatchStatus, job: serializeJob(job, data), user: publicUser(refreshedUser) });
       } catch (error) {
-        console.error('Render dispatch error:', error.data || error);
+        logger.error('Render dispatch error', withRequest(req, { context: 'render_dispatch', jobId: job?.jobId || localJobId, providerJobId, error }));
 
         if (job && providerJobId) {
           try {
@@ -278,11 +285,12 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               user: publicUser(refreshedUser),
             });
           } catch (reconcileError) {
-            console.error('RunPod accepted a job but local provider id attachment needs manual reconciliation:', {
-              localJobId: job.jobId,
+            logger.error('RunPod accepted a job but local provider id attachment needs manual reconciliation', withRequest(req, {
+              context: 'render_dispatch',
+              jobId: job.jobId,
               providerJobId,
-              error: reconcileError.message || reconcileError,
-            });
+              error: reconcileError,
+            }));
           }
         } else if (job) {
           try {
@@ -309,14 +317,14 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
                 job: updatedJob,
                 reason: 'dispatch_failed',
                 status: 'DISPATCH_FAILED',
-                extraMetadata: { fileKey, providerStatus: error.status || null, providerRetryable: Boolean(error.retryable) },
+                extraMetadata: { requestId: req.id || req.requestId || null, fileKey, providerStatus: error.status || null, providerRetryable: Boolean(error.retryable) },
               });
 
               return tx.job.findUnique({ where: { jobId: currentJob.jobId }, include: { project: true } });
             });
             if (failedJob && emitJobUpdate) emitJobUpdate(failedJob, null);
           } catch (releaseError) {
-            console.error('Could not release render reservation after dispatch failure:', releaseError);
+            logger.error('Could not release render reservation after dispatch failure', withRequest(req, { context: 'billing', jobId: job.jobId, error: releaseError }));
           }
         }
 
@@ -342,7 +350,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         const providerJobId = job.providerJobId || job.jobId;
         const hasProviderJob = job.dispatchStatus === 'DISPATCHED' && providerJobId;
         const runpodResult = hasProviderJob
-          ? await cancelRunpodJob(providerJobId)
+          ? await cancelRunpodJob(providerJobId, { requestId: req.id || req.requestId || null })
           : { ok: true, status: 200, data: { id: providerJobId, status: 'CANCELLED', localOnly: true } };
         let updatedJob = job;
 
@@ -362,7 +370,13 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               },
               include: { project: true },
             });
-            await releaseJobReservation({ client: tx, job: cancelledJob, reason: 'cancelled', status: 'CANCELLED' });
+            await releaseJobReservation({
+              client: tx,
+              job: cancelledJob,
+              reason: 'cancelled',
+              status: 'CANCELLED',
+              extraMetadata: { requestId: req.id || req.requestId || null },
+            });
             return tx.job.findUnique({ where: { jobId }, include: { project: true } });
           });
           if (emitJobUpdate) emitJobUpdate(updatedJob, runpodResult.data);
@@ -375,7 +389,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
           job: serializeJob(updatedJob, runpodResult.data),
         });
       } catch (error) {
-        console.error('Cancel Error:', error);
+        logger.error('Cancel render job failed', withRequest(req, { context: 'render_cancel', jobId, error }));
         return res.status(500).json({ success: false, error: 'Failed to cancel render job' });
       }
     },

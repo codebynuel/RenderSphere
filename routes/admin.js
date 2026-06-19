@@ -2,7 +2,7 @@ import express from 'express';
 import { ACTIVE_JOB_STATUSES, config } from '../helpers/config.js';
 import { prisma } from '../src/db.js';
 
-function createAdminRouter({ requireAdmin }) {
+function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
   const router = express.Router();
 
   router.use(requireAdmin);
@@ -86,6 +86,11 @@ function createAdminRouter({ requireAdmin }) {
     });
 
     res.json({ jobs });
+  });
+
+  router.get('/metrics', async (req, res) => {
+    const snapshot = await buildOperationalSnapshot();
+    res.json({ ...snapshot, requestId: req.id || req.requestId || null });
   });
 
   router.post('/cleanup-records', async (req, res) => {

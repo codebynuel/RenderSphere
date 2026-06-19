@@ -23,7 +23,7 @@ function limitSummary(config) {
   };
 }
 
-function createSystemRouter({ config }) {
+function createSystemRouter({ buildOperationalSnapshot, config }) {
   const router = express.Router();
 
   router.get('/healthz', (req, res) => {
@@ -31,6 +31,7 @@ function createSystemRouter({ config }) {
       status: 'ok',
       service: 'rendersphere-web',
       uptimeSeconds: Math.round(process.uptime()),
+      requestId: req.id || req.requestId || null,
     });
   });
 
@@ -65,7 +66,19 @@ function createSystemRouter({ config }) {
       status: ready ? 'ready' : 'not_ready',
       service: 'rendersphere-web',
       checks,
+      alertHints: {
+        databaseUnavailable: checks.database.status !== 'ok',
+        environmentInvalid: checks.environment.status !== 'ok',
+        providerConfigurationMissing: !checks.dependencies.r2Configured || !checks.dependencies.runpodConfigured,
+      },
+      requestId: req.id || req.requestId || null,
     });
+  });
+
+  router.get('/metrics', async (req, res) => {
+    if (!config.publicMetricsEnabled) return res.status(404).json({ error: 'Not found', requestId: req.id || req.requestId || null });
+    const snapshot = await buildOperationalSnapshot();
+    return res.json({ ...snapshot, requestId: req.id || req.requestId || null });
   });
 
   router.get('/api/config', (req, res) => {
@@ -74,6 +87,10 @@ function createSystemRouter({ config }) {
       starterBalanceUsd: config.freeRenderCredits,
       inviteRequired: Boolean(config.inviteCode),
       limits: limitSummary(config),
+      observability: {
+        requestIdHeader: 'X-Request-Id',
+        publicMetricsEnabled: config.publicMetricsEnabled,
+      },
     });
   });
 

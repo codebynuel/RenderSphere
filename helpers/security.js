@@ -1,3 +1,5 @@
+import { logger } from './logger.js';
+
 function securityHeaders(req, res, next) {
   const isHttps = req.secure || req.get('x-forwarded-proto') === 'https';
   const csp = [
@@ -100,14 +102,14 @@ class RedisRateLimitStore {
         .then(({ createClient }) => {
           const client = createClient({ url: this.url });
           client.on('error', (error) => {
-            console.error('Redis rate limit store error:', error.message || error);
+            logger.error('Redis rate limit store error', { context: 'rate_limit', error });
           });
           this.client = client;
           return client.connect().then(() => client);
         })
         .catch((error) => {
           this.disabled = true;
-          console.error('Redis rate limit store unavailable; falling back to process memory until restart:', error.message || error);
+          logger.error('Redis rate limit store unavailable; falling back to process memory until restart', { context: 'rate_limit', error });
           return null;
         });
     }
@@ -150,7 +152,7 @@ function createRateLimitStore({ store = 'memory', redisUrl = '', keyPrefix = 're
     };
   }
   if (normalizedStore === 'redis' && !redisUrl) {
-    console.error('Redis rate limit store requested without RENDERSPHERE_RATE_LIMIT_REDIS_URL; using process memory.');
+    logger.warn('Redis rate limit store requested without RENDERSPHERE_RATE_LIMIT_REDIS_URL; using process memory', { context: 'rate_limit' });
   }
   return memoryStore;
 }
@@ -174,7 +176,7 @@ function createRateLimiter({ windowMs, max, message, store = null, keyGenerator 
 
       return next();
     } catch (error) {
-      console.error('Rate limiter failed:', error);
+      logger.error('Rate limiter failed open', { context: 'rate_limit', requestId: req.id || req.requestId || null, scope, error });
       return next();
     }
   };

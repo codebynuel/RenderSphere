@@ -1,6 +1,6 @@
 # RenderSphere Production Deployment Guide
 
-This guide describes the current production model for the RenderSphere web gateway, built frontend, PostgreSQL/Prisma database, and RunPod worker. It intentionally does not cover payment-provider top-ups, observability, legal policies, or multi-instance job polling coordination.
+This guide describes the current production model for the RenderSphere web gateway, built frontend, PostgreSQL/Prisma database, RunPod worker, production logging, health checks, and safe metrics snapshots. It intentionally does not cover payment-provider top-ups, legal policies, or multi-instance job polling coordination.
 
 ## Runtime Components
 
@@ -67,6 +67,10 @@ Recommended web variables:
 - `RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES`
 - `RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES`
 - `RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS`
+- `RENDERSPHERE_LOG_LEVEL`
+- `RENDERSPHERE_LOG_FORMAT`
+- `RENDERSPHERE_REQUEST_LOGGING`
+- `RENDERSPHERE_PUBLIC_METRICS`
 
 Validation rules:
 
@@ -170,14 +174,65 @@ For Docker Compose-style deployments, `docker-compose.prod.example.yml` separate
 
 Before using it, replace placeholder passwords, domain names, and environment values. Prefer secrets management from your deployment platform instead of committing real values.
 
-## Health and Readiness Checks
+## Health, Readiness, Logging, and Metrics
 
-The gateway exposes two unauthenticated operational endpoints and neither returns secret values.
+The gateway exposes operational endpoints that do not return secret values.
 
-- `GET /healthz` is lightweight liveness. It returns process/service status and uptime without querying PostgreSQL.
-- `GET /readyz` is readiness. It checks environment validation, Prisma accessibility, PostgreSQL connectivity, and whether required R2/RunPod configuration groups are present. It returns HTTP 200 when ready and HTTP 503 when not ready.
+- `GET /healthz` is lightweight liveness. It returns process/service status, uptime, and the request ID without querying PostgreSQL.
+- `GET /readyz` is readiness. It checks environment validation, Prisma accessibility, PostgreSQL connectivity, and whether required R2/RunPod configuration groups are present. It returns HTTP 200 when ready and HTTP 503 when not ready, plus alert-ready booleans for database, environment, and provider-configuration failures.
+- `GET /api/admin/metrics` is the default metrics snapshot endpoint and requires `RENDERSPHERE_ADMIN_TOKEN` bearer authentication.
+- `GET /metrics` exposes the same safe JSON snapshot without authentication only when `RENDERSPHERE_PUBLIC_METRICS=true`. Keep this disabled unless the deployment network restricts access to trusted monitoring infrastructure.
 
-Use `/healthz` for container liveness and `/readyz` for load balancer readiness or deployment gates.
+Use `/healthz` for container liveness and `/readyz` for load balancer readiness or deployment gates. Use `/api/admin/metrics` for dashboards and alert evaluation.
+
+### Structured logging
+
+Configure gateway logging with:
+
+- `RENDERSPHERE_LOG_LEVEL=debug|info|warn|error|silent` (`info` in production, `debug` in development by default).
+- `RENDERSPHERE_LOG_FORMAT=auto|json|pretty` (`auto` emits JSON in production and readable text in development).
+- `RENDERSPHERE_REQUEST_LOGGING=true|false` to enable or disable one completion log per HTTP request.
+
+Every HTTP response includes an `X-Request-Id` header and JSON API responses include `requestId`. Incoming `X-Request-Id` or `X-Correlation-Id` values are honored when they are safe identifier strings; otherwise the gateway generates a UUID. Include this ID in incident notes so application logs, provider dispatch logs, billing logs, and client reports can be correlated.
+
+The logger redacts authorization headers, cookies, session/access tokens, secrets, passwords, API keys, and matching token-looking values before writing. Do not add raw provider payloads, R2 signed URLs, access keys, payment tokens, or user-private scene data to log metadata.
+
+### Metrics snapshot contents
+
+The JSON metrics snapshot includes:
+
+- HTTP request counts, average durations, and maximum durations by normalized route and status class.
+- Job counts by status, active-job count, dispatch-status counts, and count of jobs stuck in `DISPATCHING` without a provider ID.
+- Billing-state counts, unreleased reservation count, credit transaction counts by type, and audit-event volume for the last hour.
+- Provider readiness indicators for PostgreSQL, R2 configuration, RunPod configuration, rate-limit store, and Redis rate-limit configuration.
+- Environment readiness summary without secret values.
+
+### Suggested alerts
+
+Start with these alert rules and tune thresholds after observing real traffic:
+
+- `/readyz` returns HTTP 503 for 2 consecutive checks or 2 minutes.
+- `providers.runpod.configured=false` or `providers.r2.configured=false` in production.
+- `jobs.dispatch.dispatchingWithoutProvider > 0` for more than one polling interval plus expected RunPod dispatch latency; this can indicate a manual reconciliation case.
+- `billing.unreleasedReservations > 0` growing for more than 15 minutes, especially with `billing.byState.RELEASING` or `billing.byState.SETTLING` non-zero.
+- `jobs.recentlyFailedJobs` above a baseline threshold, or a sudden increase in `jobs.byStatus.DISPATCH_FAILED`.
+- HTTP `5xx` request count by route increasing over a short window, especially `/api/trigger-render`, `/api/job-status/:jobId`, and `/api/get-upload-url`.
+- Request duration average/max for render dispatch or job-status routes exceeds expected provider timeout windows.
+- Credit audit events unexpectedly drop to zero while render activity continues, or spike outside expected operational actions.
+
+### Incident triage notes
+
+For prepaid credits and render dispatch incidents:
+
+1. Capture the user-visible `requestId`, local `jobId`, `providerJobId` when present, and timestamp.
+2. Check `/api/admin/metrics` for dispatch, job status, and billing-state counts.
+3. Search logs by `requestId`, then by `jobId` and `providerJobId` if the request spans async polling.
+4. If a job is `DISPATCHING` with no `providerJobId`, do not release credits until checking whether RunPod accepted the job but the local attachment failed.
+5. If `billingState` is `RELEASING` or `SETTLING`, inspect credit ledger/audit rows for idempotency keys before retrying any repair action.
+6. If RunPod status polling is failing, compare provider readiness, RunPod dashboard health, and `RUNPOD_*` timeout/retry configuration.
+7. For R2 incidents, confirm signed upload/download errors in logs, bucket credentials/configuration readiness, and object lifecycle rules before re-rendering user jobs.
+
+Do not reset production data during incident response. Prefer idempotent service helpers and additive repair scripts reviewed against ledger/audit records.
 
 ## Frontend Static Assets
 
@@ -281,6 +336,7 @@ Set `RENDERSPHERE_ADMIN_TOKEN` to enable admin endpoints. Use it as a bearer tok
 - `GET /api/admin/summary`
 - `GET /api/admin/users`
 - `GET /api/admin/jobs`
+- `GET /api/admin/metrics`
 - `POST /api/admin/cleanup-records`
 
 These endpoints are JSON-only for the MVP.

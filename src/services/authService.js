@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../db.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, config } from '../../helpers/config.js';
+import { logger, withRequest } from '../../helpers/logger.js';
 import { CREDIT_ACTOR_TYPES, grantCredits } from './creditService.js';
 
 export function nowIso() {
@@ -217,7 +218,7 @@ export async function requireAuth(req, res, next) {
     req.authSource = requestToken.source;
     return next();
   } catch (error) {
-    console.error('Auth Error:', error);
+    logger.error('Authentication middleware failed', withRequest(req, { context: 'auth', error }));
     return res.status(500).json({ error: 'Authentication failed' });
   }
 }

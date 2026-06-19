@@ -123,7 +123,8 @@ app.use('/api', createJobsRouter({ emitJobUpdate, requireAuth }));
 app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth }));
 
 app.use((req, res, next) => {
-  if (req.method === 'GET' && !req.path.startsWith('/api') && req.path !== '/healthz') {
+  const systemPaths = new Set(['/healthz', '/readyz']);
+  if (req.method === 'GET' && !req.path.startsWith('/api') && !systemPaths.has(req.path)) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
     next();

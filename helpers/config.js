@@ -1,7 +1,10 @@
 import 'dotenv/config';
 
-const REQUIRED_ENV_VARS = [
+const BASE_REQUIRED_ENV_VARS = [
   'DATABASE_URL',
+];
+
+const PROVIDER_REQUIRED_ENV_VARS = [
   'CLOUDFLARE_ACCOUNT_ID',
   'R2_ACCESS_KEY_ID',
   'R2_SECRET_ACCESS_KEY',
@@ -10,6 +13,13 @@ const REQUIRED_ENV_VARS = [
   'RUNPOD_API_KEY',
 ];
 
+const PRODUCTION_REQUIRED_ENV_VARS = [
+  ...BASE_REQUIRED_ENV_VARS,
+  ...PROVIDER_REQUIRED_ENV_VARS,
+  'RENDERSPHERE_PUBLIC_URL',
+];
+
+const VALID_RATE_LIMIT_STORES = new Set(['memory', 'redis']);
 const VALID_ENGINES = new Set(['CYCLES', 'BLENDER_EEVEE_NEXT']);
 const VALID_OUTPUT_FORMATS = new Set(['PNG', 'JPEG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER']);
 const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
@@ -38,7 +48,54 @@ function parseNonNegativeNumberEnv(name, fallback) {
   return value;
 }
 
+function isProductionEnv() {
+  return process.env.NODE_ENV === 'production';
+}
+
+function envPresent(name) {
+  return String(process.env[name] || '').trim().length > 0;
+}
+
+function unique(values) {
+  return Array.from(new Set(values));
+}
+
+function requiredEnvVars({ production = isProductionEnv() } = {}) {
+  return production ? unique(PRODUCTION_REQUIRED_ENV_VARS) : unique(BASE_REQUIRED_ENV_VARS);
+}
+
+function groupConfigured(names) {
+  return names.every(envPresent);
+}
+
+function urlEnvError(name, { required = false } = {}) {
+  if (!envPresent(name)) return required ? `${name} is required` : null;
+  try {
+    // eslint-disable-next-line no-new
+    new URL(process.env[name]);
+    return null;
+  } catch {
+    return `${name} must be a valid URL`;
+  }
+}
+
+function databaseUrlError() {
+  if (!envPresent('DATABASE_URL')) return 'DATABASE_URL is required';
+  try {
+    const databaseUrl = new URL(process.env.DATABASE_URL);
+    if (!['postgresql:', 'postgres:'].includes(databaseUrl.protocol)) {
+      return 'DATABASE_URL must use the postgresql:// or postgres:// protocol';
+    }
+    return null;
+  } catch {
+    return 'DATABASE_URL must be a valid PostgreSQL URL';
+  }
+}
+
 const config = {
+  nodeEnv: process.env.NODE_ENV || 'development',
+  isProduction: isProductionEnv(),
+  publicUrl: process.env.RENDERSPHERE_PUBLIC_URL || '',
   maxUploadBytes: parsePositiveIntegerEnv('RENDERSPHERE_MAX_UPLOAD_MB', DEFAULT_MAX_UPLOAD_MB) * MB,
   defaultPageSize: parsePositiveIntegerEnv('RENDERSPHERE_DEFAULT_PAGE_SIZE', 25),
   maxPageSize: parsePositiveIntegerEnv('RENDERSPHERE_MAX_PAGE_SIZE', 100),
@@ -74,21 +131,87 @@ const config = {
   secureCookies: process.env.RENDERSPHERE_SECURE_COOKIES === 'true' || process.env.NODE_ENV === 'production',
 };
 
-function validateRequiredEnv() {
-  const missing = REQUIRED_ENV_VARS.filter((name) => !process.env[name]);
-  if (missing.length) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+function environmentValidation({ production = config.isProduction } = {}) {
+  const required = requiredEnvVars({ production });
+  const missing = required.filter((name) => !envPresent(name));
+  const invalid = [];
+
+  const dbError = databaseUrlError();
+  if (dbError && !missing.includes('DATABASE_URL')) invalid.push(dbError);
+
+  const publicUrlError = urlEnvError('RENDERSPHERE_PUBLIC_URL', { required: production });
+  if (publicUrlError && !missing.includes('RENDERSPHERE_PUBLIC_URL')) invalid.push(publicUrlError);
+
+  if (!VALID_RATE_LIMIT_STORES.has(config.rateLimitStore)) {
+    invalid.push('RENDERSPHERE_RATE_LIMIT_STORE must be memory or redis');
   }
+
+  if (config.rateLimitStore === 'redis' && !config.rateLimitRedisUrl) {
+    invalid.push('RENDERSPHERE_RATE_LIMIT_REDIS_URL is required when RENDERSPHERE_RATE_LIMIT_STORE=redis');
+  }
+
+  if (config.defaultPageSize > config.maxPageSize) {
+    invalid.push('RENDERSPHERE_DEFAULT_PAGE_SIZE must be less than or equal to RENDERSPHERE_MAX_PAGE_SIZE');
+  }
+
+  if (config.defaultRenderMaxBudgetUsd > config.maxRenderBudgetUsd) {
+    invalid.push('RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD must be less than or equal to RENDERSPHERE_MAX_RENDER_BUDGET_USD');
+  }
+
+  if (config.minRenderReservationUsd > config.maxRenderBudgetUsd) {
+    invalid.push('RENDERSPHERE_MIN_RENDER_RESERVATION_USD must be less than or equal to RENDERSPHERE_MAX_RENDER_BUDGET_USD');
+  }
+
+  return {
+    production,
+    required,
+    missing,
+    invalid,
+    ok: missing.length === 0 && invalid.length === 0,
+  };
+}
+
+function getEnvironmentReadiness({ production = config.isProduction } = {}) {
+  const validation = environmentValidation({ production });
+  return {
+    status: validation.ok ? 'ok' : 'error',
+    production,
+    missingRequired: validation.missing,
+    invalid: validation.invalid,
+    requiredPresent: validation.required.filter(envPresent),
+    r2Configured: groupConfigured(['CLOUDFLARE_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']),
+    runpodConfigured: groupConfigured(['RUNPOD_ENDPOINT_ID', 'RUNPOD_API_KEY']),
+    publicUrlConfigured: envPresent('RENDERSPHERE_PUBLIC_URL'),
+    rateLimitStore: config.rateLimitStore,
+    redisRateLimitConfigured: config.rateLimitStore === 'redis' ? Boolean(config.rateLimitRedisUrl) : null,
+  };
+}
+
+function validateRequiredEnv(options = {}) {
+  const validation = environmentValidation(options);
+  if (!validation.ok) {
+    const messages = [];
+    if (validation.missing.length) messages.push(`missing required environment variables: ${validation.missing.join(', ')}`);
+    if (validation.invalid.length) messages.push(validation.invalid.join('; '));
+    throw new Error(`Invalid environment configuration: ${messages.join('; ')}`);
+  }
+  return validation;
 }
 
 export {
   ACTIVE_JOB_STATUSES,
+  BASE_REQUIRED_ENV_VARS,
   MB,
+  PRODUCTION_REQUIRED_ENV_VARS,
+  PROVIDER_REQUIRED_ENV_VARS,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   VALID_DENOISERS,
   VALID_ENGINES,
   VALID_OUTPUT_FORMATS,
   config,
+  environmentValidation,
+  getEnvironmentReadiness,
+  requiredEnvVars,
   validateRequiredEnv,
 };

@@ -1,4 +1,4 @@
-name: Build and Push RunPod Worker
+name: Build Docker Images
 
 on:
   workflow_dispatch:
@@ -6,15 +6,27 @@ on:
     branches: ["main"]
     paths:
       - "Dockerfile"
+      - "Dockerfile.web"
+      - ".dockerignore"
       - "handler.py"
+      - "server.js"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "prisma.config.ts"
+      - "helpers/**"
+      - "routes/**"
+      - "src/**"
+      - "prisma/**"
+      - "frontend/**"
       - ".github/workflows/docker-image.yml"
 
-env:
-  IMAGE_NAME: blender-runpod-worker
-
 jobs:
-  build:
+  worker:
+    name: Build and push RunPod worker
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: blender-runpod-worker
 
     steps:
       - name: Checkout Code
@@ -26,11 +38,28 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and Push Docker Image
+      - name: Build and Push Worker Image
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  web-image-validation:
+    name: Validate web gateway image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Web Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.web
+          push: false
+          tags: rendersphere-web:${{ github.sha }}

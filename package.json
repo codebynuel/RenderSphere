@@ -8,9 +8,14 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "validate:env": "node scripts/validate-production-env.mjs",
+    "frontend:install": "pnpm --dir frontend install --frozen-lockfile",
+    "frontend:build": "pnpm --dir frontend build",
+    "web:build": "npm run frontend:install && npm run frontend:build",
+    "release:prepare": "npm run db:generate && npm run web:build",
     "package:extension": "node scripts/package-extension.mjs",
     "test": "node scripts/smoke-test.mjs",
-    "start:prod": "npm run build --prefix frontend && npm run start"
+    "start:prod": "node server.js"
   },
   "keywords": [],
   "author": "",

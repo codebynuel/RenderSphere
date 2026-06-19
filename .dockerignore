@@ -1,0 +1,15 @@
+# Files not needed in Docker build contexts
+.git
+.github
+.data-dev
+node_modules
+frontend/node_modules
+npm-debug.log*
+pnpm-debug.log*
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage
+dist
+frontend/dist

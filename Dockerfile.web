@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:22-alpine AS backend-deps
+WORKDIR /app
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml prisma.config.ts ./
+COPY prisma ./prisma
+RUN corepack enable && pnpm install --frozen-lockfile
+
+FROM node:22-alpine AS frontend-deps
+WORKDIR /app/frontend
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+
+FROM frontend-deps AS frontend-build
+WORKDIR /app
+COPY frontend ./frontend
+RUN pnpm --dir frontend build
+
+FROM backend-deps AS backend-build
+WORKDIR /app
+COPY . .
+RUN pnpm db:generate
+
+FROM node:22-alpine AS web
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=3000
+
+RUN addgroup -S rendersphere && adduser -S rendersphere -G rendersphere
+
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/package.json ./package.json
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/prisma.config.ts ./prisma.config.ts
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/node_modules ./node_modules
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/helpers ./helpers
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/routes ./routes
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/src ./src
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/prisma ./prisma
+COPY --from=backend-build --chown=rendersphere:rendersphere /app/server.js ./server.js
+COPY --from=frontend-build --chown=rendersphere:rendersphere /app/public ./public
+
+USER rendersphere
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["npm", "run", "start:prod"]

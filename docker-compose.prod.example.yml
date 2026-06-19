@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rendersphere
+      POSTGRES_PASSWORD: change_me
+      POSTGRES_DB: rendersphere
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rendersphere -d rendersphere"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: rendersphere-web:latest
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://rendersphere:change_me@db:5432/rendersphere?schema=public
+      RENDERSPHERE_PUBLIC_URL: https://rendersphere.example.com
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:?set in deployment environment}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?set in deployment environment}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?set in deployment environment}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:?set in deployment environment}
+      RUNPOD_ENDPOINT_ID: ${RUNPOD_ENDPOINT_ID:?set in deployment environment}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:?set in deployment environment}
+    command: ["npx", "prisma", "migrate", "deploy"]
+
+  web:
+    image: rendersphere-web:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://rendersphere:change_me@db:5432/rendersphere?schema=public
+      RENDERSPHERE_PUBLIC_URL: https://rendersphere.example.com
+      RENDERSPHERE_SECURE_COOKIES: "true"
+      RENDERSPHERE_SOCKET_ORIGIN: https://rendersphere.example.com
+      RENDERSPHERE_RATE_LIMIT_STORE: memory
+      RENDERSPHERE_SUPPORT_EMAIL: support@rendersphere.example.com
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:?set in deployment environment}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?set in deployment environment}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?set in deployment environment}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:?set in deployment environment}
+      RUNPOD_ENDPOINT_ID: ${RUNPOD_ENDPOINT_ID:?set in deployment environment}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:?set in deployment environment}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  pgdata:

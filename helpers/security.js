@@ -49,27 +49,152 @@ function requireSameOriginForBrowserWrites(req, res, next) {
   return res.status(403).json({ error: 'Invalid request origin' });
 }
 
-const rateLimitBuckets = new Map();
+function normalizeKeyPart(value) {
+  return String(value || 'anonymous').replace(/[^a-zA-Z0-9:._-]/g, '_').slice(0, 160);
+}
 
-function createRateLimiter({ windowMs, max, message }) {
-  return (req, res, next) => {
+function defaultKeyGenerator(req) {
+  const actor = req.user?.id ? `user:${req.user.id}` : `ip:${req.ip}`;
+  return `${actor}:${req.method}:${req.path}`;
+}
+
+class MemoryRateLimitStore {
+  constructor() {
+    this.buckets = new Map();
+  }
+
+  async increment(key, windowMs) {
     const now = Date.now();
-    const key = `${req.ip}:${req.method}:${req.path}`;
-    const bucket = rateLimitBuckets.get(key);
+    const bucket = this.buckets.get(key);
 
     if (!bucket || bucket.resetAt <= now) {
-      rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
-      return next();
+      const resetAt = now + windowMs;
+      this.buckets.set(key, { count: 1, resetAt });
+      return { count: 1, resetAt };
     }
 
     bucket.count += 1;
-    if (bucket.count > max) {
-      res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
-      return res.status(429).json({ error: message });
-    }
+    return { count: bucket.count, resetAt: bucket.resetAt };
+  }
 
-    next();
+  async close() {
+    this.buckets.clear();
+  }
+}
+
+class RedisRateLimitStore {
+  constructor({ url, keyPrefix = 'rendersphere' }) {
+    if (!url) throw new Error('Redis rate limit store requires a URL');
+    this.url = url;
+    this.keyPrefix = keyPrefix;
+    this.client = null;
+    this.connecting = null;
+    this.disabled = false;
+  }
+
+  async getClient() {
+    if (this.disabled) return null;
+    if (this.client?.isOpen) return this.client;
+    if (!this.connecting) {
+      this.connecting = import('redis')
+        .then(({ createClient }) => {
+          const client = createClient({ url: this.url });
+          client.on('error', (error) => {
+            console.error('Redis rate limit store error:', error.message || error);
+          });
+          this.client = client;
+          return client.connect().then(() => client);
+        })
+        .catch((error) => {
+          this.disabled = true;
+          console.error('Redis rate limit store unavailable; falling back to process memory until restart:', error.message || error);
+          return null;
+        });
+    }
+    return this.connecting;
+  }
+
+  async increment(key, windowMs) {
+    const client = await this.getClient();
+    if (!client) return null;
+
+    const redisKey = `${this.keyPrefix}:rate-limit:${key}`;
+    const count = await client.incr(redisKey);
+    if (count === 1) await client.pExpire(redisKey, windowMs);
+    const ttl = await client.pTTL(redisKey);
+    return {
+      count,
+      resetAt: Date.now() + (ttl > 0 ? ttl : windowMs),
+    };
+  }
+
+  async close() {
+    if (this.client?.isOpen) await this.client.quit();
+  }
+}
+
+function createRateLimitStore({ store = 'memory', redisUrl = '', keyPrefix = 'rendersphere' } = {}) {
+  const normalizedStore = String(store || 'memory').trim().toLowerCase();
+  const memoryStore = new MemoryRateLimitStore();
+  if ((normalizedStore === 'redis' || redisUrl) && redisUrl) {
+    const redisStore = new RedisRateLimitStore({ url: redisUrl, keyPrefix });
+    return {
+      async increment(key, windowMs) {
+        const result = await redisStore.increment(key, windowMs);
+        return result || memoryStore.increment(key, windowMs);
+      },
+      async close() {
+        await redisStore.close();
+        await memoryStore.close();
+      },
+    };
+  }
+  if (normalizedStore === 'redis' && !redisUrl) {
+    console.error('Redis rate limit store requested without RENDERSPHERE_RATE_LIMIT_REDIS_URL; using process memory.');
+  }
+  return memoryStore;
+}
+
+function createRateLimiter({ windowMs, max, message, store = null, keyGenerator = defaultKeyGenerator, scope = 'route' }) {
+  const limiterStore = store || createRateLimitStore();
+  return async (req, res, next) => {
+    try {
+      const rawKey = keyGenerator(req);
+      const key = `${normalizeKeyPart(scope)}:${normalizeKeyPart(rawKey)}`;
+      const bucket = await limiterStore.increment(key, windowMs);
+
+      res.setHeader('RateLimit-Limit', String(max));
+      res.setHeader('RateLimit-Remaining', String(Math.max(0, max - bucket.count)));
+      res.setHeader('RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
+
+      if (bucket.count > max) {
+        res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - Date.now()) / 1000))));
+        return res.status(429).json({ error: message });
+      }
+
+      return next();
+    } catch (error) {
+      console.error('Rate limiter failed:', error);
+      return next();
+    }
   };
 }
 
-export { createRateLimiter, requireSameOriginForBrowserWrites, securityHeaders };
+function accountRateLimitKey(req) {
+  if (req.user?.id) return `user:${req.user.id}`;
+  return `ip:${req.ip}`;
+}
+
+function authAttemptRateLimitKey(req) {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  return `${req.ip}:${email || 'no-email'}`;
+}
+
+export {
+  accountRateLimitKey,
+  authAttemptRateLimitKey,
+  createRateLimiter,
+  createRateLimitStore,
+  requireSameOriginForBrowserWrites,
+  securityHeaders,
+};

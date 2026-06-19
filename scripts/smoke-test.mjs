@@ -61,6 +61,15 @@ const serverEnv = {
   RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS: '10',
   RENDERSPHERE_MOCK_RUNPOD_FAIL_FILEKEY_PATTERN: 'dispatch-fail',
   RENDERSPHERE_MAX_CONCURRENT_JOBS: '4',
+  RENDERSPHERE_DEFAULT_PAGE_SIZE: '2',
+  RENDERSPHERE_MAX_PAGE_SIZE: '3',
+  RENDERSPHERE_RATE_LIMIT_STORE: 'memory',
+  RENDERSPHERE_ACCOUNT_RATE_LIMIT_WINDOW_MS: '60000',
+  RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX: '1',
+  RENDERSPHERE_RENDER_RATE_LIMIT_WINDOW_MS: '60000',
+  RENDERSPHERE_RENDER_RATE_LIMIT_MAX: '100',
+  RENDERSPHERE_AUTH_RATE_LIMIT_WINDOW_MS: '60000',
+  RENDERSPHERE_AUTH_RATE_LIMIT_MAX: '100',
 };
 
 await runCommand('npx', ['prisma', 'generate'], serverEnv);
@@ -235,6 +244,14 @@ try {
 
   const projects = await request('/api/projects', { headers: cookieHeaders });
   if (projects.projects.length !== 1) throw new Error(`Expected one project, got ${projects.projects.length}.`);
+  if (projects.pagination?.pageSize !== 2 || projects.pagination?.totalItems !== 1) {
+    throw new Error('Project list did not return expected default pagination metadata.');
+  }
+
+  const invalidProjectPageSize = await rawRequest('/api/projects?pageSize=4', { headers: cookieHeaders });
+  if (invalidProjectPageSize.response.status !== 400) {
+    throw new Error(`Expected over-limit project page size to return 400, got ${invalidProjectPageSize.response.status}.`);
+  }
 
   const ledgerJobId = `smoke-ledger-${Date.now()}`;
   await prisma.job.create({
@@ -520,6 +537,36 @@ try {
   const userAfterCancel = await prisma.user.findUnique({ where: { id: registered.user.id } });
   if (!cancelRelease || Number(cancelRelease.amountUsd) !== 2 || Number(userAfterCancel.starterBalanceUsd) !== 12.75) {
     throw new Error('Cancellation did not restore the reserved credits.');
+  }
+
+  const pagedJobs = await request('/api/jobs?page=1&pageSize=2&status=all', { headers: cookieHeaders });
+  if (pagedJobs.jobs.length !== 2 || pagedJobs.pagination?.pageSize !== 2 || pagedJobs.pagination?.totalItems < 4 || !pagedJobs.pagination?.hasNextPage) {
+    throw new Error('Paginated jobs endpoint did not enforce page size or return expected metadata.');
+  }
+  const activePagedJobs = await request('/api/jobs?page=1&pageSize=2&status=active', { headers: cookieHeaders });
+  if (!activePagedJobs.jobs.every((job) => ['SUBMITTED', 'DISPATCHING', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING'].includes(job.status))) {
+    throw new Error('Job status filter returned non-active jobs.');
+  }
+  const invalidJobStatus = await rawRequest('/api/jobs?status=NOT_A_STATUS', { headers: cookieHeaders });
+  if (invalidJobStatus.response.status !== 400) {
+    throw new Error(`Expected invalid job status filter to return 400, got ${invalidJobStatus.response.status}.`);
+  }
+  const renderedFilesPage = await request('/api/rendered-files?page=1&pageSize=2', { headers: cookieHeaders });
+  if (renderedFilesPage.files.length !== 1 || renderedFilesPage.pagination?.totalItems !== 1) {
+    throw new Error('Rendered files endpoint did not return expected paginated response.');
+  }
+  const accessKeysPage = await request('/api/auth/access-keys?page=1&pageSize=2', { headers: cookieHeaders });
+  if (accessKeysPage.accessKeys.length < 1 || accessKeysPage.pagination?.pageSize !== 2) {
+    throw new Error('Access keys endpoint did not return expected paginated response.');
+  }
+
+  const rateLimitedProject = await rawRequest('/api/projects', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ name: 'Smoke project rate limit check' }),
+  });
+  if (rateLimitedProject.response.status !== 429) {
+    throw new Error(`Expected account mutation rate limit to return 429 after repeated project/access-key mutations, got ${rateLimitedProject.response.status}.`);
   }
 
   const failedJobId = `smoke-failed-${Date.now()}`;

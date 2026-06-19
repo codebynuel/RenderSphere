@@ -15,6 +15,7 @@ import {
 } from '../src/services/authService.js';
 import { config } from '../helpers/config.js';
 import { prisma } from '../src/db.js';
+import { buildPaginationMeta, parsePaginationQuery } from '../src/controllers/pagination.js';
 
 function createAuthRouter({
   accountRateLimit,
@@ -91,15 +92,25 @@ function createAuthRouter({
   });
 
   router.get('/access-keys', requireAuth, async (req, res) => {
-    const accessKeys = await prisma.accessKey.findMany({
-      where: { userId: req.user.id },
-      orderBy: { createdAt: 'asc' },
-    });
+    const pagination = parsePaginationQuery(req.query);
+    const where = { userId: req.user.id };
+    const [totalItems, accessKeys] = await Promise.all([
+      prisma.accessKey.count({ where }),
+      prisma.accessKey.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+    ]);
 
-    res.json({ accessKeys: accessKeys.map((accessKey) => publicAccessKey(accessKey)) });
+    res.json({
+      accessKeys: accessKeys.map((accessKey) => publicAccessKey(accessKey)),
+      pagination: buildPaginationMeta({ ...pagination, totalItems }),
+    });
   });
 
-  router.post('/access-keys', accountRateLimit, requireAuth, async (req, res) => {
+  router.post('/access-keys', requireAuth, accountRateLimit, async (req, res) => {
     try {
       const requestedName = String(req.body.name || '').trim() || 'Access key';
       const created = await createAccessKeyForUser(req.user.id, requestedName);
@@ -110,7 +121,7 @@ function createAuthRouter({
     }
   });
 
-  router.delete('/access-keys/:accessKeyId', accountRateLimit, requireAuth, async (req, res) => {
+  router.delete('/access-keys/:accessKeyId', requireAuth, accountRateLimit, async (req, res) => {
     try {
       const deleted = await prisma.accessKey.deleteMany({
         where: {
@@ -127,7 +138,7 @@ function createAuthRouter({
     }
   });
 
-  router.post('/api-key', accountRateLimit, requireAuth, async (req, res) => {
+  router.post('/api-key', requireAuth, accountRateLimit, async (req, res) => {
     try {
       const created = await createAccessKeyForUser(req.user.id, 'Access key');
       return res.json({ apiKey: created.token, accessKey: publicAccessKey(created.accessKey, created.token) });

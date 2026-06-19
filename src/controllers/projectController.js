@@ -1,11 +1,18 @@
 import { createProjectForUser, deleteProjectForUser, listProjectsForUser, updateProjectForUser } from '../services/projectService.js';
 import { sendControllerError } from './controllerUtils.js';
+import { buildPaginationMeta, parsePaginationQuery, parseSearchQuery } from './pagination.js';
 
 export function createProjectController() {
   return {
     async listProjects(req, res) {
-      const projects = await listProjectsForUser(req.user.id);
-      res.json({ projects });
+      const pagination = parsePaginationQuery(req.query);
+      const search = parseSearchQuery(req.query);
+      const { projects, totalItems } = await listProjectsForUser(req.user.id, { ...pagination, search });
+      res.json({
+        projects,
+        pagination: buildPaginationMeta({ ...pagination, totalItems }),
+        filters: { search },
+      });
     },
 
     async createProject(req, res) {

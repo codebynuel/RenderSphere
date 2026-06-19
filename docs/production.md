@@ -2,11 +2,9 @@
 
 ## Gateway Storage
 
-The gateway now persists metadata in MongoDB.
+The gateway persists metadata in PostgreSQL through Prisma.
 
-Set `MONGODB_URI` to your cluster/instance connection string and optionally override `MONGODB_DB_NAME`.
-
-Multiple gateway instances can share the same MongoDB database.
+Set `DATABASE_URL` to your PostgreSQL connection string. Multiple gateway instances can share the same PostgreSQL database, but deploy rate limiting and background polling with the operational notes below.
 
 Required gateway environment variables:
 
@@ -19,8 +17,6 @@ Required gateway environment variables:
 
 Recommended gateway environment variables:
 
-- `MONGODB_URI`
-- `MONGODB_DB_NAME`
 - `RENDERSPHERE_PUBLIC_URL`
 - `RENDERSPHERE_SUPPORT_EMAIL`
 - `RENDERSPHERE_INVITE_CODE`
@@ -39,6 +35,17 @@ Recommended gateway environment variables:
 - `RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD`
 - `RENDERSPHERE_MAX_RENDER_BUDGET_USD`
 - `RENDERSPHERE_JOB_RECORD_RETENTION_DAYS`
+- `RENDERSPHERE_DEFAULT_PAGE_SIZE`
+- `RENDERSPHERE_MAX_PAGE_SIZE`
+- `RENDERSPHERE_RATE_LIMIT_STORE`
+- `RENDERSPHERE_RATE_LIMIT_REDIS_URL`
+- `RENDERSPHERE_RATE_LIMIT_KEY_PREFIX`
+- `RENDERSPHERE_AUTH_RATE_LIMIT_WINDOW_MS`
+- `RENDERSPHERE_AUTH_RATE_LIMIT_MAX`
+- `RENDERSPHERE_ACCOUNT_RATE_LIMIT_WINDOW_MS`
+- `RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX`
+- `RENDERSPHERE_RENDER_RATE_LIMIT_WINDOW_MS`
+- `RENDERSPHERE_RENDER_RATE_LIMIT_MAX`
 - `RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS`
 - `RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES`
 - `RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES`
@@ -114,6 +121,29 @@ Provider-call resilience:
 - Config knobs: `RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS` (default 15000), `RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES` (default 2), `RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES` (default 1), and `RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS` (default 300).
 - Provider errors returned to clients are sanitized and include a `retryable` boolean when available. Logs keep operational identifiers but must not include secrets.
 
+## API Pagination and Abuse Controls
+
+Collection endpoints use bounded server-side pagination by default. Supported query parameters are `page` and `pageSize` (or legacy alias `limit`), with `RENDERSPHERE_DEFAULT_PAGE_SIZE` and `RENDERSPHERE_MAX_PAGE_SIZE` enforcing defaults and upper bounds. Invalid non-integer, zero, negative, or over-limit page sizes return HTTP 400 instead of silently loading all records.
+
+Paginated endpoints currently include:
+
+- `GET /api/jobs` with optional `status=all|active|history|terminal|COMPLETED|FAILED|CANCELLED|DISPATCH_FAILED|SUBMITTED|DISPATCHING|IN_QUEUE|IN_PROGRESS|RUNNING` and optional `search`.
+- `GET /api/rendered-files` with optional `search`.
+- `GET /api/projects` with optional `search`.
+- `GET /api/auth/access-keys`.
+
+Responses preserve the existing top-level arrays (`jobs`, `files`, `projects`, or `accessKeys`) and add `pagination` metadata with `page`, `pageSize`, `totalItems`, `totalPages`, `hasNextPage`, and `hasPreviousPage`. Dashboard views request bounded pages and expose load-more controls where normal workflows need more than the initial server page.
+
+Rate limiting is centralized through the `helpers/security.js` store abstraction. `RENDERSPHERE_RATE_LIMIT_STORE=memory` is the default and is safe for single-instance deployments. For multi-instance production, configure `RENDERSPHERE_RATE_LIMIT_STORE=redis` and `RENDERSPHERE_RATE_LIMIT_REDIS_URL` after adding the `redis` package to the runtime image; otherwise the app logs a Redis-store initialization failure and falls back to process memory. The limiter emits standard `RateLimit-*` and `Retry-After` headers.
+
+Configured limiter scopes:
+
+- Auth attempts (`/api/auth/register`, `/api/auth/login`) are keyed by client IP plus normalized email.
+- Account mutations (access-key creation/revocation, legacy API-key creation, project create/update/delete) are keyed by authenticated account when available.
+- Expensive render operations (upload URL creation, render submission, cancellation) are keyed by authenticated account.
+
+Tune `RENDERSPHERE_AUTH_RATE_LIMIT_*`, `RENDERSPHERE_ACCOUNT_RATE_LIMIT_*`, and `RENDERSPHERE_RENDER_RATE_LIMIT_*` based on real traffic and provider quotas. Keep limits permissive enough for normal retries and Blender workstation workflows, but low enough to contain scripted abuse.
+
 ## Admin Endpoints
 
 Set `RENDERSPHERE_ADMIN_TOKEN` to enable admin endpoints. Use it as a bearer token.
@@ -159,7 +189,7 @@ Suggested MVP rules:
 - Delete `finished_renders/` outputs after 14-30 days.
 - Keep a shorter retention period while the product is free or invite-only.
 
-The app-level `POST /api/admin/cleanup-records` endpoint only cleans MongoDB metadata. It does not delete R2 objects.
+The app-level `POST /api/admin/cleanup-records` endpoint only cleans database metadata. It does not delete R2 objects.
 
 ## Add-on Packaging
 

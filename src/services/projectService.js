@@ -18,14 +18,23 @@ export function serializeProject(project) {
   };
 }
 
-export async function listProjectsForUser(userId) {
-  const projects = await prisma.project.findMany({
-    where: { userId },
-    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
-    include: { _count: { select: { jobs: true } } },
-  });
+export async function listProjectsForUser(userId, { skip = 0, take = 25, search = '' } = {}) {
+  const where = {
+    userId,
+    ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
+  };
+  const [totalItems, projects] = await Promise.all([
+    prisma.project.count({ where }),
+    prisma.project.findMany({
+      where,
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      skip,
+      take,
+      include: { _count: { select: { jobs: true } } },
+    }),
+  ]);
 
-  return projects.map(serializeProject);
+  return { projects: projects.map(serializeProject), totalItems };
 }
 
 export async function createProjectForUser(userId, name) {

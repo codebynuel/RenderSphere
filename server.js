@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { Server as SocketIOServer } from 'socket.io';
 
 import { ACTIVE_JOB_STATUSES, SESSION_COOKIE_NAME, config, validateRequiredEnv } from './helpers/config.js';
-import { createRateLimiter, requireSameOriginForBrowserWrites, securityHeaders } from './helpers/security.js';
+import { accountRateLimitKey, authAttemptRateLimitKey, createRateLimiter, createRateLimitStore, requireSameOriginForBrowserWrites, securityHeaders } from './helpers/security.js';
 import { prisma } from './src/db.js';
 import { authenticateToken, parseCookieHeader, requireAdmin, requireAuth } from './src/services/authService.js';
 import { fetchRunpodJobStatus } from './src/services/runpodService.js';
@@ -36,9 +36,35 @@ app.use(requireSameOriginForBrowserWrites);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const authRateLimit = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many auth attempts.' });
-const accountRateLimit = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 20, message: 'Too many account changes.' });
-const renderRateLimit = createRateLimiter({ windowMs: 60 * 1000, max: 12, message: 'Too many render requests.' });
+const rateLimitStore = createRateLimitStore({
+  store: config.rateLimitStore,
+  redisUrl: config.rateLimitRedisUrl,
+  keyPrefix: config.rateLimitKeyPrefix,
+});
+const authRateLimit = createRateLimiter({
+  windowMs: config.authRateLimitWindowMs,
+  max: config.authRateLimitMax,
+  message: 'Too many auth attempts.',
+  store: rateLimitStore,
+  keyGenerator: authAttemptRateLimitKey,
+  scope: 'auth',
+});
+const accountRateLimit = createRateLimiter({
+  windowMs: config.accountRateLimitWindowMs,
+  max: config.accountRateLimitMax,
+  message: 'Too many account changes.',
+  store: rateLimitStore,
+  keyGenerator: accountRateLimitKey,
+  scope: 'account',
+});
+const renderRateLimit = createRateLimiter({
+  windowMs: config.renderRateLimitWindowMs,
+  max: config.renderRateLimitMax,
+  message: 'Too many render requests.',
+  store: rateLimitStore,
+  keyGenerator: accountRateLimitKey,
+  scope: 'render',
+});
 
 const io = new SocketIOServer(server, {
   cors: {
@@ -92,7 +118,7 @@ io.on('connection', (socket) => {
 app.use(createSystemRouter({ config }));
 app.use('/api/admin', createAdminRouter({ requireAdmin }));
 app.use('/api/auth', createAuthRouter({ accountRateLimit, authRateLimit, requireAuth }));
-app.use('/api/projects', createProjectsRouter({ requireAuth }));
+app.use('/api/projects', createProjectsRouter({ accountRateLimit, requireAuth }));
 app.use('/api', createJobsRouter({ emitJobUpdate, requireAuth }));
 app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth }));
 
@@ -148,6 +174,7 @@ async function shutdown(signal) {
   clearInterval(activeJobPoller);
   io.close();
   server.close(async () => {
+    await rateLimitStore.close();
     await prisma.$disconnect();
     process.exit(0);
   });

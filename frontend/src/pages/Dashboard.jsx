@@ -31,8 +31,8 @@ import Sidebar from '../components/Sidebar';
 import { api, formatDate, formatDuration, formatUsd } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 
-const ACTIVE_STATUSES = new Set(['SUBMITTED', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING']);
-const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+const ACTIVE_STATUSES = new Set(['SUBMITTED', 'DISPATCHING', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING']);
+const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'DISPATCH_FAILED']);
 const STATUS_OPTIONS = [
     { id: 'all', label: 'All statuses' },
     { id: 'active', label: 'Active' },
@@ -43,6 +43,7 @@ const STATUS_OPTIONS = [
 
 const DASHBOARD_TOUR_STORAGE_KEY = 'rendersphere.dashboardProductTour.v1';
 const TABLE_PAGE_SIZE = 10;
+const SERVER_PAGE_SIZE = 50;
 const PROJECT_ACTION_MENU_GAP = 8;
 const PROJECT_ACTION_MENU_HEIGHT = {
     editing: 104,
@@ -333,6 +334,7 @@ export default function Dashboard() {
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true });
     const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '' });
+    const [paginationMeta, setPaginationMeta] = useState({ keys: null, files: null, jobs: null, projects: null });
     const [tourOpen, setTourOpen] = useState(false);
     const [tourStepIndex, setTourStepIndex] = useState(0);
     const [tourTargetRect, setTourTargetRect] = useState(null);
@@ -340,6 +342,9 @@ export default function Dashboard() {
     const projectActionsMenuRef = useRef(null);
     const projectActionButtonRefs = useRef(new Map());
     const tourDialogRef = useRef(null);
+    const initialLoadUserIdRef = useRef(null);
+    const jobFilterLoadRef = useRef({ userId: null, status: jobStatusFilter, search: jobSearchQuery });
+    const fileFilterLoadRef = useRef({ userId: null, search: fileSearchQuery });
 
     const getProjectActionPlacement = useCallback((projectId, buttonElement) => {
         if (!buttonElement || typeof window === 'undefined') return 'down';
@@ -372,12 +377,13 @@ export default function Dashboard() {
         setErrors((current) => ({ ...current, [key]: value }));
     }, []);
 
-    const loadAccessKeys = useCallback(async () => {
+    const loadAccessKeys = useCallback(async ({ page = 1, append = false } = {}) => {
         setLoadingFlag('keys', true);
         setErrorFlag('keys', '');
         try {
-            const data = await api('/api/auth/access-keys');
-            setAccessKeys(data.accessKeys || []);
+            const data = await api(`/api/auth/access-keys?page=${page}&pageSize=${SERVER_PAGE_SIZE}`);
+            setAccessKeys((current) => (append ? sortByCreatedDesc([...current, ...(data.accessKeys || [])]) : data.accessKeys || []));
+            setPaginationMeta((current) => ({ ...current, keys: data.pagination || null }));
         } catch (error) {
             setErrorFlag('keys', error.message || 'Failed to load access keys');
             toast.error(`Failed to load access keys: ${error.message}`);
@@ -386,12 +392,13 @@ export default function Dashboard() {
         }
     }, [setErrorFlag, setLoadingFlag]);
 
-    const loadProjects = useCallback(async () => {
+    const loadProjects = useCallback(async ({ page = 1, append = false } = {}) => {
         setLoadingFlag('projects', true);
         setErrorFlag('projects', '');
         try {
-            const data = await api('/api/projects');
-            setProjects(data.projects || []);
+            const data = await api(`/api/projects?page=${page}&pageSize=${SERVER_PAGE_SIZE}`);
+            setProjects((current) => (append ? [...current, ...(data.projects || [])] : data.projects || []));
+            setPaginationMeta((current) => ({ ...current, projects: data.pagination || null }));
         } catch (error) {
             setErrorFlag('projects', error.message || 'Failed to load projects');
             toast.error(`Failed to load projects: ${error.message}`);
@@ -400,12 +407,15 @@ export default function Dashboard() {
         }
     }, [setErrorFlag, setLoadingFlag]);
 
-    const loadFiles = useCallback(async () => {
+    const loadFiles = useCallback(async ({ page = 1, append = false } = {}) => {
         setLoadingFlag('files', true);
         setErrorFlag('files', '');
         try {
-            const data = await api('/api/rendered-files');
-            setFiles(data.files || []);
+            const params = new URLSearchParams({ page: String(page), pageSize: String(SERVER_PAGE_SIZE) });
+            if (fileSearchQuery.trim()) params.set('search', fileSearchQuery.trim());
+            const data = await api(`/api/rendered-files?${params.toString()}`);
+            setFiles((current) => (append ? [...current, ...(data.files || [])] : data.files || []));
+            setPaginationMeta((current) => ({ ...current, files: data.pagination || null }));
             if (data.user) setUser(data.user);
         } catch (error) {
             setErrorFlag('files', error.message || 'Failed to load files');
@@ -413,14 +423,18 @@ export default function Dashboard() {
         } finally {
             setLoadingFlag('files', false);
         }
-    }, [setErrorFlag, setLoadingFlag, setUser]);
+    }, [fileSearchQuery, setErrorFlag, setLoadingFlag, setUser]);
 
-    const loadJobs = useCallback(async () => {
+    const loadJobs = useCallback(async ({ page = 1, append = false } = {}) => {
         setLoadingFlag('jobs', true);
         setErrorFlag('jobs', '');
         try {
-            const data = await api('/api/jobs');
-            setJobs(data.jobs || []);
+            const params = new URLSearchParams({ page: String(page), pageSize: String(SERVER_PAGE_SIZE) });
+            if (jobStatusFilter !== 'all') params.set('status', jobStatusFilter);
+            if (jobSearchQuery.trim()) params.set('search', jobSearchQuery.trim());
+            const data = await api(`/api/jobs?${params.toString()}`);
+            setJobs((current) => (append ? [...current, ...(data.jobs || [])] : data.jobs || []));
+            setPaginationMeta((current) => ({ ...current, jobs: data.pagination || null }));
             if (data.user) setUser(data.user);
         } catch (error) {
             setErrorFlag('jobs', error.message || 'Failed to load jobs');
@@ -428,19 +442,53 @@ export default function Dashboard() {
         } finally {
             setLoadingFlag('jobs', false);
         }
-    }, [setErrorFlag, setLoadingFlag, setUser]);
+    }, [jobSearchQuery, jobStatusFilter, setErrorFlag, setLoadingFlag, setUser]);
 
     const loadAll = useCallback(async () => {
-        await Promise.all([loadAccessKeys(), loadProjects(), loadFiles(), loadJobs()]);
+        await Promise.all([loadAccessKeys(), loadProjects(), loadFiles({ page: 1 }), loadJobs({ page: 1 })]);
     }, [loadAccessKeys, loadFiles, loadJobs, loadProjects]);
 
     useEffect(() => {
         if (!user?.id) return undefined;
+        if (initialLoadUserIdRef.current === user.id) return undefined;
+        initialLoadUserIdRef.current = user.id;
+        jobFilterLoadRef.current = { userId: user.id, status: jobStatusFilter, search: jobSearchQuery };
+        fileFilterLoadRef.current = { userId: user.id, search: fileSearchQuery };
         const timer = window.setTimeout(() => {
             loadAll();
         }, 0);
         return () => window.clearTimeout(timer);
-    }, [user?.id, loadAll]);
+    }, [jobSearchQuery, jobStatusFilter, fileSearchQuery, user?.id, loadAll]);
+
+    useEffect(() => {
+        if (!user?.id) return undefined;
+        const previous = jobFilterLoadRef.current;
+        if (previous.userId !== user.id) {
+            jobFilterLoadRef.current = { userId: user.id, status: jobStatusFilter, search: jobSearchQuery };
+            return undefined;
+        }
+        if (previous.status === jobStatusFilter && previous.search === jobSearchQuery) return undefined;
+        jobFilterLoadRef.current = { userId: user.id, status: jobStatusFilter, search: jobSearchQuery };
+        const timer = window.setTimeout(() => {
+            loadJobs({ page: 1 });
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [jobSearchQuery, jobStatusFilter, loadJobs, user?.id]);
+
+    useEffect(() => {
+        if (!user?.id) return undefined;
+        const previous = fileFilterLoadRef.current;
+        if (previous.userId !== user.id) {
+            fileFilterLoadRef.current = { userId: user.id, search: fileSearchQuery };
+            return undefined;
+        }
+        if (previous.search === fileSearchQuery) return undefined;
+        fileFilterLoadRef.current = { userId: user.id, search: fileSearchQuery };
+        const timer = window.setTimeout(() => {
+            loadFiles({ page: 1 });
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [fileSearchQuery, loadFiles, user?.id]);
 
     useEffect(() => {
         if (!user?.id) return undefined;
@@ -450,8 +498,8 @@ export default function Dashboard() {
             setJobs((current) => mergeJob(current, job));
             if (job?.status === 'COMPLETED') {
                 setTimeout(() => {
-                    loadFiles();
-                    loadJobs();
+                    loadFiles({ page: 1 });
+                    loadJobs({ page: 1 });
                 }, 250);
             }
         });
@@ -728,6 +776,7 @@ export default function Dashboard() {
                 method: 'POST',
                 body: JSON.stringify({ name: trimmedName }),
             });
+            loadAccessKeys({ page: 1 });
             const createdKey = data.accessKey;
             const listedKey = { ...createdKey, token: null };
             setAccessKeys((current) => sortByCreatedDesc([listedKey, ...current.filter((key) => key.id !== createdKey.id)]));
@@ -766,6 +815,7 @@ export default function Dashboard() {
                 method: 'POST',
                 body: JSON.stringify({ name: newProjectName.trim() }),
             });
+            loadProjects({ page: 1 });
             setProjects((current) => [data.project, ...current]);
             setProjectsPage(1);
             setNewProjectName('');
@@ -886,6 +936,26 @@ export default function Dashboard() {
     const handleFileSearchChange = (value) => {
         setFileSearchQuery(value);
         setFilesPage(1);
+    };
+
+    const loadMoreAccessKeys = () => {
+        if (!paginationMeta.keys?.hasNextPage || loading.keys) return;
+        loadAccessKeys({ page: paginationMeta.keys.page + 1, append: true });
+    };
+
+    const loadMoreProjects = () => {
+        if (!paginationMeta.projects?.hasNextPage || loading.projects) return;
+        loadProjects({ page: paginationMeta.projects.page + 1, append: true });
+    };
+
+    const loadMoreJobs = () => {
+        if (!paginationMeta.jobs?.hasNextPage || loading.jobs) return;
+        loadJobs({ page: paginationMeta.jobs.page + 1, append: true });
+    };
+
+    const loadMoreFiles = () => {
+        if (!paginationMeta.files?.hasNextPage || loading.files) return;
+        loadFiles({ page: paginationMeta.files.page + 1, append: true });
     };
 
     const resetJobFilters = () => {
@@ -1092,6 +1162,7 @@ export default function Dashboard() {
                         </table>
                     </div>
                     <PaginationControls label="Access keys" totalItems={sortedAccessKeys.length} page={accessKeyPagination.page} onPageChange={setAccessKeysPage} />
+                    {paginationMeta.keys?.hasNextPage ? <button className="button compact-button" type="button" onClick={loadMoreAccessKeys} disabled={loading.keys}>Load more access keys</button> : null}
                     </>
                 ) : null}
             </div>
@@ -1222,7 +1293,7 @@ export default function Dashboard() {
                     <p className="muted">Manage production containers and jump into related renders or files from explicit actions.</p>
                 </div>
                 <div className="project-summary-strip">
-                    <span><strong>{projects.length}</strong> projects</span>
+                    <span><strong>{projects.length}</strong> of {paginationMeta.projects?.totalItems ?? projects.length} projects loaded</span>
                     <span><strong>{stats.unassignedJobs}</strong> unassigned jobs</span>
                 </div>
             </div>
@@ -1350,6 +1421,7 @@ export default function Dashboard() {
                         </table>
                     </div>
                     <PaginationControls label="Projects" totalItems={projects.length} page={projectPagination.page} onPageChange={setProjectsPage} />
+                    {paginationMeta.projects?.hasNextPage ? <button className="button compact-button" type="button" onClick={loadMoreProjects} disabled={loading.projects}>Load more projects</button> : null}
                     </>
                 ) : null}
             </div>
@@ -1385,8 +1457,9 @@ export default function Dashboard() {
                 )}
 
                 <div className="filter-summary">
-                    <span>{overview ? `${previewJobs.length} of ${jobs.length} recent jobs` : `${visibleJobs.length} matching jobs`}</span>
+                    <span>{overview ? `${previewJobs.length} of ${paginationMeta.jobs?.totalItems ?? jobs.length} recent jobs` : `${visibleJobs.length} loaded of ${paginationMeta.jobs?.totalItems ?? visibleJobs.length} matching jobs`}</span>
                     {!overview && <span>{activeJobs.length} active / {historyJobs.length} history</span>}
+                    {paginationMeta.jobs?.hasNextPage && <button className="button compact-button" type="button" onClick={loadMoreJobs} disabled={loading.jobs}>Load more jobs</button>}
                 </div>
 
                 {loading.jobs ? <LoadingState label="Loading render queue..." /> : null}
@@ -1439,7 +1512,8 @@ export default function Dashboard() {
                 )}
 
                 <div className="filter-summary">
-                    <span>{overview ? `${previewFiles.length} latest files` : `${visibleFiles.length} matching files`}</span>
+                    <span>{overview ? `${previewFiles.length} latest files` : `${visibleFiles.length} loaded of ${paginationMeta.files?.totalItems ?? visibleFiles.length} matching files`}</span>
+                    {!overview && paginationMeta.files?.hasNextPage && <button className="button compact-button" type="button" onClick={loadMoreFiles} disabled={loading.files}>Load more files</button>}
                 </div>
 
                 {loading.files ? <LoadingState label="Loading rendered files..." /> : null}

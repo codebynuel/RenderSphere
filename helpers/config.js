@@ -40,6 +40,17 @@ function parseNonNegativeNumberEnv(name, fallback) {
 
 const config = {
   maxUploadBytes: parsePositiveIntegerEnv('RENDERSPHERE_MAX_UPLOAD_MB', DEFAULT_MAX_UPLOAD_MB) * MB,
+  defaultPageSize: parsePositiveIntegerEnv('RENDERSPHERE_DEFAULT_PAGE_SIZE', 25),
+  maxPageSize: parsePositiveIntegerEnv('RENDERSPHERE_MAX_PAGE_SIZE', 100),
+  rateLimitStore: (process.env.RENDERSPHERE_RATE_LIMIT_STORE || 'memory').trim().toLowerCase(),
+  rateLimitRedisUrl: process.env.RENDERSPHERE_RATE_LIMIT_REDIS_URL || process.env.REDIS_URL || '',
+  rateLimitKeyPrefix: process.env.RENDERSPHERE_RATE_LIMIT_KEY_PREFIX || 'rendersphere',
+  authRateLimitWindowMs: parsePositiveIntegerEnv('RENDERSPHERE_AUTH_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+  authRateLimitMax: parsePositiveIntegerEnv('RENDERSPHERE_AUTH_RATE_LIMIT_MAX', 20),
+  accountRateLimitWindowMs: parsePositiveIntegerEnv('RENDERSPHERE_ACCOUNT_RATE_LIMIT_WINDOW_MS', 60 * 60 * 1000),
+  accountRateLimitMax: parsePositiveIntegerEnv('RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX', 20),
+  renderRateLimitWindowMs: parsePositiveIntegerEnv('RENDERSPHERE_RENDER_RATE_LIMIT_WINDOW_MS', 60 * 1000),
+  renderRateLimitMax: parsePositiveIntegerEnv('RENDERSPHERE_RENDER_RATE_LIMIT_MAX', 12),
   maxRenderSamples: parsePositiveIntegerEnv('RENDERSPHERE_MAX_RENDER_SAMPLES', 2048),
   maxResolutionPct: parsePositiveIntegerEnv('RENDERSPHERE_MAX_RESOLUTION_PCT', 150),
   maxAnimationFrames: parsePositiveIntegerEnv('RENDERSPHERE_MAX_ANIMATION_FRAMES', 250),

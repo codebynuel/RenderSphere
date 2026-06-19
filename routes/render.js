@@ -6,9 +6,9 @@ function createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth }) {
   const router = express.Router();
   const controller = createRenderController({ emitJobUpdate });
 
-  router.post('/get-upload-url', renderRateLimit, requireAuth, asyncHandler(controller.getUploadUrl));
-  router.post('/trigger-render', renderRateLimit, requireAuth, asyncHandler(controller.triggerRender));
-  router.post('/cancel-job', requireAuth, asyncHandler(controller.cancelJob));
+  router.post('/get-upload-url', requireAuth, renderRateLimit, asyncHandler(controller.getUploadUrl));
+  router.post('/trigger-render', requireAuth, renderRateLimit, asyncHandler(controller.triggerRender));
+  router.post('/cancel-job', requireAuth, renderRateLimit, asyncHandler(controller.cancelJob));
 
   return router;
 }

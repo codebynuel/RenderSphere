@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { io } from 'socket.io-client';
 import {
     Activity,
+    BarChart3,
     CheckCircle2,
     Clock3,
     Copy,
@@ -17,10 +18,12 @@ import {
     HelpCircle,
     KeyRound,
     Plus,
+    ReceiptText,
     RefreshCcw,
     Save,
     Search,
     Trash2,
+    WalletCards,
     X,
     XCircle,
 } from 'lucide-react';
@@ -39,13 +42,19 @@ const STATUS_OPTIONS = [
 ];
 
 const DASHBOARD_TOUR_STORAGE_KEY = 'rendersphere.dashboardProductTour.v1';
+const TABLE_PAGE_SIZE = 10;
+const PROJECT_ACTION_MENU_GAP = 8;
+const PROJECT_ACTION_MENU_HEIGHT = {
+    editing: 104,
+    default: 184,
+};
 const DASHBOARD_TOUR_STEPS = [
     {
         id: 'navigation',
         view: 'overview',
         target: '[data-tour="sidebar-nav"]',
         title: 'Navigate your workspace',
-        text: 'Use the sidebar to switch between the overview, projects, render queue, rendered files, and access keys without changing the data scope.',
+        text: 'Use the sidebar to switch between the overview, projects, render queue, rendered files, usage, billing, and access keys without changing the data scope.',
         placement: 'right',
     },
     {
@@ -155,6 +164,60 @@ function matchesSearch(item, query) {
     return haystack.includes(text);
 }
 
+function clampPage(page, totalItems, pageSize = TABLE_PAGE_SIZE) {
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    const parsedPage = Number(page);
+    if (!Number.isFinite(parsedPage)) return 1;
+    return Math.min(totalPages, Math.max(1, Math.floor(parsedPage)));
+}
+
+function paginateItems(items, page, pageSize = TABLE_PAGE_SIZE) {
+    const currentPage = clampPage(page, items.length, pageSize);
+    const startIndex = (currentPage - 1) * pageSize;
+    const pageItems = items.slice(startIndex, startIndex + pageSize);
+    return {
+        endItem: items.length === 0 ? 0 : Math.min(items.length, startIndex + pageItems.length),
+        items: pageItems,
+        page: currentPage,
+        pageSize,
+        startItem: items.length === 0 ? 0 : startIndex + 1,
+        totalItems: items.length,
+        totalPages: Math.max(1, Math.ceil(items.length / pageSize)),
+    };
+}
+
+function PaginationControls({ label, totalItems, page, pageSize = TABLE_PAGE_SIZE, onPageChange }) {
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    const currentPage = clampPage(page, totalItems, pageSize);
+    const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const endItem = totalItems === 0 ? 0 : Math.min(totalItems, currentPage * pageSize);
+
+    return (
+        <nav className="pagination-bar" aria-label={`${label} pagination`}>
+            <span className="pagination-range">Showing {startItem}–{endItem} of {totalItems}</span>
+            <div className="pagination-actions">
+                <button
+                    className="button compact-button"
+                    type="button"
+                    onClick={() => onPageChange(currentPage - 1)}
+                    disabled={currentPage <= 1}
+                >
+                    Previous
+                </button>
+                <span className="pagination-page" aria-live="polite">Page {currentPage} of {totalPages}</span>
+                <button
+                    className="button compact-button"
+                    type="button"
+                    onClick={() => onPageChange(currentPage + 1)}
+                    disabled={currentPage >= totalPages}
+                >
+                    Next
+                </button>
+            </div>
+        </nav>
+    );
+}
+
 function MetricCard({ icon: Icon, label, value, detail, tone = 'default' }) {
     return (
         <div className={`dashboard-metric metric-${tone}`}>
@@ -244,6 +307,12 @@ export default function Dashboard() {
     const [jobStatusFilter, setJobStatusFilter] = useState('all');
     const [jobSearchQuery, setJobSearchQuery] = useState('');
     const [fileSearchQuery, setFileSearchQuery] = useState('');
+    const [activeJobsPage, setActiveJobsPage] = useState(1);
+    const [historyJobsPage, setHistoryJobsPage] = useState(1);
+    const [filesPage, setFilesPage] = useState(1);
+    const [projectsPage, setProjectsPage] = useState(1);
+    const [accessKeysPage, setAccessKeysPage] = useState(1);
+    const [usageJobsPage, setUsageJobsPage] = useState(1);
     const [accessKeys, setAccessKeys] = useState([]);
     const [files, setFiles] = useState([]);
     const [jobs, setJobs] = useState([]);
@@ -257,6 +326,8 @@ export default function Dashboard() {
     const [newProjectName, setNewProjectName] = useState('');
     const [editingProjectId, setEditingProjectId] = useState(null);
     const [editingProjectName, setEditingProjectName] = useState('');
+    const [openProjectActionsId, setOpenProjectActionsId] = useState(null);
+    const [projectActionsPlacement, setProjectActionsPlacement] = useState('down');
     const [creatingKey, setCreatingKey] = useState(false);
     const [creatingProject, setCreatingProject] = useState(false);
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
@@ -266,7 +337,28 @@ export default function Dashboard() {
     const [tourStepIndex, setTourStepIndex] = useState(0);
     const [tourTargetRect, setTourTargetRect] = useState(null);
     const dashboardMainRef = useRef(null);
+    const projectActionsMenuRef = useRef(null);
+    const projectActionButtonRefs = useRef(new Map());
     const tourDialogRef = useRef(null);
+
+    const getProjectActionPlacement = useCallback((projectId, buttonElement) => {
+        if (!buttonElement || typeof window === 'undefined') return 'down';
+        const buttonRect = buttonElement.getBoundingClientRect();
+        const viewportBottom = window.innerHeight || document.documentElement.clientHeight || 0;
+        const containerRect = dashboardMainRef.current?.getBoundingClientRect();
+        const lowerBoundary = Math.min(viewportBottom, containerRect?.bottom ?? viewportBottom);
+        const upperBoundary = Math.max(0, containerRect?.top ?? 0);
+        const estimatedMenuHeight = editingProjectId === projectId ? PROJECT_ACTION_MENU_HEIGHT.editing : PROJECT_ACTION_MENU_HEIGHT.default;
+        const availableBelow = lowerBoundary - buttonRect.bottom - PROJECT_ACTION_MENU_GAP;
+        const availableAbove = buttonRect.top - upperBoundary - PROJECT_ACTION_MENU_GAP;
+        return availableBelow < estimatedMenuHeight && availableAbove > availableBelow ? 'up' : 'down';
+    }, [editingProjectId]);
+
+    const updateProjectActionPlacement = useCallback((projectId = openProjectActionsId) => {
+        if (!projectId) return;
+        const buttonElement = projectActionButtonRefs.current.get(projectId);
+        setProjectActionsPlacement(getProjectActionPlacement(projectId, buttonElement));
+    }, [getProjectActionPlacement, openProjectActionsId]);
 
     useEffect(() => {
         if (!authLoading && !user) navigate('/auth');
@@ -446,6 +538,16 @@ export default function Dashboard() {
                 title: 'Rendered files',
                 description: 'Find completed outputs by file metadata, project name, scene, or job ID.',
             },
+            usage: {
+                eyebrow: 'Usage analytics',
+                title: 'Usage',
+                description: 'Review render volume, delivery output, billable duration, and spend from existing workspace jobs.',
+            },
+            billing: {
+                eyebrow: 'Account billing',
+                title: 'Billing',
+                description: 'See current credit balance and recharge availability for this account.',
+            },
             access: {
                 eyebrow: 'Blender connection',
                 title: 'Access keys',
@@ -570,6 +672,39 @@ export default function Dashboard() {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [goToNextTourStep, goToPreviousTourStep, isFirstTourStep, markTourDismissed, tourOpen]);
 
+    useEffect(() => {
+        if (!openProjectActionsId) return undefined;
+
+        updateProjectActionPlacement(openProjectActionsId);
+        const dashboardMain = dashboardMainRef.current;
+
+        const handlePointerDown = (event) => {
+            if (projectActionsMenuRef.current?.contains(event.target)) return;
+            setOpenProjectActionsId(null);
+        };
+
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape') setOpenProjectActionsId(null);
+        };
+
+        const handleViewportChange = () => {
+            updateProjectActionPlacement(openProjectActionsId);
+        };
+
+        document.addEventListener('pointerdown', handlePointerDown);
+        document.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('resize', handleViewportChange);
+        window.addEventListener('scroll', handleViewportChange, true);
+        dashboardMain?.addEventListener('scroll', handleViewportChange, { passive: true });
+        return () => {
+            document.removeEventListener('pointerdown', handlePointerDown);
+            document.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('resize', handleViewportChange);
+            window.removeEventListener('scroll', handleViewportChange, true);
+            dashboardMain?.removeEventListener('scroll', handleViewportChange);
+        };
+    }, [openProjectActionsId, updateProjectActionPlacement]);
+
     const openCreateKeyDialog = () => {
         setNewKeyName('');
         setCreatedAccessKey(null);
@@ -596,6 +731,7 @@ export default function Dashboard() {
             const createdKey = data.accessKey;
             const listedKey = { ...createdKey, token: null };
             setAccessKeys((current) => sortByCreatedDesc([listedKey, ...current.filter((key) => key.id !== createdKey.id)]));
+            setAccessKeysPage(1);
             setCreatedAccessKey(createdKey);
             setNewKeyName('');
             toast.success('Access key created. Copy it now; the full token is shown once.');
@@ -631,6 +767,7 @@ export default function Dashboard() {
                 body: JSON.stringify({ name: newProjectName.trim() }),
             });
             setProjects((current) => [data.project, ...current]);
+            setProjectsPage(1);
             setNewProjectName('');
             setActiveView('projects');
             toast.success('Project created.');
@@ -641,12 +778,27 @@ export default function Dashboard() {
         }
     };
 
+    const closeProjectActionMenu = () => {
+        setOpenProjectActionsId(null);
+    };
+
+    const toggleProjectActionMenu = (projectId, buttonElement) => {
+        if (openProjectActionsId === projectId) {
+            setOpenProjectActionsId(null);
+            return;
+        }
+        setProjectActionsPlacement(getProjectActionPlacement(projectId, buttonElement));
+        setOpenProjectActionsId(projectId);
+    };
+
     const startProjectEdit = (project) => {
+        closeProjectActionMenu();
         setEditingProjectId(project.id);
         setEditingProjectName(project.name || '');
     };
 
     const cancelProjectEdit = () => {
+        closeProjectActionMenu();
         setEditingProjectId(null);
         setEditingProjectName('');
     };
@@ -675,6 +827,11 @@ export default function Dashboard() {
         } finally {
             setUpdatingProjectId(null);
         }
+    };
+
+    const runProjectMenuAction = (action) => {
+        closeProjectActionMenu();
+        action();
     };
 
     const handleDeleteProject = async (project) => {
@@ -714,95 +871,157 @@ export default function Dashboard() {
         }
     };
 
+    const handleJobStatusFilterChange = (value) => {
+        setJobStatusFilter(value);
+        setActiveJobsPage(1);
+        setHistoryJobsPage(1);
+    };
+
+    const handleJobSearchChange = (value) => {
+        setJobSearchQuery(value);
+        setActiveJobsPage(1);
+        setHistoryJobsPage(1);
+    };
+
+    const handleFileSearchChange = (value) => {
+        setFileSearchQuery(value);
+        setFilesPage(1);
+    };
+
     const resetJobFilters = () => {
         setJobStatusFilter('all');
         setJobSearchQuery('');
+        setActiveJobsPage(1);
+        setHistoryJobsPage(1);
     };
 
     const resetFileFilters = () => {
         setFileSearchQuery('');
+        setFilesPage(1);
     };
 
     const viewProjectRenders = (project) => {
+        closeProjectActionMenu();
         setJobStatusFilter('all');
         setJobSearchQuery(project.name || project.id);
+        setActiveJobsPage(1);
+        setHistoryJobsPage(1);
         setActiveView('renders');
     };
 
     const viewProjectFiles = (project) => {
+        closeProjectActionMenu();
         setFileSearchQuery(project.name || project.id);
+        setFilesPage(1);
         setActiveView('files');
     };
 
     const renderJobRow = (job) => {
         const expanded = expandedJobId === job.jobId;
         return (
-            <article className="queue-row" key={job.jobId}>
-                <div className="queue-main">
-                    <div className="queue-identity">
-                        <div className="job-id">{job.jobId}</div>
-                        <div className="job-meta">
-                            <span>{projectLabel(job)}</span>
+            <Fragment key={job.jobId}>
+                <tr className="data-row">
+                    <td data-label="Job">
+                        <div className="table-primary job-id">{job.fileName || job.jobId}</div>
+                        <div className="table-meta">
+                            <span>{job.jobId}</span>
                             <span>{renderTypeLabel(job)}</span>
                             <span>{outputLabel(job.settings)}</span>
-                            <span>Submitted {formatDate(job.createdAt)}</span>
                         </div>
-                    </div>
-                    <StatusPill status={job.status} />
-                    <ProgressBar job={job} />
-                    <div className="queue-money">
-                        <span>{job.status === 'COMPLETED' ? formatUsd(job.priceUsd) : 'Pending'}</span>
-                        <small>{job.status === 'COMPLETED' ? formatDuration(job.billableSeconds) : 'Bill on completion'}</small>
-                    </div>
-                    <div className="queue-actions">
-                        <button className="button compact-button" type="button" onClick={() => setExpandedJobId(expanded ? null : job.jobId)}>
-                            {expanded ? 'Hide' : 'Details'}
-                        </button>
-                        {ACTIVE_STATUSES.has(job.status) && (
-                            <button className="button compact-button danger" type="button" onClick={() => handleCancelJob(job.jobId)}>
-                                Cancel
+                    </td>
+                    <td data-label="Project">{projectLabel(job)}</td>
+                    <td data-label="Status"><StatusPill status={job.status} /></td>
+                    <td data-label="Progress"><ProgressBar job={job} /></td>
+                    <td data-label="Submitted">{formatDate(job.createdAt)}</td>
+                    <td data-label="Duration / cost">
+                        <div className="table-money">
+                            <span>{job.status === 'COMPLETED' ? formatDuration(job.billableSeconds) : 'Pending'}</span>
+                            <small>{job.status === 'COMPLETED' ? formatUsd(job.priceUsd) : 'Bill on completion'}</small>
+                        </div>
+                    </td>
+                    <td data-label="Actions">
+                        <div className="table-actions">
+                            <button className="button compact-button" type="button" onClick={() => setExpandedJobId(expanded ? null : job.jobId)}>
+                                {expanded ? 'Hide' : 'Details'}
                             </button>
-                        )}
-                        {job.downloadUrl && (
-                            <a className="link-button compact-button" href={job.downloadUrl} target="_blank" rel="noopener noreferrer">
-                                <Download size={15} /> Download
-                            </a>
-                        )}
-                    </div>
-                </div>
-
+                            {ACTIVE_STATUSES.has(job.status) && (
+                                <button className="button compact-button danger" type="button" onClick={() => handleCancelJob(job.jobId)}>
+                                    Cancel
+                                </button>
+                            )}
+                            {job.downloadUrl && (
+                                <a className="link-button compact-button" href={job.downloadUrl} target="_blank" rel="noopener noreferrer">
+                                    <Download size={15} /> Download
+                                </a>
+                            )}
+                        </div>
+                    </td>
+                </tr>
                 {expanded && (
-                    <div className="job-details queue-details">
-                        <div><span>Engine</span><strong>{job.settings?.engine || 'Unknown'}</strong></div>
-                        <div><span>Samples</span><strong>{job.settings?.samples || '—'}</strong></div>
-                        <div><span>Resolution</span><strong>{job.settings?.resolutionPct || job.settings?.resolution_pct || '—'}%</strong></div>
-                        <div><span>Format</span><strong>{job.settings?.outputFormat || job.settings?.output_format || '—'}</strong></div>
-                        <div><span>Scene</span><strong>{job.settings?.scene || 'Default'}</strong></div>
-                        <div><span>Camera</span><strong>{job.settings?.camera || 'Scene camera'}</strong></div>
-                        <div><span>Last checked</span><strong>{formatDate(job.lastCheckedAt || job.updatedAt)}</strong></div>
-                        <div><span>Completed</span><strong>{job.completedAt ? formatDate(job.completedAt) : '—'}</strong></div>
-                        {job.progress?.message && <div className="detail-wide"><span>Progress message</span><strong>{job.progress.message}</strong></div>}
-                        {job.error && <div className="detail-wide"><span>Error</span><strong>{job.error}</strong></div>}
-                    </div>
+                    <tr className="data-row-details">
+                        <td colSpan={7}>
+                            <div className="job-details queue-details">
+                                <div><span>Engine</span><strong>{job.settings?.engine || 'Unknown'}</strong></div>
+                                <div><span>Samples</span><strong>{job.settings?.samples || '—'}</strong></div>
+                                <div><span>Resolution</span><strong>{job.settings?.resolutionPct || job.settings?.resolution_pct || '—'}%</strong></div>
+                                <div><span>Format</span><strong>{job.settings?.outputFormat || job.settings?.output_format || '—'}</strong></div>
+                                <div><span>Scene</span><strong>{job.settings?.scene || 'Default'}</strong></div>
+                                <div><span>Camera</span><strong>{job.settings?.camera || 'Scene camera'}</strong></div>
+                                <div><span>Last checked</span><strong>{formatDate(job.lastCheckedAt || job.updatedAt)}</strong></div>
+                                <div><span>Completed</span><strong>{job.completedAt ? formatDate(job.completedAt) : '—'}</strong></div>
+                                {job.progress?.message && <div className="detail-wide"><span>Progress message</span><strong>{job.progress.message}</strong></div>}
+                                {job.error && <div className="detail-wide"><span>Error</span><strong>{job.error}</strong></div>}
+                            </div>
+                        </td>
+                    </tr>
                 )}
-            </article>
+            </Fragment>
         );
     };
 
-    const renderJobSection = (title, description, rows, emptyTitle, emptyText) => (
-        <section className="queue-section">
-            <div className="queue-section-head">
-                <div>
-                    <h3>{title}</h3>
-                    <p className="muted">{description}</p>
-                </div>
-                <span className="count-chip">{rows.length}</span>
-            </div>
-            {rows.length === 0 ? <EmptyState title={emptyTitle} text={emptyText} /> : <div className="queue-table">{rows.map(renderJobRow)}</div>}
-        </section>
+    const renderJobTable = (rows, label) => (
+        <div className="data-table-wrap queue-table" aria-live="polite">
+            <table className="data-table jobs-data-table" aria-label={label}>
+                <thead>
+                    <tr>
+                        <th scope="col">Job / file</th>
+                        <th scope="col">Project</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Progress</th>
+                        <th scope="col">Submitted</th>
+                        <th scope="col">Duration / cost</th>
+                        <th scope="col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{rows.map(renderJobRow)}</tbody>
+            </table>
+        </div>
     );
 
-    const renderAccessKeys = () => (
+    const renderJobSection = (title, description, rows, emptyTitle, emptyText, page, onPageChange) => {
+        const pagination = paginateItems(rows, page);
+        return (
+            <section className="queue-section">
+                <div className="queue-section-head">
+                    <div>
+                        <h3>{title}</h3>
+                        <p className="muted">{description}</p>
+                    </div>
+                    <span className="count-chip">{rows.length}</span>
+                </div>
+                {rows.length === 0 ? <EmptyState title={emptyTitle} text={emptyText} /> : (
+                    <>
+                        {renderJobTable(pagination.items, title)}
+                        <PaginationControls label={title} totalItems={rows.length} page={pagination.page} onPageChange={onPageChange} />
+                    </>
+                )}
+            </section>
+        );
+    };
+
+    const renderAccessKeys = () => {
+        const accessKeyPagination = paginateItems(sortedAccessKeys, accessKeysPage);
+        return (
         <motion.div className="panel dashboard-panel access-management-panel" data-tour="access-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-head access-panel-head">
                 <div>
@@ -833,34 +1052,52 @@ export default function Dashboard() {
                         action={<button className="button primary" type="button" onClick={openCreateKeyDialog}><Plus size={16} /> Create first key</button>}
                     />
                 ) : null}
-                {!loading.keys && !errors.keys && sortedAccessKeys.map((key) => (
-                    <article className="access-key-row" key={key.id}>
-                        <div className="access-key-icon"><KeyRound size={18} /></div>
-                        <div className="access-key-main">
-                            <div className="access-key-title-row">
-                                <strong>{key.name || 'Access key'}</strong>
-                                <span className="pill access-status active">Active</span>
-                            </div>
-                            <div className="access-key-meta">
-                                <span>Created {formatDate(key.createdAt)}</span>
-                                <span>{key.lastUsedAt ? `Last used ${formatDate(key.lastUsedAt)}` : 'Never used'}</span>
-                                <span>Preview {key.preview || 'Unavailable'}</span>
-                            </div>
-                            <div className="access-key-preview" aria-label="Masked access key preview">
-                                <code>{key.preview || 'rs_live_••••••••••••••••••••'}</code>
-                                <span>Full token hidden after creation</span>
-                            </div>
-                        </div>
-                        <div className="access-key-actions">
-                            <button className="button danger compact-button" type="button" onClick={() => setPendingDeleteKey(key)}>
-                                <Trash2 size={15} /> Revoke
-                            </button>
-                        </div>
-                    </article>
-                ))}
+                {!loading.keys && !errors.keys && sortedAccessKeys.length > 0 ? (
+                    <>
+                    <div className="data-table-wrap">
+                        <table className="data-table access-key-table" aria-label="Access keys">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Key label</th>
+                                    <th scope="col">Preview</th>
+                                    <th scope="col">Created</th>
+                                    <th scope="col">Last used</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {accessKeyPagination.items.map((key) => (
+                                    <tr className="data-row" key={key.id}>
+                                        <td data-label="Key label"><div className="table-primary">{key.name || 'Access key'}</div></td>
+                                        <td data-label="Preview">
+                                            <div className="access-key-preview" aria-label="Masked access key preview">
+                                                <code>{key.preview || 'rs_live_••••••••••••••••••••'}</code>
+                                                <span>Full token hidden</span>
+                                            </div>
+                                        </td>
+                                        <td data-label="Created">{formatDate(key.createdAt)}</td>
+                                        <td data-label="Last used">{key.lastUsedAt ? formatDate(key.lastUsedAt) : 'Never used'}</td>
+                                        <td data-label="Status"><span className="pill access-status active">Active</span></td>
+                                        <td data-label="Actions">
+                                            <div className="table-actions">
+                                                <button className="button danger compact-button" type="button" onClick={() => setPendingDeleteKey(key)}>
+                                                    <Trash2 size={15} /> Revoke
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    <PaginationControls label="Access keys" totalItems={sortedAccessKeys.length} page={accessKeyPagination.page} onPageChange={setAccessKeysPage} />
+                    </>
+                ) : null}
             </div>
         </motion.div>
-    );
+        );
+    };
 
     const renderCreateKeyDialog = () => {
         if (!accessKeyDialogOpen) return null;
@@ -975,7 +1212,9 @@ export default function Dashboard() {
         );
     };
 
-    const renderProjects = () => (
+    const renderProjects = () => {
+        const projectPagination = paginateItems(projects, projectsPage);
+        return (
         <motion.div className="panel dashboard-panel full" data-tour="projects-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-head project-panel-head">
                 <div>
@@ -1001,70 +1240,122 @@ export default function Dashboard() {
                 </button>
             </form>
 
-            <div className="project-grid project-grid-pro">
+            <div className="project-table-region" aria-live="polite">
                 {loading.projects ? <LoadingState label="Loading projects..." /> : null}
                 {!loading.projects && errors.projects ? <ErrorState message={errors.projects} onRetry={loadProjects} /> : null}
                 {!loading.projects && !errors.projects && projects.length === 0 ? <EmptyState icon={FolderKanban} title="No projects yet" text="Create projects for client work, shot sequences, milestones, experiments, or internal tests." /> : null}
-                {!loading.projects && !errors.projects && projects.map((project) => {
-                    const jobCount = stats.jobsByProject.get(project.id) || project.jobCount || 0;
-                    const fileCount = stats.filesByProject.get(project.id) || 0;
-                    const isEditing = editingProjectId === project.id;
-                    return (
-                        <article className="project-card project-card-pro" key={project.id}>
-                            <div className="project-card-top">
-                                <div className="project-icon"><FolderKanban size={22} /></div>
-                                {isEditing ? (
-                                    <form className="project-edit-form" onSubmit={(event) => handleUpdateProject(event, project)}>
-                                        <input
-                                            type="text"
-                                            maxLength={80}
-                                            value={editingProjectName}
-                                            onChange={(event) => setEditingProjectName(event.target.value)}
-                                            disabled={updatingProjectId === project.id}
-                                            autoFocus
-                                        />
-                                        <button className="button compact-button primary" type="submit" disabled={updatingProjectId === project.id || !editingProjectName.trim()}>
-                                            <Save size={15} /> Save
-                                        </button>
-                                        <button className="button compact-button" type="button" onClick={cancelProjectEdit}>
-                                            <X size={15} /> Cancel
-                                        </button>
-                                    </form>
-                                ) : (
-                                    <div>
-                                        <h3>{project.name}</h3>
-                                        <p>Updated {formatDate(project.updatedAt || project.createdAt)}</p>
-                                    </div>
-                                )}
-                            </div>
-                            <div className="project-stats-row">
-                                <span><strong>{jobCount}</strong> jobs</span>
-                                <span><strong>{fileCount}</strong> files</span>
-                                <span><strong>{jobCount ? Math.round((fileCount / jobCount) * 100) : 0}%</strong> delivered</span>
-                            </div>
-                            <code>{project.id}</code>
-                            <div className="button-row compact-row project-actions">
-                                <button className="button" type="button" onClick={() => viewProjectRenders(project)}>
-                                    View jobs
-                                </button>
-                                <button className="button" type="button" onClick={() => viewProjectFiles(project)}>
-                                    View files
-                                </button>
-                                {!isEditing && (
-                                    <button className="button" type="button" onClick={() => startProjectEdit(project)}>
-                                        <Edit3 size={16} /> Rename
-                                    </button>
-                                )}
-                                <button className="button danger" type="button" onClick={() => handleDeleteProject(project)}>
-                                    <Trash2 size={16} /> Delete
-                                </button>
-                            </div>
-                        </article>
-                    );
-                })}
+                {!loading.projects && !errors.projects && projects.length > 0 ? (
+                    <>
+                    <div className="data-table-wrap project-table-wrap">
+                        <table className="data-table projects-data-table" aria-label="Projects">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Name</th>
+                                    <th scope="col">Jobs</th>
+                                    <th scope="col">Delivered</th>
+                                    <th scope="col">Updated</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {projectPagination.items.map((project) => {
+                                    const jobCount = stats.jobsByProject.get(project.id) || project.jobCount || 0;
+                                    const fileCount = stats.filesByProject.get(project.id) || 0;
+                                    const isEditing = editingProjectId === project.id;
+                                    const actionsMenuOpen = openProjectActionsId === project.id;
+                                    const editFormId = `project-edit-${project.id}`;
+                                    return (
+                                        <tr className="data-row" key={project.id}>
+                                            <td data-label="Name">
+                                                {isEditing ? (
+                                                    <form id={editFormId} className="project-edit-form" onSubmit={(event) => handleUpdateProject(event, project)}>
+                                                        <input
+                                                            type="text"
+                                                            maxLength={80}
+                                                            value={editingProjectName}
+                                                            onChange={(event) => setEditingProjectName(event.target.value)}
+                                                            disabled={updatingProjectId === project.id}
+                                                            autoFocus
+                                                        />
+                                                    </form>
+                                                ) : (
+                                                    <div>
+                                                        <div className="table-primary">{project.name}</div>
+                                                        <code className="inline-code">{project.id}</code>
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td data-label="Jobs"><strong>{jobCount}</strong></td>
+                                            <td data-label="Delivered">
+                                                <div className="table-metric-stack">
+                                                    <span><strong>{fileCount}</strong> files</span>
+                                                    <span>{jobCount ? Math.round((fileCount / jobCount) * 100) : 0}% complete</span>
+                                                </div>
+                                            </td>
+                                            <td data-label="Updated">{formatDate(project.updatedAt || project.createdAt)}</td>
+                                            <td data-label="Actions">
+                                                <div className="project-actions-menu" ref={actionsMenuOpen ? projectActionsMenuRef : null}>
+                                                    <button
+                                                        ref={(node) => {
+                                                            if (node) projectActionButtonRefs.current.set(project.id, node);
+                                                            else projectActionButtonRefs.current.delete(project.id);
+                                                        }}
+                                                        className="button compact-button project-actions-toggle"
+                                                        type="button"
+                                                        aria-haspopup="menu"
+                                                        aria-expanded={actionsMenuOpen}
+                                                        aria-controls={`project-actions-${project.id}`}
+                                                        aria-label={`Project actions for ${project.name}`}
+                                                        onClick={(event) => toggleProjectActionMenu(project.id, event.currentTarget)}
+                                                    >
+                                                        <span aria-hidden="true">⋯</span>
+                                                    </button>
+                                                    {actionsMenuOpen && (
+                                                        <div className={`project-actions-dropdown placement-${projectActionsPlacement}`} id={`project-actions-${project.id}`} role="menu" aria-label={`Actions for ${project.name}`}>
+                                                            {isEditing ? (
+                                                                <>
+                                                                    <button
+                                                                        className="project-menu-item primary"
+                                                                        type="submit"
+                                                                        form={editFormId}
+                                                                        role="menuitem"
+                                                                        disabled={updatingProjectId === project.id || !editingProjectName.trim()}
+                                                                    >
+                                                                        <Save size={15} /> Save rename
+                                                                    </button>
+                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={cancelProjectEdit}>
+                                                                        <X size={15} /> Cancel rename
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={() => viewProjectRenders(project)}>View jobs</button>
+                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={() => viewProjectFiles(project)}>View files</button>
+                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={() => startProjectEdit(project)}>
+                                                                        <Edit3 size={15} /> Rename
+                                                                    </button>
+                                                                    <button className="project-menu-item danger" type="button" role="menuitem" onClick={() => runProjectMenuAction(() => handleDeleteProject(project))}>
+                                                                        <Trash2 size={15} /> Delete
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    <PaginationControls label="Projects" totalItems={projects.length} page={projectPagination.page} onPageChange={setProjectsPage} />
+                    </>
+                ) : null}
             </div>
         </motion.div>
-    );
+        );
+    };
 
     const renderJobs = ({ overview = false } = {}) => {
         const previewJobs = overview ? jobs.slice(0, 6) : null;
@@ -1084,11 +1375,11 @@ export default function Dashboard() {
                     <div className="list-toolbar list-toolbar-simple">
                         <label>
                             <span>Status</span>
-                            <select value={jobStatusFilter} onChange={(event) => setJobStatusFilter(event.target.value)}>
+                            <select value={jobStatusFilter} onChange={(event) => handleJobStatusFilterChange(event.target.value)}>
                                 {STATUS_OPTIONS.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
                             </select>
                         </label>
-                        <SearchBox value={jobSearchQuery} onChange={setJobSearchQuery} placeholder="Search job, scene, camera, project..." />
+                        <SearchBox value={jobSearchQuery} onChange={handleJobSearchChange} placeholder="Search job, scene, camera, project..." />
                         <button className="button" type="button" onClick={resetJobFilters} disabled={!hasJobFilters}>Clear filters</button>
                     </div>
                 )}
@@ -1103,7 +1394,7 @@ export default function Dashboard() {
                 {!loading.jobs && !errors.jobs && overview && (
                     previewJobs.length === 0
                         ? <EmptyState icon={Activity} title="No render jobs yet" text="Submit a render from Blender and it will appear here with real-time progress." />
-                        : <div className="queue-table compact-queue">{previewJobs.map(renderJobRow)}</div>
+                        : renderJobTable(previewJobs, 'Queue snapshot')
                 )}
                 {!loading.jobs && !errors.jobs && !overview && (
                     visibleJobs.length === 0 ? (
@@ -1115,8 +1406,8 @@ export default function Dashboard() {
                         />
                     ) : (
                         <div className="queue-stack">
-                            {renderJobSection('Active queue', 'Submitted, queued, and running renders ordered by newest first.', activeJobs, 'No active jobs', 'Running work will be pinned here as soon as it is submitted.')}
-                            {renderJobSection('History', 'Completed, failed, cancelled, and archived outcomes.', historyJobs, 'No history in this view', 'Completed and terminal jobs appear here after processing.')}
+                            {renderJobSection('Active queue', 'Submitted, queued, and running renders ordered by newest first.', activeJobs, 'No active jobs', 'Running work will be pinned here as soon as it is submitted.', activeJobsPage, setActiveJobsPage)}
+                            {renderJobSection('History', 'Completed, failed, cancelled, and archived outcomes.', historyJobs, 'No history in this view', 'Completed and terminal jobs appear here after processing.', historyJobsPage, setHistoryJobsPage)}
                         </div>
                     )
                 )}
@@ -1126,6 +1417,8 @@ export default function Dashboard() {
 
     const renderFiles = ({ overview = false } = {}) => {
         const previewFiles = overview ? files.slice(0, 5) : visibleFiles;
+        const filePagination = paginateItems(visibleFiles, filesPage);
+        const tableFiles = overview ? previewFiles : filePagination.items;
         return (
             <motion.div className="panel dashboard-panel full" data-tour={overview ? 'latest-files-panel' : 'files-panel'} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
                 <div className="panel-head queue-panel-head">
@@ -1140,7 +1433,7 @@ export default function Dashboard() {
 
                 {!overview && (
                     <div className="list-toolbar file-toolbar list-toolbar-simple">
-                        <SearchBox value={fileSearchQuery} onChange={setFileSearchQuery} placeholder="Search file, job ID, project..." />
+                        <SearchBox value={fileSearchQuery} onChange={handleFileSearchChange} placeholder="Search file, job ID, project..." />
                         <button className="button" type="button" onClick={resetFileFilters} disabled={!hasFileFilters}>Clear filters</button>
                     </div>
                 )}
@@ -1160,47 +1453,223 @@ export default function Dashboard() {
                     />
                 ) : null}
                 {!loading.files && !errors.files && previewFiles.length > 0 ? (
-                    <div className="file-library">
-                        {previewFiles.map((file) => {
-                            const absoluteUrl = file.downloadUrl ? new URL(file.downloadUrl, window.location.origin).href : '';
-                            return (
-                                <article className="file-card" key={file.jobId}>
-                                    <div className="file-icon"><FileArchive size={20} /></div>
-                                    <div className="file-copy">
-                                        <strong>{file.fileName || file.resultKey}</strong>
-                                        <div className="subtle">{projectLabel(file)} / Completed {formatDate(file.completedAt || file.createdAt)}</div>
-                                        <div className="file-meta-row">
-                                            <span>{file.outputFormat || 'Output'}</span>
-                                            <span>{formatDuration(file.billableSeconds)} render time</span>
-                                            <span>{formatUsd(file.priceUsd)} deducted</span>
-                                            <span>{file.jobId}</span>
-                                        </div>
-                                    </div>
-                                    <div className="button-row compact-row file-actions">
-                                        {file.downloadUrl ? (
-                                            <a className="link-button" href={file.downloadUrl} target="_blank" rel="noopener noreferrer">
-                                                <ExternalLink size={16} /> Open
-                                            </a>
-                                        ) : (
-                                            <button className="button" disabled>Open</button>
-                                        )}
-                                        <button className="button" type="button" disabled={!file.downloadUrl} onClick={() => copyToClipboard(absoluteUrl, 'file link')}>
-                                            <Copy size={16} /> Copy link
-                                        </button>
-                                        {file.downloadUrl && (
-                                            <a className="link-button" href={file.downloadUrl} download>
-                                                <Download size={16} /> Download
-                                            </a>
-                                        )}
-                                    </div>
-                                </article>
-                            );
-                        })}
+                    <div className="data-table-wrap file-library">
+                        <table className="data-table files-data-table" aria-label={overview ? 'Latest deliveries' : 'Rendered files'}>
+                            <thead>
+                                <tr>
+                                    <th scope="col">File</th>
+                                    <th scope="col">Project</th>
+                                    <th scope="col">Created</th>
+                                    <th scope="col">Type</th>
+                                    <th scope="col">Render metrics</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {tableFiles.map((file) => {
+                                    const absoluteUrl = file.downloadUrl ? new URL(file.downloadUrl, window.location.origin).href : '';
+                                    return (
+                                        <tr className="data-row" key={file.id || file.jobId || file.resultKey}>
+                                            <td data-label="File">
+                                                <div className="table-primary">{file.fileName || file.resultKey}</div>
+                                                <div className="table-meta"><span>{file.jobId}</span></div>
+                                            </td>
+                                            <td data-label="Project">{projectLabel(file)}</td>
+                                            <td data-label="Created">{formatDate(file.completedAt || file.createdAt)}</td>
+                                            <td data-label="Type">{file.outputFormat || file.contentType || 'Output'}</td>
+                                            <td data-label="Render metrics">
+                                                <div className="table-metric-stack">
+                                                    <span>{formatDuration(file.billableSeconds)} render time</span>
+                                                    <span>{formatUsd(file.priceUsd)} deducted</span>
+                                                </div>
+                                            </td>
+                                            <td data-label="Actions">
+                                                <div className="table-actions">
+                                                    {file.downloadUrl ? (
+                                                        <a className="link-button compact-button" href={file.downloadUrl} target="_blank" rel="noopener noreferrer">
+                                                            <ExternalLink size={15} /> Open
+                                                        </a>
+                                                    ) : (
+                                                        <button className="button compact-button" disabled>Open</button>
+                                                    )}
+                                                    <button className="button compact-button" type="button" disabled={!file.downloadUrl} onClick={() => copyToClipboard(absoluteUrl, 'file link')}>
+                                                        <Copy size={15} /> Copy link
+                                                    </button>
+                                                    {file.downloadUrl && (
+                                                        <a className="link-button compact-button" href={file.downloadUrl} download>
+                                                            <Download size={15} /> Download
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
                     </div>
+                ) : null}
+                {!overview && !loading.files && !errors.files && previewFiles.length > 0 ? (
+                    <PaginationControls label="Rendered files" totalItems={visibleFiles.length} page={filePagination.page} onPageChange={setFilesPage} />
                 ) : null}
             </motion.div>
         );
     };
+
+    const renderUsage = () => {
+        const usagePagination = paginateItems(jobs, usageJobsPage);
+        return (
+            <motion.div className="panel dashboard-panel full usage-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+                <div className="panel-head usage-panel-head">
+                    <div>
+                        <h2>Usage details</h2>
+                        <p className="muted">Aggregated from your render jobs and delivered files across the whole workspace.</p>
+                    </div>
+                    <button className="button" type="button" onClick={loadAll} disabled={loading.jobs || loading.files}>
+                        <RefreshCcw size={16} className={loading.jobs || loading.files ? 'spin' : ''} /> Refresh usage
+                    </button>
+                </div>
+
+                <div className="dashboard-metrics-grid usage-metrics-grid">
+                    <MetricCard icon={Activity} label="Total renders" value={stats.totalJobs} detail={`${stats.activeJobs} active now`} tone="active" />
+                    <MetricCard icon={CheckCircle2} label="Completed" value={stats.completedJobs} detail={`${stats.totalFiles} delivered files`} tone="good" />
+                    <MetricCard icon={XCircle} label="Failed / cancelled" value={stats.failedJobs + stats.cancelledJobs} detail={`${stats.failedJobs} failed / ${stats.cancelledJobs} cancelled`} tone="danger" />
+                    <MetricCard icon={Clock3} label="Billable duration" value={formatDuration(stats.billableSeconds)} detail="Recorded on completed billed jobs" />
+                    <MetricCard icon={WalletCards} label="Total spend" value={formatUsd(stats.totalSpend)} detail="Calculated from existing job costs" />
+                </div>
+
+                <section className="queue-section usage-breakdown-section">
+                    <div className="queue-section-head">
+                        <div>
+                            <h3>Render usage ledger</h3>
+                            <p className="muted">Every render remains visible here without project-scoped filtering.</p>
+                        </div>
+                        <span className="count-chip">{jobs.length}</span>
+                    </div>
+
+                    {loading.jobs ? <LoadingState label="Loading usage details..." /> : null}
+                    {!loading.jobs && errors.jobs ? <ErrorState message={errors.jobs} onRetry={loadJobs} /> : null}
+                    {!loading.jobs && !errors.jobs && jobs.length === 0 ? (
+                        <EmptyState icon={BarChart3} title="No usage recorded yet" text="Submitted render jobs will appear here with status, delivery, duration, and cost details." />
+                    ) : null}
+                    {!loading.jobs && !errors.jobs && jobs.length > 0 ? (
+                        <>
+                            <div className="data-table-wrap usage-table-wrap">
+                                <table className="data-table usage-data-table" aria-label="Render usage details">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Render</th>
+                                            <th scope="col">Project</th>
+                                            <th scope="col">Status</th>
+                                            <th scope="col">Delivery</th>
+                                            <th scope="col">Billable duration</th>
+                                            <th scope="col">Spend</th>
+                                            <th scope="col">Submitted / completed</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {usagePagination.items.map((job) => (
+                                            <tr className="data-row" key={job.jobId}>
+                                                <td data-label="Render">
+                                                    <div className="table-primary job-id">{job.fileName || job.jobId}</div>
+                                                    <div className="table-meta">
+                                                        <span>{job.jobId}</span>
+                                                        <span>{renderTypeLabel(job)}</span>
+                                                    </div>
+                                                </td>
+                                                <td data-label="Project">{projectLabel(job)}</td>
+                                                <td data-label="Status"><StatusPill status={job.status} /></td>
+                                                <td data-label="Delivery">{job.resultKey ? 'Delivered file' : job.status === 'COMPLETED' ? 'Completed without file' : 'Not delivered yet'}</td>
+                                                <td data-label="Billable duration">{job.billedAt || job.status === 'COMPLETED' ? formatDuration(job.billableSeconds) : 'Pending'}</td>
+                                                <td data-label="Spend">{job.billedAt || job.status === 'COMPLETED' ? formatUsd(job.priceUsd) : 'Pending'}</td>
+                                                <td data-label="Submitted / completed">
+                                                    <div className="table-metric-stack">
+                                                        <span>Submitted {formatDate(job.createdAt)}</span>
+                                                        <span>Completed {job.completedAt ? formatDate(job.completedAt) : '—'}</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <PaginationControls label="Usage details" totalItems={jobs.length} page={usagePagination.page} onPageChange={setUsageJobsPage} />
+                        </>
+                    ) : null}
+                </section>
+            </motion.div>
+        );
+    };
+
+    const renderBilling = () => (
+        <motion.div className="panel dashboard-panel full billing-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+            <div className="panel-head billing-panel-head">
+                <div>
+                    <h2>Billing</h2>
+                    <p className="muted">Current credit balance is sourced from your account. Recharge records are shown only when an API exists.</p>
+                </div>
+                <button className="button" type="button" onClick={loadAll} disabled={loading.jobs || loading.files}>
+                    <RefreshCcw size={16} className={loading.jobs || loading.files ? 'spin' : ''} /> Refresh billing
+                </button>
+            </div>
+
+            <div className="dashboard-metrics-grid billing-metrics-grid">
+                <MetricCard icon={WalletCards} label="Current credit balance" value={formatUsd(user.starterBalanceUsd)} detail="Available account credit" tone="good" />
+                <MetricCard icon={ReceiptText} label="Render spend" value={formatUsd(stats.totalSpend)} detail={`${formatDuration(stats.billableSeconds)} billed from completed jobs`} />
+                <MetricCard icon={CheckCircle2} label="Billed renders" value={stats.completedJobs} detail={`${stats.totalFiles} delivered files`} tone="active" />
+            </div>
+
+            <section className="queue-section billing-summary-section">
+                <div className="queue-section-head">
+                    <div>
+                        <h3>Account credit summary</h3>
+                        <p className="muted">Credit and render deductions are based on existing account and job fields.</p>
+                    </div>
+                </div>
+                <div className="data-table-wrap billing-table-wrap">
+                    <table className="data-table billing-data-table" aria-label="Account credit summary">
+                        <thead>
+                            <tr>
+                                <th scope="col">Item</th>
+                                <th scope="col">Amount</th>
+                                <th scope="col">Source</th>
+                                <th scope="col">Last updated</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr className="data-row">
+                                <td data-label="Item"><div className="table-primary">Current credit balance</div></td>
+                                <td data-label="Amount">{formatUsd(user.starterBalanceUsd)}</td>
+                                <td data-label="Source">Account field starterBalanceUsd</td>
+                                <td data-label="Last updated">{formatDate(user.updatedAt || user.createdAt)}</td>
+                            </tr>
+                            <tr className="data-row">
+                                <td data-label="Item"><div className="table-primary">Total render deductions</div></td>
+                                <td data-label="Amount">{formatUsd(stats.totalSpend)}</td>
+                                <td data-label="Source">Completed job costs</td>
+                                <td data-label="Last updated">{jobs[0]?.createdAt ? formatDate(jobs[0].createdAt) : 'No jobs yet'}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section className="queue-section recharge-history-section">
+                <div className="queue-section-head">
+                    <div>
+                        <h3>Recharge history</h3>
+                        <p className="muted">No recharge or payment records are exposed by the current backend schema or APIs.</p>
+                    </div>
+                    <span className="count-chip">0</span>
+                </div>
+                <EmptyState
+                    icon={ReceiptText}
+                    title="No recharge history available yet"
+                    text="This account currently exposes credit balance and render deductions only. Recharge records will appear here when a billing/recharge API is added."
+                />
+            </section>
+        </motion.div>
+    );
 
     const getTourPanelStyle = () => {
         if (!tourTargetRect || typeof window === 'undefined' || window.innerWidth <= 760) return {};
@@ -1322,7 +1791,9 @@ export default function Dashboard() {
                 {activeView === 'projects' && <div className="dashboard-grid operations-grid">{renderProjects()}</div>}
                 {activeView === 'renders' && <div className="dashboard-grid operations-grid">{renderJobs()}</div>}
                 {activeView === 'files' && <div className="dashboard-grid operations-grid">{renderFiles()}</div>}
-                {activeView === 'access' && <div className="dashboard-grid two-col"><div className="helper-panel"><KeyRound size={22} /><h2>Connect Blender</h2><p className="muted">Create an access key, paste it into the RenderSphere add-on preferences, then use the Scene and Output panels to submit jobs.</p></div>{renderAccessKeys()}</div>}
+                {activeView === 'usage' && <div className="dashboard-grid operations-grid">{renderUsage()}</div>}
+                {activeView === 'billing' && <div className="dashboard-grid operations-grid">{renderBilling()}</div>}
+                {activeView === 'access' && <div className="dashboard-grid operations-grid">{renderAccessKeys()}</div>}
             </section>
             {renderCreateKeyDialog()}
             {renderDeleteKeyDialog()}

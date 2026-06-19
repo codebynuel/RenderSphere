@@ -1,6 +1,16 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, Moon, Sun } from 'lucide-react';
+import { LogOut, Moon, Sun, WalletCards } from 'lucide-react';
+import { formatUsd } from '../utils/api';
+
+function getUserDisplayName(user) {
+    return user?.name || user?.displayName || user?.email || 'Account';
+}
+
+function getUserInitial(user) {
+    const displayName = getUserDisplayName(user).trim();
+    return (displayName.charAt(0) || 'U').toUpperCase();
+}
 
 export default function Navbar({ theme = 'dark', onToggleTheme }) {
     const location = useLocation();
@@ -24,7 +34,16 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                 </button>
                 {isApp && (
                     <>
-                        <span className="account-label">{user?.email || 'Not signed in'}</span>
+                        <div className="account-summary" aria-label="Signed-in account summary">
+                            <div className="profile-avatar" aria-hidden="true">{getUserInitial(user)}</div>
+                            <div className="account-copy">
+                                <span className="account-name">{getUserDisplayName(user)}</span>
+                                <span className="account-email">{user?.email || 'Not signed in'}</span>
+                            </div>
+                            <span className="account-balance" title="Current credit balance">
+                                <WalletCards size={15} /> {formatUsd(user?.starterBalanceUsd)}
+                            </span>
+                        </div>
                         <button className="button" type="button" onClick={logout} title="Sign out">
                             <LogOut size={16} /> Sign out
                         </button>

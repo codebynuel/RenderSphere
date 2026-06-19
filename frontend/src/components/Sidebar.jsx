@@ -1,10 +1,12 @@
-import { Activity, Download, FolderKanban, KeyRound, LayoutDashboard } from 'lucide-react';
+import { Activity, BarChart3, Download, FolderKanban, KeyRound, LayoutDashboard, ReceiptText } from 'lucide-react';
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'renders', label: 'Render queue', icon: Activity },
   { id: 'files', label: 'Rendered files', icon: Download },
+  { id: 'usage', label: 'Usage', icon: BarChart3 },
+  { id: 'billing', label: 'Billing', icon: ReceiptText },
   { id: 'access', label: 'Access keys', icon: KeyRound },
 ];
 

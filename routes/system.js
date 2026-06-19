@@ -18,6 +18,10 @@ function createSystemRouter({ config }) {
           maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
           maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
           renderPricePerSecondUsd: config.renderPricePerSecondUsd,
+          renderEstimateBaseSecondsPerFrame: config.renderEstimateBaseSecondsPerFrame,
+          minRenderReservationUsd: config.minRenderReservationUsd,
+          defaultRenderMaxBudgetUsd: config.defaultRenderMaxBudgetUsd,
+          maxRenderBudgetUsd: config.maxRenderBudgetUsd,
           minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
         },
       });
@@ -39,6 +43,10 @@ function createSystemRouter({ config }) {
         maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
         maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
         renderPricePerSecondUsd: config.renderPricePerSecondUsd,
+        renderEstimateBaseSecondsPerFrame: config.renderEstimateBaseSecondsPerFrame,
+        minRenderReservationUsd: config.minRenderReservationUsd,
+        defaultRenderMaxBudgetUsd: config.defaultRenderMaxBudgetUsd,
+        maxRenderBudgetUsd: config.maxRenderBudgetUsd,
         minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
       },
     });

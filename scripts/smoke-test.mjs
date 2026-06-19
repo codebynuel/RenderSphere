@@ -49,6 +49,12 @@ const serverEnv = {
   RENDERSPHERE_ADMIN_TOKEN: 'smoke-admin',
   RENDERSPHERE_FREE_RENDER_CREDITS_USD: '5',
   RENDERSPHERE_MIN_RENDER_START_BALANCE_USD: '6',
+  RENDERSPHERE_RENDER_ESTIMATE_BASE_SECONDS_PER_FRAME: '10',
+  RENDERSPHERE_MIN_RENDER_RESERVATION_USD: '0.50',
+  RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD: '2.00',
+  RENDERSPHERE_MAX_RENDER_BUDGET_USD: '20.00',
+  RENDERSPHERE_MOCK_RUNPOD: 'true',
+  RENDERSPHERE_JOB_POLL_INTERVAL_MS: '600000',
 };
 
 await runCommand('npx', ['prisma', 'generate'], serverEnv);
@@ -56,7 +62,8 @@ await runCommand('npx', ['prisma', 'db', 'push', '--force-reset'], serverEnv);
 Object.assign(process.env, serverEnv);
 
 const { prisma } = await import('../src/db.js');
-const { CREDIT_TRANSACTION_TYPES, applyCreditTransaction, chargeRenderCredits } = await import('../src/services/creditService.js');
+const { CREDIT_TRANSACTION_TYPES, applyCreditTransaction, chargeRenderCredits, grantCredits } = await import('../src/services/creditService.js');
+const { persistRunpodStatus } = await import('../src/services/jobService.js');
 
 const server = spawn(process.execPath, ['server.js'], {
   cwd: process.cwd(),
@@ -264,13 +271,161 @@ try {
       engine: 'CYCLES',
       outputFormat: 'PNG',
       denoiser: 'NONE',
+      maxBudgetUsd: 4.5,
     }),
   });
   if (underfundedRender.response.status !== 402) {
     throw new Error(`Expected underfunded render to return 402, got ${underfundedRender.response.status}.`);
   }
-  if (!underfundedRender.data.error?.includes('minimum balance')) {
-    throw new Error(`Expected underfunded render to return a clear minimum balance error, got ${underfundedRender.data.error || 'no error'}.`);
+  if (!underfundedRender.data.error?.includes('Insufficient prepaid credits')) {
+    throw new Error(`Expected underfunded render to return a clear prepaid credit error, got ${underfundedRender.data.error || 'no error'}.`);
+  }
+
+  await grantCredits({
+    userId: registered.user.id,
+    amountUsd: 10,
+    referenceType: 'smoke_test',
+    referenceId: 'reservation-coverage',
+    idempotencyKey: `smoke-reservation-grant:${registered.user.id}`,
+    metadata: { reason: 'reservation_smoke_coverage' },
+  });
+
+  const fundedUpload = await request('/api/get-upload-url', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({
+      fileName: 'funded-smoke.blend',
+      fileSizeBytes: 1024,
+    }),
+  });
+
+  const fundedRender = await request('/api/trigger-render', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({
+      fileKey: fundedUpload.key,
+      projectId: project.project.id,
+      engine: 'CYCLES',
+      outputFormat: 'PNG',
+      denoiser: 'NONE',
+      maxBudgetUsd: 2,
+    }),
+  });
+  if (!fundedRender.jobId || fundedRender.job?.billingState !== 'RESERVED') {
+    throw new Error('Funded render did not create a reserved job.');
+  }
+
+  const reservation = await prisma.creditTransaction.findFirst({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RENDER_RESERVATION_HOLD, jobId: fundedRender.jobId },
+  });
+  if (!reservation || Number(reservation.amountUsd) !== -2) {
+    throw new Error('Accepted render did not create the expected reservation hold transaction.');
+  }
+
+  const afterReservationUser = await prisma.user.findUnique({ where: { id: registered.user.id } });
+  if (Number(afterReservationUser.starterBalanceUsd) !== 12) {
+    throw new Error(`Expected balance 12 after reservation, got ${afterReservationUser.starterBalanceUsd}.`);
+  }
+
+  const completedJob = await persistRunpodStatus(registered.user.id, fundedRender.jobId, {
+    status: 'COMPLETED',
+    output: { result_key: `finished_renders/${fundedRender.jobId}.png` },
+    executionTime: 125000,
+  });
+  if (!completedJob?.billedAt || completedJob.billingState !== 'SETTLED' || Number(completedJob.priceUsd) !== 1.25) {
+    throw new Error('Completed render did not settle billing with the expected final charge.');
+  }
+
+  const completionCharge = await prisma.creditTransaction.findFirst({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RENDER_CHARGE, jobId: fundedRender.jobId },
+  });
+  const completionRelease = await prisma.creditTransaction.findFirst({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RESERVATION_RELEASE, jobId: fundedRender.jobId },
+  });
+  if (!completionCharge || Number(completionCharge.amountUsd) !== -1.25 || !completionRelease || Number(completionRelease.amountUsd) !== 2) {
+    throw new Error('Completed render did not record the expected charge and reservation release.');
+  }
+
+  await persistRunpodStatus(registered.user.id, fundedRender.jobId, {
+    status: 'COMPLETED',
+    output: { result_key: `finished_renders/${fundedRender.jobId}.png` },
+    executionTime: 125000,
+  });
+  const completionCharges = await prisma.creditTransaction.count({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RENDER_CHARGE, jobId: fundedRender.jobId },
+  });
+  const userAfterDuplicateCompletion = await prisma.user.findUnique({ where: { id: registered.user.id } });
+  if (completionCharges !== 1 || Number(userAfterDuplicateCompletion.starterBalanceUsd) !== 12.75) {
+    throw new Error('Completion billing was not idempotent or produced an unexpected balance.');
+  }
+  if (Number(userAfterDuplicateCompletion.starterBalanceUsd) < 0) throw new Error('Successful billing produced a negative balance.');
+
+  const cancelUpload = await request('/api/get-upload-url', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ fileName: 'cancel-smoke.blend', fileSizeBytes: 1024 }),
+  });
+  const cancelRender = await request('/api/trigger-render', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({
+      fileKey: cancelUpload.key,
+      projectId: project.project.id,
+      engine: 'CYCLES',
+      outputFormat: 'PNG',
+      denoiser: 'NONE',
+      maxBudgetUsd: 2,
+    }),
+  });
+  const cancelled = await rawRequest('/api/cancel-job', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ jobId: cancelRender.jobId }),
+  });
+  if (!cancelled.response.ok || cancelled.data.job?.billingState !== 'RELEASED') {
+    throw new Error('Cancelled render did not release the reservation hold.');
+  }
+
+  const cancelRelease = await prisma.creditTransaction.findFirst({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RESERVATION_RELEASE, jobId: cancelRender.jobId },
+  });
+  const userAfterCancel = await prisma.user.findUnique({ where: { id: registered.user.id } });
+  if (!cancelRelease || Number(cancelRelease.amountUsd) !== 2 || Number(userAfterCancel.starterBalanceUsd) !== 12.75) {
+    throw new Error('Cancellation did not restore the reserved credits.');
+  }
+
+  const failedJobId = `smoke-failed-${Date.now()}`;
+  await prisma.job.create({
+    data: {
+      jobId: failedJobId,
+      userId: registered.user.id,
+      projectId: project.project.id,
+      fileKey: `smoke-failed/${registered.user.id}.blend`,
+      status: 'SUBMITTED',
+      frameCount: 1,
+      maxBudgetUsd: 1,
+      reservedCreditsUsd: 1,
+      billingState: 'RESERVED',
+      billingMetadata: { reservationReferenceId: failedJobId },
+    },
+  });
+  await applyCreditTransaction({
+    userId: registered.user.id,
+    type: CREDIT_TRANSACTION_TYPES.RENDER_RESERVATION_HOLD,
+    amountUsd: 1,
+    referenceType: 'render_reservation',
+    referenceId: failedJobId,
+    jobId: failedJobId,
+    idempotencyKey: `render-reservation:${failedJobId}`,
+    metadata: { source: 'smoke_failed_job' },
+  });
+  const releasedFailedJob = await persistRunpodStatus(registered.user.id, failedJobId, { status: 'FAILED', error: 'Smoke render failure' });
+  const failedRelease = await prisma.creditTransaction.findFirst({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RESERVATION_RELEASE, jobId: failedJobId },
+  });
+  const userAfterFailure = await prisma.user.findUnique({ where: { id: registered.user.id } });
+  if (releasedFailedJob?.billingState !== 'RELEASED' || !failedRelease || Number(userAfterFailure.starterBalanceUsd) !== 12.75) {
+    throw new Error('Failed render did not release/refund its reservation hold.');
   }
 
   const summary = await request('/api/admin/summary', {
@@ -279,8 +434,8 @@ try {
   if (summary.users !== initialSummary.users + 1) {
     throw new Error(`Expected admin summary user count to increase by one, got ${summary.users - initialSummary.users}.`);
   }
-  if (summary.jobs !== initialSummary.jobs + 1) {
-    throw new Error(`Expected only the smoke ledger job to be present after underfunded render, job count changed from ${initialSummary.jobs} to ${summary.jobs}.`);
+  if (summary.jobs !== initialSummary.jobs + 4) {
+    throw new Error(`Expected smoke ledger, completed, cancelled, and failed jobs to be present, job count changed from ${initialSummary.jobs} to ${summary.jobs}.`);
   }
   if (summary.limits?.minRenderStartBalanceUsd !== 6) {
     throw new Error(`Expected admin summary minimum render start balance 6, got ${summary.limits?.minRenderStartBalanceUsd}.`);

@@ -12,6 +12,16 @@ export const CREDIT_TRANSACTION_TYPES = Object.freeze({
   ADMIN_ADJUSTMENT: 'ADMIN_ADJUSTMENT',
 });
 
+export class InsufficientCreditsError extends Error {
+  constructor({ requiredUsd, availableUsd }) {
+    super(`Insufficient prepaid credits. Required $${Number(requiredUsd).toFixed(2)}, available $${Number(availableUsd).toFixed(2)}.`);
+    this.name = 'InsufficientCreditsError';
+    this.status = 402;
+    this.requiredUsd = requiredUsd;
+    this.availableUsd = availableUsd;
+  }
+}
+
 export const CREDIT_ACTOR_TYPES = Object.freeze({
   USER: 'USER',
   ADMIN: 'ADMIN',
@@ -135,6 +145,7 @@ export async function applyCreditTransaction({
   idempotencyKey = null,
   metadata = null,
   auditEventType = null,
+  allowNegativeBalance = false,
 }) {
   if (!userId) throw new Error('userId is required for credit transactions.');
   if (!Object.values(CREDIT_TRANSACTION_TYPES).includes(type)) throw new Error(`Unsupported credit transaction type: ${type}`);
@@ -156,6 +167,12 @@ export async function applyCreditTransaction({
 
     const balanceBeforeMicros = moneyToMicros(user.starterBalanceUsd);
     const balanceAfterMicros = balanceBeforeMicros + signedMicros;
+    if (!allowNegativeBalance && balanceAfterMicros < 0n) {
+      throw new InsufficientCreditsError({
+        requiredUsd: microsToNumber(signedMicros < 0n ? -signedMicros : signedMicros),
+        availableUsd: microsToNumber(balanceBeforeMicros),
+      });
+    }
     const balanceAfterNumber = microsToNumber(balanceAfterMicros);
     const normalizedActor = normalizeActor(actor);
 
@@ -206,8 +223,70 @@ export async function applyCreditTransaction({
   return run(client);
 }
 
+export function renderReservationIdempotencyKey(referenceId) {
+  return `render-reservation:${referenceId}`;
+}
+
+export function renderReservationReleaseIdempotencyKey(referenceId) {
+  return `render-reservation-release:${referenceId}`;
+}
+
 export function renderChargeIdempotencyKey(jobId) {
   return `render-charge:${jobId}`;
+}
+
+export async function reserveRenderCredits({
+  client = prisma,
+  userId,
+  referenceId,
+  jobId = null,
+  amountUsd,
+  estimatedCostUsd = null,
+  maxBudgetUsd = null,
+  actor = { actorType: CREDIT_ACTOR_TYPES.SYSTEM },
+  metadata = {},
+}) {
+  return applyCreditTransaction({
+    client,
+    userId,
+    type: CREDIT_TRANSACTION_TYPES.RENDER_RESERVATION_HOLD,
+    amountUsd,
+    actor,
+    referenceType: 'render_reservation',
+    referenceId,
+    jobId,
+    idempotencyKey: renderReservationIdempotencyKey(referenceId),
+    metadata: {
+      ...metadata,
+      estimatedCostUsd,
+      maxBudgetUsd,
+    },
+    auditEventType: 'credit.render_reservation_created',
+  });
+}
+
+export async function releaseRenderReservation({
+  client = prisma,
+  userId,
+  referenceId,
+  jobId = null,
+  amountUsd,
+  actor = { actorType: CREDIT_ACTOR_TYPES.SYSTEM },
+  metadata = {},
+}) {
+  return applyCreditTransaction({
+    client,
+    userId,
+    type: CREDIT_TRANSACTION_TYPES.RESERVATION_RELEASE,
+    amountUsd,
+    actor,
+    referenceType: 'render_reservation',
+    referenceId,
+    jobId,
+    idempotencyKey: renderReservationReleaseIdempotencyKey(referenceId),
+    metadata,
+    auditEventType: 'credit.render_reservation_released',
+  });
 }
 
 export async function chargeRenderCredits({

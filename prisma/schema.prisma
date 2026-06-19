@@ -80,25 +80,31 @@ model Project {
 }
 
 model Job {
-  jobId             String    @id
-  userId            String
-  projectId         String?
-  fileKey           String
-  status            String    @default("SUBMITTED")
-  settings          Json?
-  progress          Json?
-  frameCount        Int       @default(1)
-  billableSeconds   Int       @default(0)
-  resultKey         String?
-  error             String?
-  priceUsd          Float?
-  pricePerSecondUsd Float?
-  createdAt         DateTime  @default(now())
-  completedAt       DateTime?
-  failedAt          DateTime?
-  cancelledAt       DateTime?
-  billedAt          DateTime?
-  lastCheckedAt     DateTime?
+  jobId                 String    @id
+  userId                String
+  projectId             String?
+  fileKey               String
+  status                String    @default("SUBMITTED")
+  settings              Json?
+  progress              Json?
+  frameCount            Int       @default(1)
+  billableSeconds       Int       @default(0)
+  resultKey             String?
+  error                 String?
+  priceUsd              Float?
+  pricePerSecondUsd     Float?
+  estimatedCostUsd      Decimal?  @db.Decimal(12, 6)
+  maxBudgetUsd          Decimal?  @db.Decimal(12, 6)
+  reservedCreditsUsd    Decimal?  @db.Decimal(12, 6)
+  reservationReleasedAt DateTime?
+  billingState          String    @default("UNBILLED")
+  billingMetadata       Json?
+  createdAt             DateTime  @default(now())
+  completedAt           DateTime?
+  failedAt              DateTime?
+  cancelledAt           DateTime?
+  billedAt              DateTime?
+  lastCheckedAt         DateTime?
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   project            Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
@@ -109,6 +115,7 @@ model Job {
   @@index([userId, status])
   @@index([projectId])
   @@index([status])
+  @@index([billingState])
 }
 
 model CreditTransaction {

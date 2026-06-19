@@ -1,6 +1,6 @@
 import { ACTIVE_JOB_STATUSES, VALID_DENOISERS, VALID_ENGINES, VALID_OUTPUT_FORMATS, config } from '../../helpers/config.js';
 import { prisma } from '../db.js';
-import { chargeRenderCredits } from './creditService.js';
+import { chargeRenderCredits, releaseRenderReservation } from './creditService.js';
 import { fetchRunpodJobStatus, getRunpodExecutionSeconds, getRunpodResultKey } from './runpodService.js';
 
 const INTERNAL_ERROR_MARKERS = [
@@ -41,6 +41,52 @@ function clampInteger(value, min, max, fallback) {
 
 export function roundMoney(value) {
   return Number(Number(value || 0).toFixed(6));
+}
+
+function normalizeMoneyInput(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return fallback;
+  return roundMoney(numberValue);
+}
+
+export function estimateRenderCostUsd({ engine, outputFormat, denoiser, normalizedSettings }) {
+  const frameCount = Math.max(1, Number(normalizedSettings.frameCount || 1));
+  const samplesFactor = Math.max(0.1, Number(normalizedSettings.samples || 1) / 256);
+  const resolutionFactor = Math.max(0.01, (Number(normalizedSettings.resolutionPct || 100) / 100) ** 2);
+  const engineFactor = engine === 'CYCLES' ? 1 : 0.45;
+  const denoiserFactor = denoiser === 'NONE' ? 1 : 1.08;
+  const outputFactor = String(outputFormat || '').startsWith('OPEN_EXR') ? 1.15 : 1;
+  const complexityFactor = normalizedSettings.advancedMode ? 1.1 : 1;
+  const estimatedSeconds = Math.max(1, Math.ceil(
+    config.renderEstimateBaseSecondsPerFrame
+    * frameCount
+    * samplesFactor
+    * resolutionFactor
+    * engineFactor
+    * denoiserFactor
+    * outputFactor
+    * complexityFactor
+  ));
+
+  return {
+    estimatedSeconds,
+    estimatedCostUsd: roundMoney(estimatedSeconds * config.renderPricePerSecondUsd),
+  };
+}
+
+export function resolveRenderBudget({ body = {}, estimatedCostUsd }) {
+  const requestedBudget = normalizeMoneyInput(body.maxBudgetUsd ?? body.maxBudget ?? body.maxRenderBudgetUsd, null);
+  const cappedFallbackBudget = Math.min(config.defaultRenderMaxBudgetUsd, config.maxRenderBudgetUsd);
+  const fallbackBudget = Math.max(estimatedCostUsd, cappedFallbackBudget, config.minRenderReservationUsd);
+  const maxBudgetUsd = Math.min(requestedBudget || fallbackBudget, config.maxRenderBudgetUsd);
+  const reservationUsd = Math.max(config.minRenderReservationUsd, estimatedCostUsd, maxBudgetUsd);
+
+  return {
+    requestedBudgetUsd: requestedBudget,
+    maxBudgetUsd: roundMoney(maxBudgetUsd),
+    reservationUsd: roundMoney(Math.min(reservationUsd, config.maxRenderBudgetUsd)),
+  };
 }
 
 function normalizeOptionalName(value) {
@@ -307,8 +353,69 @@ export function serializeRenderedFile(job) {
     outputFormat: job.settings?.outputFormat || job.settings?.output_format || null,
     billableSeconds: job.billableSeconds || 0,
     priceUsd: typeof job.priceUsd === 'number' ? job.priceUsd : 0,
+    estimatedCostUsd: job.estimatedCostUsd ? Number(job.estimatedCostUsd) : null,
+    maxBudgetUsd: job.maxBudgetUsd ? Number(job.maxBudgetUsd) : null,
+    billingState: job.billingState || 'UNBILLED',
     downloadUrl: renderedFileDownloadPath(job.jobId),
   };
+}
+
+function reservedAmount(job) {
+  return roundMoney(Number(job?.reservedCreditsUsd || 0));
+}
+
+function unreleasedReservationAmount(job) {
+  if (job?.reservationReleasedAt) return 0;
+  return reservedAmount(job);
+}
+
+function reservationReferenceId(job) {
+  const metadata = job?.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {};
+  return metadata.reservationReferenceId || job?.jobId;
+}
+
+export async function releaseJobReservation({
+  client = prisma,
+  job,
+  reason,
+  status = job?.status,
+  amountUsd = unreleasedReservationAmount(job),
+  extraMetadata = {},
+}) {
+  const releaseAmount = roundMoney(amountUsd);
+  if (!job || releaseAmount <= 0 || job.reservationReleasedAt) return null;
+
+  const persistedJobId = typeof job.jobId === 'string' && !job.jobId.startsWith('pending:') ? job.jobId : null;
+
+  await releaseRenderReservation({
+    client,
+    userId: job.userId,
+    referenceId: reservationReferenceId(job),
+    jobId: persistedJobId,
+    amountUsd: releaseAmount,
+    metadata: {
+      reason,
+      status,
+      reservedCreditsUsd: reservedAmount(job),
+      ...extraMetadata,
+    },
+  });
+
+  if (!persistedJobId) return null;
+
+  return client.job.updateMany({
+    where: { jobId: persistedJobId, userId: job.userId, reservationReleasedAt: null },
+    data: {
+      reservationReleasedAt: new Date(),
+      billingState: reason === 'completed' ? 'SETTLED' : 'RELEASED',
+      billingMetadata: {
+        ...(job.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {}),
+        reservationReleaseReason: reason,
+        reservationReleaseAmountUsd: releaseAmount,
+        reservationReleasedAt: new Date().toISOString(),
+      },
+    },
+  });
 }
 
 export async function persistRunpodStatus(userId, jobId, rpData) {
@@ -346,7 +453,19 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
   return prisma.$transaction(async (tx) => {
     if (status === 'COMPLETED' && updateData.resultKey && !job.billedAt) {
       const billableSeconds = getRunpodExecutionSeconds(rpData, job);
-      const priceUsd = roundMoney(billableSeconds * config.renderPricePerSecondUsd);
+      const uncappedPriceUsd = roundMoney(billableSeconds * config.renderPricePerSecondUsd);
+      const maxBudgetUsd = roundMoney(Number(job.maxBudgetUsd || config.maxRenderBudgetUsd));
+      const priceUsd = roundMoney(Math.min(uncappedPriceUsd, maxBudgetUsd));
+      const reservationAmount = unreleasedReservationAmount(job);
+      const releaseAmount = reservationAmount;
+      const billingMetadata = {
+        ...(job.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {}),
+        uncappedPriceUsd,
+        maxBudgetUsd,
+        reservationAmountUsd: reservationAmount,
+        chargedUsd: priceUsd,
+        releasedUsd: releaseAmount,
+      };
       const billedJob = await tx.job.updateMany({
         where: { jobId, userId, billedAt: null },
         data: {
@@ -355,20 +474,47 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
           priceUsd,
           pricePerSecondUsd: config.renderPricePerSecondUsd,
           billedAt: new Date(),
+          billingState: 'SETTLING',
+          billingMetadata,
         },
       });
 
-      if (billedJob.count > 0 && priceUsd > 0) {
-        await chargeRenderCredits({
-          client: tx,
-          userId,
-          jobId,
-          amountUsd: priceUsd,
-          billableSeconds,
-          pricePerSecondUsd: config.renderPricePerSecondUsd,
-          metadata: { status, resultKey: updateData.resultKey },
-        });
+      if (billedJob.count > 0) {
+        const currentJob = { ...job, billingMetadata };
+        if (releaseAmount > 0) {
+          await releaseJobReservation({
+            client: tx,
+            job: currentJob,
+            reason: 'completed',
+            status,
+            amountUsd: releaseAmount,
+            extraMetadata: { chargedUsd: priceUsd, uncappedPriceUsd, maxBudgetUsd },
+          });
+        }
+
+        if (priceUsd > 0) {
+          await chargeRenderCredits({
+            client: tx,
+            userId,
+            jobId,
+            amountUsd: priceUsd,
+            billableSeconds,
+            pricePerSecondUsd: config.renderPricePerSecondUsd,
+            metadata: { status, resultKey: updateData.resultKey, uncappedPriceUsd, maxBudgetUsd, reservationReleasedUsd: releaseAmount },
+          });
+        }
+
+        await tx.job.updateMany({ where: { jobId, userId }, data: { billingState: 'SETTLED', billingMetadata } });
       }
+    } else if ((status === 'FAILED' || status === 'CANCELLED') && !job.reservationReleasedAt) {
+      await tx.job.updateMany({ where: { jobId, userId }, data: { ...updateData, billingState: 'RELEASING' } });
+      await releaseJobReservation({
+        client: tx,
+        job,
+        reason: status.toLowerCase(),
+        status,
+        extraMetadata: { error: updateData.error || null },
+      });
     } else {
       await tx.job.updateMany({ where: { jobId, userId }, data: updateData });
     }

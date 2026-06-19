@@ -1,7 +1,8 @@
 import { ACTIVE_JOB_STATUSES, config } from '../../helpers/config.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
-import { buildRunpodInput, normalizeRenderSettings, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
+import { reserveRenderCredits } from '../services/creditService.js';
+import { buildRunpodInput, estimateRenderCostUsd, normalizeRenderSettings, releaseJobReservation, resolveRenderBudget, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
 import { cancelRunpodJob, startRunpodRender } from '../services/runpodService.js';
 import { createUploadUrl, isSafeFileName, isSafeObjectKey } from '../services/storageService.js';
 
@@ -58,18 +59,43 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       if (!upload) return res.status(403).json({ error: 'This upload does not belong to the authenticated account' });
       if (upload.used) return res.status(409).json({ error: 'This upload has already been used' });
       if (activeJobs >= config.maxConcurrentJobsPerUser) return res.status(429).json({ error: 'Active job limit reached' });
-      if (Number(user?.starterBalanceUsd || 0) < config.minRenderStartBalanceUsd) {
-        return res.status(402).json({ error: `A minimum balance of $${config.minRenderStartBalanceUsd.toFixed(2)} is required to start a render job.` });
-      }
       if (projectId && !project) return res.status(404).json({ error: 'Project not found' });
 
       const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
+      const costEstimate = estimateRenderCostUsd({ engine, outputFormat, denoiser, normalizedSettings });
+      const budget = resolveRenderBudget({ body: req.body, estimatedCostUsd: costEstimate.estimatedCostUsd });
+      const reservationReferenceId = `pending:${req.user.id}:${fileKey}:${Date.now()}`;
 
+      if (Number(user?.starterBalanceUsd || 0) < budget.reservationUsd) {
+        return res.status(402).json({
+          error: `Insufficient prepaid credits. This render requires a $${budget.reservationUsd.toFixed(2)} reservation, but only $${Number(user?.starterBalanceUsd || 0).toFixed(2)} is available.`,
+          requiredUsd: budget.reservationUsd,
+          availableUsd: Number(user?.starterBalanceUsd || 0),
+          estimatedCostUsd: costEstimate.estimatedCostUsd,
+          maxBudgetUsd: budget.maxBudgetUsd,
+        });
+      }
+
+      let reserved = null;
       try {
+        reserved = await reserveRenderCredits({
+          userId: req.user.id,
+          referenceId: reservationReferenceId,
+          amountUsd: budget.reservationUsd,
+          estimatedCostUsd: costEstimate.estimatedCostUsd,
+          maxBudgetUsd: budget.maxBudgetUsd,
+          metadata: {
+            fileKey,
+            projectId: project?.id || null,
+            requestedBudgetUsd: budget.requestedBudgetUsd,
+            estimatedSeconds: costEstimate.estimatedSeconds,
+          },
+        });
+
         const data = await startRunpodRender(runpodInput);
         const job = await prisma.$transaction(async (tx) => {
           await tx.upload.update({ where: { key: fileKey }, data: { used: true } });
-          return tx.job.create({
+          const createdJob = await tx.job.create({
             data: {
               jobId: data.id,
               userId: req.user.id,
@@ -78,16 +104,48 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               status: data.status || 'SUBMITTED',
               settings: runpodInput,
               frameCount: normalizedSettings.frameCount,
+              estimatedCostUsd: costEstimate.estimatedCostUsd,
+              maxBudgetUsd: budget.maxBudgetUsd,
+              reservedCreditsUsd: budget.reservationUsd,
+              billingState: 'RESERVED',
+              billingMetadata: {
+                reservationReferenceId,
+                reservationTransactionId: reserved.transaction.id,
+                reservationIdempotent: reserved.idempotent,
+                requestedBudgetUsd: budget.requestedBudgetUsd,
+                estimatedSeconds: costEstimate.estimatedSeconds,
+              },
               progress: { percent: 2, updatedAt: new Date().toISOString() },
             },
             include: { project: true },
           });
+          await tx.creditTransaction.update({ where: { id: reserved.transaction.id }, data: { jobId: createdJob.jobId } });
+          return createdJob;
         });
 
         if (emitJobUpdate) emitJobUpdate(job, data);
         console.log(`Render job dispatched. Job ID: ${data.id}`);
-        return res.json({ success: true, jobId: data.id, status: data.status, job: serializeJob(job, data), user: publicUser(user) });
+        const refreshedUser = await prisma.user.findUnique({ where: { id: req.user.id } });
+        return res.json({ success: true, jobId: data.id, status: data.status, job: serializeJob(job, data), user: publicUser(refreshedUser) });
       } catch (error) {
+        if (reserved) {
+          try {
+            const pendingJob = {
+              jobId: reservationReferenceId,
+              userId: req.user.id,
+              reservedCreditsUsd: budget.reservationUsd,
+              billingMetadata: { reservationReferenceId },
+            };
+            await releaseJobReservation({
+              job: pendingJob,
+              reason: 'dispatch_failed',
+              status: 'DISPATCH_FAILED',
+              extraMetadata: { fileKey },
+            });
+          } catch (releaseError) {
+            console.error('Could not release render reservation after dispatch failure:', releaseError);
+          }
+        }
         console.error('Render dispatch error:', error.data || error);
         return res.status(error.status || 500).json({ error: sanitizeRenderError(error.data || error.message, 'Failed to start render job') });
       }
@@ -105,17 +163,22 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         let updatedJob = job;
 
         if (runpodResult.ok) {
-          updatedJob = await prisma.job.update({
-            where: { jobId },
-            data: {
-              status: 'CANCELLED',
-              cancelledAt: new Date(),
-              progress: {
-                ...(job.progress && typeof job.progress === 'object' ? job.progress : {}),
-                updatedAt: new Date().toISOString(),
+          updatedJob = await prisma.$transaction(async (tx) => {
+            const cancelledJob = await tx.job.update({
+              where: { jobId },
+              data: {
+                status: 'CANCELLED',
+                cancelledAt: new Date(),
+                billingState: job.reservationReleasedAt ? job.billingState : 'RELEASING',
+                progress: {
+                  ...(job.progress && typeof job.progress === 'object' ? job.progress : {}),
+                  updatedAt: new Date().toISOString(),
+                },
               },
-            },
-            include: { project: true },
+              include: { project: true },
+            });
+            await releaseJobReservation({ client: tx, job: cancelledJob, reason: 'cancelled', status: 'CANCELLED' });
+            return tx.job.findUnique({ where: { jobId }, include: { project: true } });
           });
           if (emitJobUpdate) emitJobUpdate(updatedJob, runpodResult.data);
         }

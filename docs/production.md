@@ -33,6 +33,11 @@ Recommended gateway environment variables:
 - `RENDERSPHERE_MAX_ANIMATION_FRAMES`
 - `RENDERSPHERE_MAX_CONCURRENT_JOBS`
 - `RENDERSPHERE_MAX_QUEUED_JOBS`
+- `RENDERSPHERE_RENDER_PRICE_PER_SECOND_USD`
+- `RENDERSPHERE_RENDER_ESTIMATE_BASE_SECONDS_PER_FRAME`
+- `RENDERSPHERE_MIN_RENDER_RESERVATION_USD`
+- `RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD`
+- `RENDERSPHERE_MAX_RENDER_BUDGET_USD`
 - `RENDERSPHERE_JOB_RECORD_RETENTION_DAYS`
 
 ## Prepaid Credit Ledger
@@ -46,7 +51,7 @@ Supported transaction types are:
 - `CREDIT_GRANT` for system-issued starter grants.
 - `PROMO_CREDIT` for promotional grants.
 - `PREPAID_TOP_UP` for future payment-provider recharge completion.
-- `RENDER_RESERVATION_HOLD` for future pre-render holds.
+- `RENDER_RESERVATION_HOLD` for pre-render holds.
 - `RENDER_CHARGE` for completed render deductions.
 - `REFUND` and `RESERVATION_RELEASE` for returning user credits.
 - `ADMIN_ADJUSTMENT` for controlled manual corrections.
@@ -57,7 +62,31 @@ Operational rules:
 - Supply an `idempotencyKey` for any operation that can be retried. Render charges use `render-charge:<jobId>` so repeated RunPod status syncs do not double-bill.
 - Include `referenceType`, `referenceId`, optional `jobId`, and safe actor metadata (`actorType`, `actorId`, `actorEmail`) whenever available.
 - Keep audit metadata operational only; do not include secrets, payment tokens, access keys, or private render payloads.
+- Debit helpers prevent negative cached balances by default. Normal render reservation and charge flows must not opt out of this protection.
 - Payment-provider checkout/recharge integration is intentionally out of scope for this batch. Future top-up completion handlers should use `PREPAID_TOP_UP` with provider event idempotency.
+
+## Render Credit Reservations and Budgets
+
+Render start no longer checks only the legacy minimum start balance. The server estimates a conservative preauthorized amount from normalized render settings, configured seconds-per-frame, output format, engine, denoiser, samples, resolution, and animation frame count. It then reserves prepaid credits before dispatching to RunPod.
+
+Budget configuration:
+
+- `RENDERSPHERE_RENDER_PRICE_PER_SECOND_USD` controls final billing and estimates.
+- `RENDERSPHERE_RENDER_ESTIMATE_BASE_SECONDS_PER_FRAME` controls the estimate baseline.
+- `RENDERSPHERE_MIN_RENDER_RESERVATION_USD` sets the smallest hold amount.
+- `RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD` is the safe server-side fallback if the client does not pass a budget.
+- `RENDERSPHERE_MAX_RENDER_BUDGET_USD` caps client-requested budgets and final charged amount.
+
+API clients may pass optional `maxBudgetUsd`, `maxBudget`, or `maxRenderBudgetUsd` to `/api/trigger-render`. If omitted, the server fallback budget applies. Existing Blender add-on payloads remain compatible because the budget is optional.
+
+Reservation behavior:
+
+- The gateway rejects render start with HTTP 402 before RunPod dispatch/job creation if available credits are lower than the required reservation.
+- Accepted jobs write a `RENDER_RESERVATION_HOLD` ledger row before RunPod dispatch and persist `estimatedCostUsd`, `maxBudgetUsd`, `reservedCreditsUsd`, `billingState`, and `billingMetadata` on `Job`.
+- If RunPod dispatch or job creation fails after a hold, the gateway releases the pending hold with `RESERVATION_RELEASE`.
+- Completed jobs release the full hold and then apply the idempotent final `RENDER_CHARGE`, capped by `maxBudgetUsd`, so repeated status syncs do not duplicate deductions.
+- Failed or cancelled jobs release unreleased holds and mark billing as `RELEASED`.
+- Normal reservation, charge, release, and cancellation paths are designed to keep cached balances non-negative.
 
 ## Admin Endpoints
 

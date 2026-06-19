@@ -36,7 +36,19 @@ export async function fetchRunpodJobStatus(jobId) {
   return data;
 }
 
+function mockRunpodEnabled() {
+  return process.env.RENDERSPHERE_MOCK_RUNPOD === 'true';
+}
+
 export async function startRunpodRender(input) {
+  if (mockRunpodEnabled()) {
+    return {
+      id: `mock-runpod-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      status: 'SUBMITTED',
+      input,
+    };
+  }
+
   const response = await fetch(`${runpodBaseUrl()}/run`, {
     method: 'POST',
     headers: runpodHeaders({ 'Content-Type': 'application/json' }),
@@ -55,6 +67,8 @@ export async function startRunpodRender(input) {
 }
 
 export async function cancelRunpodJob(jobId) {
+  if (mockRunpodEnabled()) return { ok: true, status: 200, data: { id: jobId, status: 'CANCELLED' } };
+
   const response = await fetch(`${runpodBaseUrl()}/cancel/${encodeURIComponent(jobId)}`, {
     method: 'DELETE',
     headers: runpodHeaders(),

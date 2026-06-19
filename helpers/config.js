@@ -26,6 +26,12 @@ function parsePositiveIntegerEnv(name, fallback) {
   return value;
 }
 
+function parsePositiveNumberEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return value;
+}
+
 function parseNonNegativeNumberEnv(name, fallback) {
   const value = Number(process.env[name]);
   if (!Number.isFinite(value) || value < 0) return fallback;
@@ -40,6 +46,10 @@ const config = {
   maxConcurrentJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_CONCURRENT_JOBS', 1),
   maxQueuedJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_QUEUED_JOBS', 3),
   renderPricePerSecondUsd: parseNonNegativeNumberEnv('RENDERSPHERE_RENDER_PRICE_PER_SECOND_USD', 0.01),
+  renderEstimateBaseSecondsPerFrame: parsePositiveNumberEnv('RENDERSPHERE_RENDER_ESTIMATE_BASE_SECONDS_PER_FRAME', 60),
+  minRenderReservationUsd: parseNonNegativeNumberEnv('RENDERSPHERE_MIN_RENDER_RESERVATION_USD', 1),
+  defaultRenderMaxBudgetUsd: parsePositiveNumberEnv('RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD', 10),
+  maxRenderBudgetUsd: parsePositiveNumberEnv('RENDERSPHERE_MAX_RENDER_BUDGET_USD', 250),
   freeRenderCredits: parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS_USD', parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 0)),
   minRenderStartBalanceUsd: parseNonNegativeNumberEnv('RENDERSPHERE_MIN_RENDER_START_BALANCE_USD', 1),
   supportEmail: process.env.RENDERSPHERE_SUPPORT_EMAIL || 'support@rendersphere.app',

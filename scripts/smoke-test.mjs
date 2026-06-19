@@ -55,6 +55,12 @@ const serverEnv = {
   RENDERSPHERE_MAX_RENDER_BUDGET_USD: '20.00',
   RENDERSPHERE_MOCK_RUNPOD: 'true',
   RENDERSPHERE_JOB_POLL_INTERVAL_MS: '600000',
+  RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS: '250',
+  RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES: '2',
+  RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES: '1',
+  RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS: '10',
+  RENDERSPHERE_MOCK_RUNPOD_FAIL_FILEKEY_PATTERN: 'dispatch-fail',
+  RENDERSPHERE_MAX_CONCURRENT_JOBS: '4',
 };
 
 await runCommand('npx', ['prisma', 'generate'], serverEnv);
@@ -64,6 +70,51 @@ Object.assign(process.env, serverEnv);
 const { prisma } = await import('../src/db.js');
 const { CREDIT_TRANSACTION_TYPES, applyCreditTransaction, chargeRenderCredits, grantCredits } = await import('../src/services/creditService.js');
 const { persistRunpodStatus } = await import('../src/services/jobService.js');
+const { RunpodProviderError, fetchRunpodJobStatus } = await import('../src/services/runpodService.js');
+
+async function verifyRunpodRetryHelper() {
+  const originalFetch = globalThis.fetch;
+  const originalMockRunpod = process.env.RENDERSPHERE_MOCK_RUNPOD;
+  let attempts = 0;
+
+  process.env.RENDERSPHERE_MOCK_RUNPOD = 'false';
+  globalThis.fetch = async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      return new Response(JSON.stringify({ error: 'temporary provider outage' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ id: 'retry-smoke', status: 'IN_PROGRESS' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const retriedStatus = await fetchRunpodJobStatus('retry-smoke');
+    if (attempts !== 2 || retriedStatus.status !== 'IN_PROGRESS') {
+      throw new Error(`RunPod retry helper did not retry once as expected; attempts=${attempts}, status=${retriedStatus.status}.`);
+    }
+
+    globalThis.fetch = async () => new Promise((resolve, reject) => {
+      const abortError = new Error('aborted');
+      abortError.name = 'AbortError';
+      setTimeout(() => reject(abortError), 20);
+    });
+    process.env.RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES = '0';
+
+    try {
+      await fetchRunpodJobStatus('timeout-smoke');
+      throw new Error('RunPod timeout helper unexpectedly succeeded.');
+    } catch (error) {
+      if (!(error instanceof RunpodProviderError) || error.status !== 504 || error.code !== 'RUNPOD_TIMEOUT') {
+        throw new Error(`RunPod timeout helper returned the wrong error classification: ${error.code || error.message}.`);
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.RENDERSPHERE_MOCK_RUNPOD = originalMockRunpod;
+    process.env.RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES = serverEnv.RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES;
+  }
+}
+
+await verifyRunpodRetryHelper();
 
 const server = spawn(process.execPath, ['server.js'], {
   cwd: process.cwd(),
@@ -299,9 +350,11 @@ try {
     }),
   });
 
+  const fundedIdempotencyKey = `funded-render-${Date.now()}`;
+  const jobsBeforeFundedRender = await prisma.job.count({ where: { userId: registered.user.id } });
   const fundedRender = await request('/api/trigger-render', {
     method: 'POST',
-    headers: cookieHeaders,
+    headers: { ...cookieHeaders, 'Idempotency-Key': fundedIdempotencyKey },
     body: JSON.stringify({
       fileKey: fundedUpload.key,
       projectId: project.project.id,
@@ -311,8 +364,35 @@ try {
       maxBudgetUsd: 2,
     }),
   });
-  if (!fundedRender.jobId || fundedRender.job?.billingState !== 'RESERVED') {
-    throw new Error('Funded render did not create a reserved job.');
+  if (!fundedRender.jobId || fundedRender.job?.billingState !== 'RESERVED' || fundedRender.job?.dispatchStatus !== 'DISPATCHED' || !fundedRender.providerJobId) {
+    throw new Error('Funded render did not create a dispatched reserved job.');
+  }
+  if (fundedRender.jobId === fundedRender.providerJobId) {
+    throw new Error('Funded render did not keep separate local and provider job identifiers.');
+  }
+  const persistedFundedJob = await prisma.job.findUnique({ where: { jobId: fundedRender.jobId } });
+  if (!persistedFundedJob || persistedFundedJob.providerJobId !== fundedRender.providerJobId || persistedFundedJob.dispatchStatus !== 'DISPATCHED') {
+    throw new Error('Accepted render was not persisted locally with provider dispatch metadata.');
+  }
+
+  const duplicateFundedRender = await request('/api/trigger-render', {
+    method: 'POST',
+    headers: { ...cookieHeaders, 'Idempotency-Key': fundedIdempotencyKey },
+    body: JSON.stringify({
+      fileKey: fundedUpload.key,
+      projectId: project.project.id,
+      engine: 'CYCLES',
+      outputFormat: 'PNG',
+      denoiser: 'NONE',
+      maxBudgetUsd: 2,
+    }),
+  });
+  const jobsAfterDuplicateFundedRender = await prisma.job.count({ where: { userId: registered.user.id } });
+  if (!duplicateFundedRender.idempotent || duplicateFundedRender.jobId !== fundedRender.jobId || duplicateFundedRender.providerJobId !== fundedRender.providerJobId) {
+    throw new Error('Render submission idempotency did not return the existing accepted job.');
+  }
+  if (jobsAfterDuplicateFundedRender !== jobsBeforeFundedRender + 1) {
+    throw new Error('Render submission idempotency created a duplicate local job.');
   }
 
   const reservation = await prisma.creditTransaction.findFirst({
@@ -325,6 +405,54 @@ try {
   const afterReservationUser = await prisma.user.findUnique({ where: { id: registered.user.id } });
   if (Number(afterReservationUser.starterBalanceUsd) !== 12) {
     throw new Error(`Expected balance 12 after reservation, got ${afterReservationUser.starterBalanceUsd}.`);
+  }
+
+  const dispatchFailureUpload = await request('/api/get-upload-url', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ fileName: 'dispatch-fail-smoke.blend', fileSizeBytes: 1024 }),
+  });
+  const beforeDispatchFailureBalance = Number((await prisma.user.findUnique({ where: { id: registered.user.id } })).starterBalanceUsd);
+  const dispatchFailure = await rawRequest('/api/trigger-render', {
+    method: 'POST',
+    headers: { ...cookieHeaders, 'Idempotency-Key': `dispatch-failure-${Date.now()}` },
+    body: JSON.stringify({
+      fileKey: dispatchFailureUpload.key,
+      projectId: project.project.id,
+      engine: 'CYCLES',
+      outputFormat: 'PNG',
+      denoiser: 'NONE',
+      maxBudgetUsd: 2,
+    }),
+  });
+  if (dispatchFailure.response.status !== 502 || !dispatchFailure.data.jobId || dispatchFailure.data.dispatchStatus !== 'FAILED') {
+    throw new Error(`Expected dispatch failure to return a persisted failed job, got ${dispatchFailure.response.status}.`);
+  }
+  const failedDispatchJob = await prisma.job.findUnique({ where: { jobId: dispatchFailure.data.jobId } });
+  if (!failedDispatchJob || failedDispatchJob.dispatchStatus !== 'FAILED' || failedDispatchJob.billingState !== 'RELEASED' || failedDispatchJob.reservationReleasedAt === null) {
+    throw new Error('Dispatch failure did not persist a failed local job and release its hold.');
+  }
+  const dispatchFailureRelease = await prisma.creditTransaction.findFirst({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RESERVATION_RELEASE, jobId: dispatchFailure.data.jobId },
+  });
+  const afterDispatchFailureBalance = Number((await prisma.user.findUnique({ where: { id: registered.user.id } })).starterBalanceUsd);
+  if (!dispatchFailureRelease || afterDispatchFailureBalance !== beforeDispatchFailureBalance) {
+    throw new Error('Dispatch failure did not release prepaid credits back to the user.');
+  }
+  const duplicateDispatchFailure = await rawRequest('/api/trigger-render', {
+    method: 'POST',
+    headers: { ...cookieHeaders, 'Idempotency-Key': failedDispatchJob.idempotencyKey.split(':').pop() },
+    body: JSON.stringify({
+      fileKey: dispatchFailureUpload.key,
+      projectId: project.project.id,
+      engine: 'CYCLES',
+      outputFormat: 'PNG',
+      denoiser: 'NONE',
+      maxBudgetUsd: 2,
+    }),
+  });
+  if (duplicateDispatchFailure.response.status !== 409 || duplicateDispatchFailure.data.jobId !== failedDispatchJob.jobId) {
+    throw new Error('Retrying a failed dispatch idempotency key did not return the recoverable failed job without redispatching.');
   }
 
   const completedJob = await persistRunpodStatus(registered.user.id, fundedRender.jobId, {
@@ -434,8 +562,8 @@ try {
   if (summary.users !== initialSummary.users + 1) {
     throw new Error(`Expected admin summary user count to increase by one, got ${summary.users - initialSummary.users}.`);
   }
-  if (summary.jobs !== initialSummary.jobs + 4) {
-    throw new Error(`Expected smoke ledger, completed, cancelled, and failed jobs to be present, job count changed from ${initialSummary.jobs} to ${summary.jobs}.`);
+  if (summary.jobs !== initialSummary.jobs + 5) {
+    throw new Error(`Expected smoke ledger, completed, dispatch-failed, cancelled, and failed jobs to be present, job count changed from ${initialSummary.jobs} to ${summary.jobs}.`);
   }
   if (summary.limits?.minRenderStartBalanceUsd !== 6) {
     throw new Error(`Expected admin summary minimum render start balance 6, got ${summary.limits?.minRenderStartBalanceUsd}.`);

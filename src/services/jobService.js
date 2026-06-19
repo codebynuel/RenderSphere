@@ -418,6 +418,14 @@ export async function releaseJobReservation({
   });
 }
 
+export function providerJobIdForJob(job) {
+  return job?.providerJobId || (job?.dispatchStatus === 'DISPATCHED' ? job?.jobId : null) || null;
+}
+
+export function jobIsProviderDispatched(job) {
+  return Boolean(providerJobIdForJob(job) && job?.dispatchStatus === 'DISPATCHED');
+}
+
 export async function persistRunpodStatus(userId, jobId, rpData) {
   const status = rpData.status || 'UNKNOWN';
   const resultKey = getRunpodResultKey(rpData);
@@ -427,6 +435,7 @@ export async function persistRunpodStatus(userId, jobId, rpData) {
   if (!job || job.userId !== userId) return null;
 
   const updateData = { status, lastCheckedAt: new Date() };
+  if (job.dispatchStatus !== 'DISPATCHED' && job.providerJobId) updateData.dispatchStatus = 'DISPATCHED';
   if (progress) {
     updateData.progress = {
       ...(job.progress && typeof job.progress === 'object' ? job.progress : {}),
@@ -537,7 +546,8 @@ export async function syncActiveJobsForUser(userId, emitJobUpdate = null) {
 
   await Promise.all(syncableJobs.map(async (job) => {
     try {
-      const rpData = await fetchRunpodJobStatus(job.jobId);
+      if (!jobIsProviderDispatched(job)) return;
+      const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job));
       const updatedJob = await persistRunpodStatus(userId, job.jobId, rpData);
       if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
     } catch (error) {

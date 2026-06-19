@@ -13,7 +13,7 @@ const REQUIRED_ENV_VARS = [
 const VALID_ENGINES = new Set(['CYCLES', 'BLENDER_EEVEE_NEXT']);
 const VALID_OUTPUT_FORMATS = new Set(['PNG', 'JPEG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER']);
 const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
-const ACTIVE_JOB_STATUSES = new Set(['SUBMITTED', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING']);
+const ACTIVE_JOB_STATUSES = new Set(['SUBMITTED', 'DISPATCHING', 'IN_QUEUE', 'IN_PROGRESS', 'RUNNING']);
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const SESSION_COOKIE_NAME = 'rs_session';
@@ -56,6 +56,10 @@ const config = {
   inviteCode: process.env.RENDERSPHERE_INVITE_CODE || '',
   adminToken: process.env.RENDERSPHERE_ADMIN_TOKEN || '',
   jobRecordRetentionDays: parsePositiveIntegerEnv('RENDERSPHERE_JOB_RECORD_RETENTION_DAYS', 30),
+  runpodRequestTimeoutMs: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS', 15000),
+  runpodStatusMaxRetries: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES', 2),
+  runpodCancelMaxRetries: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES', 1),
+  runpodRetryBackoffMs: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS', 300),
   secureCookies: process.env.RENDERSPHERE_SECURE_COOKIES === 'true' || process.env.NODE_ENV === 'production',
 };
 

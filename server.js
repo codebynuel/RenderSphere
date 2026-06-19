@@ -11,7 +11,7 @@ import { createRateLimiter, requireSameOriginForBrowserWrites, securityHeaders }
 import { prisma } from './src/db.js';
 import { authenticateToken, parseCookieHeader, requireAdmin, requireAuth } from './src/services/authService.js';
 import { fetchRunpodJobStatus } from './src/services/runpodService.js';
-import { persistRunpodStatus, serializeJob } from './src/services/jobService.js';
+import { jobIsProviderDispatched, persistRunpodStatus, providerJobIdForJob, serializeJob } from './src/services/jobService.js';
 
 import { createAdminRouter } from './routes/admin.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -120,7 +120,8 @@ const activeJobPoller = setInterval(async () => {
 
     await Promise.all(activeJobs.map(async (job) => {
       try {
-        const rpData = await fetchRunpodJobStatus(job.jobId);
+        if (!jobIsProviderDispatched(job)) return;
+        const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job));
         const updatedJob = await persistRunpodStatus(job.userId, job.jobId, rpData);
         emitJobUpdate(updatedJob || job, rpData);
       } catch (error) {

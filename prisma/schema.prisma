@@ -81,10 +81,13 @@ model Project {
 
 model Job {
   jobId                 String    @id
+  providerJobId         String?   @unique
   userId                String
   projectId             String?
   fileKey               String
   status                String    @default("SUBMITTED")
+  dispatchStatus        String    @default("PENDING")
+  idempotencyKey        String?   @unique
   settings              Json?
   progress              Json?
   frameCount            Int       @default(1)
@@ -99,11 +102,13 @@ model Job {
   reservationReleasedAt DateTime?
   billingState          String    @default("UNBILLED")
   billingMetadata       Json?
+  dispatchMetadata      Json?
   createdAt             DateTime  @default(now())
   completedAt           DateTime?
   failedAt              DateTime?
   cancelledAt           DateTime?
   billedAt              DateTime?
+  dispatchedAt          DateTime?
   lastCheckedAt         DateTime?
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -115,6 +120,7 @@ model Job {
   @@index([userId, status])
   @@index([projectId])
   @@index([status])
+  @@index([dispatchStatus])
   @@index([billingState])
 }
 

@@ -39,6 +39,10 @@ Recommended gateway environment variables:
 - `RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD`
 - `RENDERSPHERE_MAX_RENDER_BUDGET_USD`
 - `RENDERSPHERE_JOB_RECORD_RETENTION_DAYS`
+- `RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS`
+- `RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES`
+- `RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES`
+- `RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS`
 
 ## Prepaid Credit Ledger
 
@@ -81,12 +85,34 @@ API clients may pass optional `maxBudgetUsd`, `maxBudget`, or `maxRenderBudgetUs
 
 Reservation behavior:
 
-- The gateway rejects render start with HTTP 402 before RunPod dispatch/job creation if available credits are lower than the required reservation.
-- Accepted jobs write a `RENDER_RESERVATION_HOLD` ledger row before RunPod dispatch and persist `estimatedCostUsd`, `maxBudgetUsd`, `reservedCreditsUsd`, `billingState`, and `billingMetadata` on `Job`.
-- If RunPod dispatch or job creation fails after a hold, the gateway releases the pending hold with `RESERVATION_RELEASE`.
+- The gateway rejects render start with HTTP 402 before local job creation or RunPod dispatch if available credits are lower than the required reservation.
+- Accepted submissions now create a local `Job` first with a local `jobId`, `dispatchStatus=PENDING/DISPATCHING`, `status=DISPATCHING`, and a `RENDER_RESERVATION_HOLD` before calling RunPod.
+- After RunPod accepts the dispatch, the gateway stores `providerJobId`, `dispatchStatus=DISPATCHED`, `dispatchedAt`, and provider details in `dispatchMetadata`. Client APIs continue to return the local `jobId`; provider calls use `providerJobId` when present.
+- If RunPod rejects/times out/fails before provider acceptance, the gateway marks the local job `status=DISPATCH_FAILED`, `dispatchStatus=FAILED`, records safe provider classification metadata, and releases the pending hold with `RESERVATION_RELEASE`.
+- If RunPod accepts but the local provider-id attachment fails, the gateway retries the local attachment once and logs both the local job id and provider job id for manual reconciliation if that retry also fails.
 - Completed jobs release the full hold and then apply the idempotent final `RENDER_CHARGE`, capped by `maxBudgetUsd`, so repeated status syncs do not duplicate deductions.
 - Failed or cancelled jobs release unreleased holds and mark billing as `RELEASED`.
 - Normal reservation, charge, release, and cancellation paths are designed to keep cached balances non-negative.
+
+## RunPod Dispatch Idempotency and Reconciliation
+
+Render submission accepts an optional `Idempotency-Key` or `X-Idempotency-Key` header, or `idempotencyKey` / `clientRequestId` request body field. The server scopes this value per user and stores it on `Job.idempotencyKey` with a unique index.
+
+Operational behavior:
+
+- Retrying a request with the same idempotency key after provider acceptance returns the existing local/provider job instead of creating another local job or dispatching another provider job.
+- Retrying a request with the same idempotency key while the local job is still pending/dispatching returns the existing local job state instead of dispatching again.
+- Retrying a request with the same idempotency key after a pre-acceptance dispatch failure returns HTTP 409 with the failed local job. Use a new idempotency key to intentionally submit a fresh provider dispatch after checking the previous job's released hold.
+- The local `jobId` is the stable application identifier. `providerJobId` is the RunPod identifier. Admin/reconciliation tooling should inspect both, along with `dispatchStatus`, `dispatchedAt`, `dispatchMetadata`, `billingState`, and `reservationReleasedAt`.
+- Jobs stuck in `dispatchStatus=DISPATCHING` with no `providerJobId` did not record provider acceptance. Confirm RunPod externally before either marking them failed/releasing the hold or attaching the provider id manually.
+- Jobs with `dispatchStatus=DISPATCHED` and missing/late result state are safe for normal status polling; polling uses `providerJobId` and final billing remains idempotent.
+
+Provider-call resilience:
+
+- RunPod status and cancellation calls use request timeouts, bounded retries, and exponential backoff for transient network/HTTP 408/409/425/429/5xx failures.
+- RunPod dispatch uses the same timeout/error classification, but does not automatically retry unsafe `/run` calls inside the provider helper. Submission-level idempotency prevents normal client retries from duplicating accepted jobs.
+- Config knobs: `RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS` (default 15000), `RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES` (default 2), `RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES` (default 1), and `RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS` (default 300).
+- Provider errors returned to clients are sanitized and include a `retryable` boolean when available. Logs keep operational identifiers but must not include secrets.
 
 ## Admin Endpoints
 

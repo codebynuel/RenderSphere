@@ -23,6 +23,10 @@ function createSystemRouter({ config }) {
           defaultRenderMaxBudgetUsd: config.defaultRenderMaxBudgetUsd,
           maxRenderBudgetUsd: config.maxRenderBudgetUsd,
           minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
+          runpodRequestTimeoutMs: config.runpodRequestTimeoutMs,
+          runpodStatusMaxRetries: config.runpodStatusMaxRetries,
+          runpodCancelMaxRetries: config.runpodCancelMaxRetries,
+          runpodRetryBackoffMs: config.runpodRetryBackoffMs,
         },
       });
     } catch {
@@ -48,6 +52,10 @@ function createSystemRouter({ config }) {
         defaultRenderMaxBudgetUsd: config.defaultRenderMaxBudgetUsd,
         maxRenderBudgetUsd: config.maxRenderBudgetUsd,
         minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
+        runpodRequestTimeoutMs: config.runpodRequestTimeoutMs,
+        runpodStatusMaxRetries: config.runpodStatusMaxRetries,
+        runpodCancelMaxRetries: config.runpodCancelMaxRetries,
+        runpodRetryBackoffMs: config.runpodRetryBackoffMs,
       },
     });
   });

@@ -3,7 +3,7 @@ import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
 import { attachmentFileName, contentTypeForKey, getRenderedObject } from '../services/storageService.js';
 import { fetchRunpodJobStatus, getRunpodResultKey } from '../services/runpodService.js';
-import { persistRunpodStatus, renderedFileDownloadPath, sanitizeRenderError, serializeJob, serializeRenderedFile, syncActiveJobsForUser } from '../services/jobService.js';
+import { jobIsProviderDispatched, persistRunpodStatus, providerJobIdForJob, renderedFileDownloadPath, sanitizeRenderError, serializeJob, serializeRenderedFile, syncActiveJobsForUser } from '../services/jobService.js';
 
 export function createJobController({ emitJobUpdate = null } = {}) {
   return {
@@ -75,7 +75,11 @@ export function createJobController({ emitJobUpdate = null } = {}) {
       if (!job) return res.status(404).json({ error: 'Job not found' });
 
       try {
-        const rpData = await fetchRunpodJobStatus(jobId);
+        if (!jobIsProviderDispatched(job)) {
+          return res.json({ status: job.status, stream: [], job: serializeJob(job) });
+        }
+
+        const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job));
         const updatedJob = await persistRunpodStatus(req.user.id, jobId, rpData);
         if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
 

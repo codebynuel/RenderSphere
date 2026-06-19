@@ -18,6 +18,7 @@ function createSystemRouter({ config }) {
           maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
           maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
           renderPricePerSecondUsd: config.renderPricePerSecondUsd,
+          minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
         },
       });
     } catch {
@@ -38,6 +39,7 @@ function createSystemRouter({ config }) {
         maxConcurrentJobsPerUser: config.maxConcurrentJobsPerUser,
         maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
         renderPricePerSecondUsd: config.renderPricePerSecondUsd,
+        minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
       },
     });
   });

@@ -58,6 +58,9 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       if (!upload) return res.status(403).json({ error: 'This upload does not belong to the authenticated account' });
       if (upload.used) return res.status(409).json({ error: 'This upload has already been used' });
       if (activeJobs >= config.maxConcurrentJobsPerUser) return res.status(429).json({ error: 'Active job limit reached' });
+      if (Number(user?.starterBalanceUsd || 0) < config.minRenderStartBalanceUsd) {
+        return res.status(402).json({ error: `A minimum balance of $${config.minRenderStartBalanceUsd.toFixed(2)} is required to start a render job.` });
+      }
       if (projectId && !project) return res.status(404).json({ error: 'Project not found' });
 
       const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });

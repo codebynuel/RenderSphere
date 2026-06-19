@@ -48,6 +48,7 @@ const serverEnv = {
   RENDERSPHERE_INVITE_CODE: 'smoke-invite',
   RENDERSPHERE_ADMIN_TOKEN: 'smoke-admin',
   RENDERSPHERE_FREE_RENDER_CREDITS_USD: '5',
+  RENDERSPHERE_MIN_RENDER_START_BALANCE_USD: '6',
 };
 
 await runCommand('npx', ['prisma', 'generate'], serverEnv);
@@ -111,6 +112,11 @@ async function waitForServer() {
 try {
   await waitForServer();
 
+  const initialSummary = await request('/api/admin/summary', {
+    headers: { Authorization: 'Bearer smoke-admin' },
+  });
+  if (initialSummary.database !== 'postgres') throw new Error(`Expected postgres database summary, got ${initialSummary.database}.`);
+
   const email = `smoke-${Date.now()}@example.com`;
   const registerResult = await rawRequest('/api/auth/register', {
     method: 'POST',
@@ -137,6 +143,11 @@ try {
   const me = await request('/api/auth/me', { headers: cookieHeaders });
   if (me.user.email !== email) throw new Error('/api/auth/me returned the wrong user.');
 
+  const appConfig = await request('/api/config');
+  if (appConfig.limits?.minRenderStartBalanceUsd !== 6) {
+    throw new Error(`Expected minimum render start balance 6, got ${appConfig.limits?.minRenderStartBalanceUsd}.`);
+  }
+
   const project = await request('/api/projects', {
     method: 'POST',
     headers: cookieHeaders,
@@ -159,10 +170,46 @@ try {
     throw new Error(`Expected oversized upload to return 413, got ${oversized.status}.`);
   }
 
+  const upload = await request('/api/get-upload-url', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({
+      fileName: 'smoke.blend',
+      fileSizeBytes: 1024,
+    }),
+  });
+  if (!upload.key) throw new Error('Upload URL creation did not return a file key.');
+
+  const underfundedRender = await rawRequest('/api/trigger-render', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({
+      fileKey: upload.key,
+      projectId: project.project.id,
+      engine: 'CYCLES',
+      outputFormat: 'PNG',
+      denoiser: 'NONE',
+    }),
+  });
+  if (underfundedRender.response.status !== 402) {
+    throw new Error(`Expected underfunded render to return 402, got ${underfundedRender.response.status}.`);
+  }
+  if (!underfundedRender.data.error?.includes('minimum balance')) {
+    throw new Error(`Expected underfunded render to return a clear minimum balance error, got ${underfundedRender.data.error || 'no error'}.`);
+  }
+
   const summary = await request('/api/admin/summary', {
     headers: { Authorization: 'Bearer smoke-admin' },
   });
-  if (summary.users !== 1) throw new Error(`Expected admin summary to report one user, got ${summary.users}.`);
+  if (summary.users !== initialSummary.users + 1) {
+    throw new Error(`Expected admin summary user count to increase by one, got ${summary.users - initialSummary.users}.`);
+  }
+  if (summary.jobs !== initialSummary.jobs) {
+    throw new Error(`Expected underfunded render not to create a job, job count changed from ${initialSummary.jobs} to ${summary.jobs}.`);
+  }
+  if (summary.limits?.minRenderStartBalanceUsd !== 6) {
+    throw new Error(`Expected admin summary minimum render start balance 6, got ${summary.limits?.minRenderStartBalanceUsd}.`);
+  }
   if (summary.database !== 'postgres') throw new Error(`Expected postgres database summary, got ${summary.database}.`);
 
   const logout = await rawRequest('/api/auth/logout', {

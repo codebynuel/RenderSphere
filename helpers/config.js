@@ -41,6 +41,7 @@ const config = {
   maxQueuedJobsPerUser: parsePositiveIntegerEnv('RENDERSPHERE_MAX_QUEUED_JOBS', 3),
   renderPricePerSecondUsd: parseNonNegativeNumberEnv('RENDERSPHERE_RENDER_PRICE_PER_SECOND_USD', 0.01),
   freeRenderCredits: parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS_USD', parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 0)),
+  minRenderStartBalanceUsd: parseNonNegativeNumberEnv('RENDERSPHERE_MIN_RENDER_START_BALANCE_USD', 1),
   supportEmail: process.env.RENDERSPHERE_SUPPORT_EMAIL || 'support@rendersphere.app',
   inviteCode: process.env.RENDERSPHERE_INVITE_CODE || '',
   adminToken: process.env.RENDERSPHERE_ADMIN_TOKEN || '',

@@ -37,6 +37,7 @@ function createAdminRouter({ requireAdmin }) {
         maxQueuedJobsPerUser: config.maxQueuedJobsPerUser,
         renderPricePerSecondUsd: config.renderPricePerSecondUsd,
         starterBalanceUsd: config.freeRenderCredits,
+        minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
         jobRecordRetentionDays: config.jobRecordRetentionDays,
       },
     });

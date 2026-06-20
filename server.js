@@ -26,6 +26,7 @@ import { createSystemRouter } from './routes/system.js';
 validateRequiredEnv();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, 'public');
 const app = express();
 const server = http.createServer(app);
 const port = Number(process.env.PORT || 3000);
@@ -40,7 +41,7 @@ app.use(securityHeaders);
 app.use(requireSameOriginForBrowserWrites);
 app.use(express.json({ limit: '1mb' }));
 app.use(requestLoggingMiddleware);
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(publicDir));
 
 const rateLimitStore = createRateLimitStore({
   store: config.rateLimitStore,
@@ -130,6 +131,15 @@ app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth
 
 app.use((req, res, next) => {
   const systemPaths = new Set(['/healthz', '/readyz', '/metrics']);
+  const isAssetRequest = req.method === 'GET'
+    && !req.path.startsWith('/api')
+    && !systemPaths.has(req.path)
+    && (req.path.startsWith('/assets/') || Boolean(path.extname(req.path)));
+
+  if (isAssetRequest) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
+
   const isFrontendNavigation = req.method === 'GET'
     && !req.path.startsWith('/api')
     && !systemPaths.has(req.path)
@@ -137,10 +147,10 @@ app.use((req, res, next) => {
     && req.accepts(['html', 'json']) === 'html';
 
   if (isFrontendNavigation) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  } else {
-    next();
+    return res.sendFile(path.join(publicDir, 'index.html'));
   }
+
+  return next();
 });
 
 app.use((error, req, res, next) => {

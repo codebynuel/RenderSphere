@@ -130,7 +130,13 @@ app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth
 
 app.use((req, res, next) => {
   const systemPaths = new Set(['/healthz', '/readyz', '/metrics']);
-  if (req.method === 'GET' && !req.path.startsWith('/api') && !systemPaths.has(req.path)) {
+  const isFrontendNavigation = req.method === 'GET'
+    && !req.path.startsWith('/api')
+    && !systemPaths.has(req.path)
+    && !path.extname(req.path)
+    && req.accepts(['html', 'json']) === 'html';
+
+  if (isFrontendNavigation) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
     next();

@@ -102,6 +102,22 @@ The root script equivalent is:
 pnpm release:prepare
 ```
 
+Run the non-destructive release gate before opening or merging a release pull request:
+
+```bash
+pnpm release:verify
+```
+
+`pnpm release:verify` runs backend syntax validation, Prisma schema validation/client generation, frontend lint, frontend production build, extension packaging/checksum verification, and production dependency audits for the root and frontend manifests. It intentionally does not run migrations or smoke tests because those require an isolated PostgreSQL database.
+
+When an isolated PostgreSQL database or disposable schema is available, set `DATABASE_URL` and `SMOKE_TEST_DATABASE_URL` to non-production URLs and run:
+
+```bash
+pnpm release:verify:db
+```
+
+This first verifies that the database URLs use isolated schema query parameters, then deploys migrations, verifies migration status, and runs smoke tests. Never point these commands at production or production-like data unless the step is explicitly the reviewed production migration deploy.
+
 ### Web image
 
 Build the production web image:
@@ -240,9 +256,75 @@ Production serves the built frontend from `public/` in the web container. The Vi
 
 If a CDN is added later, keep API and Socket.IO routing pointed at the gateway and ensure cache rules do not cache authenticated API responses.
 
-## CI
+## CI and Release Gates
 
-The Docker workflow builds and pushes the existing RunPod worker image and validates the web gateway image build. The worker push path is preserved. The web job currently builds only; add registry push credentials/tags when the production web registry is chosen.
+The Docker workflow is the production release validation gate. It preserves the existing RunPod worker image publishing path while adding pull-request and push validation for the web gateway, database, frontend, dependency, Docker, and extension artifact checks.
+
+CI jobs:
+
+- `Backend, Prisma, migrations, and smoke tests` installs root dependencies, runs backend syntax/static validation, validates and generates Prisma, verifies isolated PostgreSQL schema targets, deploys migrations to a disposable PostgreSQL service schema, checks migration status, and runs smoke tests against a separate isolated schema.
+- `Frontend lint and production build` installs frontend dependencies, runs ESLint, and builds production assets.
+- `Dependency audit` runs root and standalone frontend production dependency audits with a high-severity threshold.
+- `Extension package and checksum validation` packages the Blender add-on, writes and verifies SHA-256 checksums, and uploads both public download artifacts and checksum files.
+- `Validate web gateway image` builds `Dockerfile.web` without pushing.
+- `Validate RunPod worker image` builds `Dockerfile` without pushing.
+- `Build and push RunPod worker` runs only on non-pull-request events after all validation jobs pass, logs in to Docker Hub, and publishes `latest` plus the commit SHA tag.
+
+Required GitHub secrets for worker publishing:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+No production application secrets are required for CI validation. CI uses disposable PostgreSQL credentials from the job service container and mock provider configuration in smoke tests. Do not add real R2, RunPod, admin, payment, or database secrets to CI logs.
+
+### Release checklist
+
+1. Confirm the release branch is current and review database migration diffs.
+2. Run `pnpm release:verify` locally.
+3. If a disposable database is available, run `pnpm release:verify:db` with isolated `DATABASE_URL` and `SMOKE_TEST_DATABASE_URL` values.
+4. If Docker is available, run `pnpm docker:build:web` and `pnpm docker:build:worker`, or rely on the CI image validation jobs.
+5. Package the extension with the production public URL and verify checksums:
+
+   ```bash
+   RENDERSPHERE_PUBLIC_URL=https://your-production-domain.example pnpm package:extension:verify
+   ```
+
+6. Open or update the pull request and wait for all CI release-gate jobs to pass.
+7. After merge, confirm the worker image publish job completed when the release affects the worker path.
+8. Run production migrations as a reviewed deployment step with `npx prisma migrate deploy`.
+9. Roll the web deployment, check `/healthz` and `/readyz`, and monitor `/api/admin/metrics`.
+
+### Artifact checksum procedure
+
+The add-on package is written to both download locations:
+
+- `public/downloads/rendersphere-blender-addon.zip`
+- `frontend/public/downloads/rendersphere-blender-addon.zip`
+
+Run:
+
+```bash
+pnpm package:extension:verify
+```
+
+The command packages the add-on, writes `.sha256` files next to both zip files, verifies both checksum files, and fails if the two zip artifacts differ. CI then runs `git diff --exit-code` for both zip files and checksum files so artifact drift fails the release gate. The checksum files contain only SHA-256 digests and artifact filenames; they do not contain secrets. For reproducible package bytes, `scripts/package-extension.mjs` uses a deterministic ZIP timestamp by default and honors `SOURCE_DATE_EPOCH` when set.
+
+To verify existing artifacts without rewriting them, run:
+
+```bash
+pnpm checksums:extension:verify
+```
+
+### CI failure triage
+
+- Backend syntax/static validation: run `pnpm lint:backend` locally and inspect the reported file.
+- Prisma validate/generate: run `pnpm prisma:validate` and `pnpm db:generate`; verify `DATABASE_URL` is a valid PostgreSQL URL when the command needs datasource resolution.
+- Migration deploy/status: run `pnpm db:check-isolated` and reproduce with a disposable schema. Do not use `prisma db push --force-reset`, `prisma migrate reset`, or any drop/reset command against production-like data.
+- Smoke tests: verify `SMOKE_TEST_DATABASE_URL` points to an isolated PostgreSQL schema whose query parameter starts with `smoke_`, `ci_`, `test_`, `disposable_`, or `local_`, and that port `3999` or `SMOKE_TEST_PORT` is free.
+- Frontend lint/build: run `pnpm --dir frontend lint` and `pnpm --dir frontend build`.
+- Dependency audit: review the advisory, patched version, exploitability, and whether the vulnerable package is in production dependency scope. The frontend audit intentionally uses `--config.ignore-workspace=true` so it audits `frontend/pnpm-lock.yaml` instead of the root workspace lockfile. Keep the CI threshold at high severity unless a documented exception is approved.
+- Docker image validation: inspect Docker build logs for lockfile drift, missing copied files, or unavailable external downloads. Worker image failures can also come from Blender/CUDA base-image download problems.
+- Extension artifact validation: rerun `pnpm package:extension:verify` and ensure both zip files plus `.sha256` files are committed when release artifacts intentionally change.
 
 ## Rollback Procedure
 
@@ -359,10 +441,10 @@ The app-level `POST /api/admin/cleanup-records` endpoint only cleans database me
 
 ## Add-on Packaging
 
-Generate the downloadable add-on zip with:
+Generate the downloadable add-on zip and checksums with:
 
 ```bash
-RENDERSPHERE_PUBLIC_URL=https://your-production-domain.example npm run package:extension
+RENDERSPHERE_PUBLIC_URL=https://your-production-domain.example pnpm package:extension:verify
 ```
 
-If `RENDERSPHERE_PUBLIC_URL` is omitted, the packaged add-on keeps the local development gateway URL.
+If `RENDERSPHERE_PUBLIC_URL` is omitted, the packaged add-on keeps the local development gateway URL. Commit both zip files and their `.sha256` files when the packaged artifact intentionally changes.

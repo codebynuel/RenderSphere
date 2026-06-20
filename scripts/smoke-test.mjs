@@ -5,6 +5,27 @@ const baseUrl = `http://127.0.0.1:${port}`;
 const fallbackSchemaName = `smoke_${Date.now()}`;
 const defaultDatabaseUrl = `postgresql://rendersphere:rendersphere_password@127.0.0.1:5432/rendersphere_db?schema=${fallbackSchemaName}`;
 const databaseUrl = process.env.SMOKE_TEST_DATABASE_URL || process.env.DATABASE_URL || defaultDatabaseUrl;
+const isolatedSchemaPattern = /^(smoke|ci|test|disposable|local)[_-]/i;
+
+function assertIsolatedSmokeDatabaseUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (error) {
+    throw new Error(`SMOKE_TEST_DATABASE_URL/DATABASE_URL must be a valid PostgreSQL URL for smoke tests: ${error.message}`);
+  }
+
+  if (!['postgresql:', 'postgres:'].includes(parsed.protocol)) {
+    throw new Error('Smoke tests require a PostgreSQL URL with an isolated schema.');
+  }
+
+  const schema = parsed.searchParams.get('schema');
+  if (!schema || schema === 'public' || !isolatedSchemaPattern.test(schema)) {
+    throw new Error('Refusing to run smoke tests without an isolated schema query parameter such as schema=smoke_<unique-id>.');
+  }
+}
+
+assertIsolatedSmokeDatabaseUrl(databaseUrl);
 
 function commandName(binary) {
   return process.platform === 'win32' ? `${binary}.cmd` : binary;

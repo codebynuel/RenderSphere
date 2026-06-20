@@ -43,11 +43,23 @@ function uint32(value) {
   return buffer;
 }
 
+function packageTimestamp() {
+  if (process.env.SOURCE_DATE_EPOCH) {
+    const epochSeconds = Number(process.env.SOURCE_DATE_EPOCH);
+    if (!Number.isFinite(epochSeconds) || epochSeconds < 0) {
+      throw new Error('SOURCE_DATE_EPOCH must be a non-negative Unix timestamp when set.');
+    }
+    return new Date(epochSeconds * 1000);
+  }
+
+  return new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+}
+
 function createZip(entries) {
   const localParts = [];
   const centralParts = [];
   let offset = 0;
-  const { dosDate, dosTime } = dosDateTime(new Date());
+  const { dosDate, dosTime } = dosDateTime(packageTimestamp());
 
   for (const entry of entries) {
     const name = Buffer.from(entry.name.replaceAll('\\', '/'));

@@ -28,6 +28,12 @@ const DEFAULT_PAYPAL_PREPAID_PACKAGES = Object.freeze([
   { id: 'creator-25', amountUsd: 25, currency: 'USD', label: '$25 prepaid credits' },
   { id: 'studio-50', amountUsd: 50, currency: 'USD', label: '$50 prepaid credits' },
 ]);
+const DEFAULT_PAYPAL_CUSTOM_TOP_UP = Object.freeze({
+  minAmountUsd: 5,
+  maxAmountUsd: 500,
+  currency: 'USD',
+  decimalPlaces: 2,
+});
 const VALID_ENGINES = new Set(['CYCLES', 'BLENDER_EEVEE_NEXT']);
 const VALID_OUTPUT_FORMATS = new Set(['PNG', 'JPEG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER']);
 const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
@@ -67,6 +73,18 @@ function parseBooleanEnv(name, fallback = false) {
 function normalizedChoiceEnv(name, allowed, fallback) {
   const value = String(process.env[name] || '').trim().toLowerCase();
   return allowed.has(value) ? value : fallback;
+}
+
+function parsePositiveNumberValue(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function parseIntegerValue(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return fallback;
+  return parsed;
 }
 
 function envValue(names, fallback = '') {
@@ -145,6 +163,25 @@ function parsePayPalPrepaidPackages() {
   });
 }
 
+function parsePayPalCustomTopUpConfig() {
+  const currency = envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_CURRENCY', 'PAYPAL_CUSTOM_TOPUP_CURRENCY'], DEFAULT_PAYPAL_CUSTOM_TOP_UP.currency).toUpperCase();
+  return {
+    minAmountUsd: parsePositiveNumberValue(
+      envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MIN_USD', 'PAYPAL_CUSTOM_TOPUP_MIN_USD'], String(DEFAULT_PAYPAL_CUSTOM_TOP_UP.minAmountUsd)),
+      DEFAULT_PAYPAL_CUSTOM_TOP_UP.minAmountUsd,
+    ),
+    maxAmountUsd: parsePositiveNumberValue(
+      envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MAX_USD', 'PAYPAL_CUSTOM_TOPUP_MAX_USD'], String(DEFAULT_PAYPAL_CUSTOM_TOP_UP.maxAmountUsd)),
+      DEFAULT_PAYPAL_CUSTOM_TOP_UP.maxAmountUsd,
+    ),
+    currency: /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_PAYPAL_CUSTOM_TOP_UP.currency,
+    decimalPlaces: parseIntegerValue(
+      envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES', 'PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES'], String(DEFAULT_PAYPAL_CUSTOM_TOP_UP.decimalPlaces)),
+      DEFAULT_PAYPAL_CUSTOM_TOP_UP.decimalPlaces,
+    ),
+  };
+}
+
 function groupConfigured(names) {
   return names.every(envPresent);
 }
@@ -217,6 +254,7 @@ const config = {
     webhookId: envValue(['RENDERSPHERE_PAYPAL_WEBHOOK_ID', 'PAYPAL_WEBHOOK_ID']),
     mock: parseBooleanEnv('RENDERSPHERE_PAYPAL_MOCK', false),
     prepaidPackages: parsePayPalPrepaidPackages(),
+    customTopUp: parsePayPalCustomTopUpConfig(),
   },
   jobRecordRetentionDays: parsePositiveIntegerEnv('RENDERSPHERE_JOB_RECORD_RETENTION_DAYS', 30),
   runpodRequestTimeoutMs: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS', 15000),
@@ -274,6 +312,26 @@ function environmentValidation({ production = config.isProduction } = {}) {
     invalid.push('RENDERSPHERE_PAYPAL_PREPAID_PACKAGES must define at least one valid package');
   }
 
+  const customTopUpMin = envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MIN_USD', 'PAYPAL_CUSTOM_TOPUP_MIN_USD']);
+  const customTopUpMax = envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MAX_USD', 'PAYPAL_CUSTOM_TOPUP_MAX_USD']);
+  const customTopUpCurrency = envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_CURRENCY', 'PAYPAL_CUSTOM_TOPUP_CURRENCY']);
+  const customTopUpDecimalPlaces = envValue(['RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES', 'PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES']);
+  if (customTopUpMin && (!Number.isFinite(Number(customTopUpMin)) || Number(customTopUpMin) <= 0)) {
+    invalid.push('RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MIN_USD must be a positive number');
+  }
+  if (customTopUpMax && (!Number.isFinite(Number(customTopUpMax)) || Number(customTopUpMax) <= 0)) {
+    invalid.push('RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MAX_USD must be a positive number');
+  }
+  if (config.paypal.customTopUp.minAmountUsd > config.paypal.customTopUp.maxAmountUsd) {
+    invalid.push('RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MIN_USD must be less than or equal to RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MAX_USD');
+  }
+  if (customTopUpCurrency && !/^[a-zA-Z]{3}$/.test(customTopUpCurrency)) {
+    invalid.push('RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_CURRENCY must be a three-letter ISO currency code');
+  }
+  if (customTopUpDecimalPlaces && (!Number.isInteger(Number(customTopUpDecimalPlaces)) || Number(customTopUpDecimalPlaces) < 0 || Number(customTopUpDecimalPlaces) > 6)) {
+    invalid.push('RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES must be an integer between 0 and 6');
+  }
+
   return {
     production,
     required,
@@ -297,6 +355,12 @@ function getEnvironmentReadiness({ production = config.isProduction } = {}) {
     paypalEnvironment: config.paypal.environment,
     paypalMock: config.paypal.mock,
     paypalPackagesConfigured: config.paypal.prepaidPackages.length,
+    paypalCustomTopUp: {
+      minAmountUsd: config.paypal.customTopUp.minAmountUsd,
+      maxAmountUsd: config.paypal.customTopUp.maxAmountUsd,
+      currency: config.paypal.customTopUp.currency,
+      decimalPlaces: config.paypal.customTopUp.decimalPlaces,
+    },
     publicUrlConfigured: envPresent('RENDERSPHERE_PUBLIC_URL'),
     rateLimitStore: config.rateLimitStore,
     redisRateLimitConfigured: config.rateLimitStore === 'redis' ? Boolean(config.rateLimitRedisUrl) : null,

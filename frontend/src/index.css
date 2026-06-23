@@ -858,8 +858,9 @@ button {
 }
 
 .auth-submit:disabled {
-    opacity: 0.5;
+    opacity: 0.7;
     cursor: not-allowed;
+    animation: auth-pulse 1.4s ease-in-out infinite;
 }
 
 .auth-spinner {
@@ -873,6 +874,11 @@ button {
 
 @keyframes auth-spin {
     to { transform: rotate(360deg); }
+}
+
+@keyframes auth-pulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 0.5; }
 }
 
 /* ── Footer link ─────────────────────────────────────────────────── */
@@ -1326,6 +1332,7 @@ input:focus {
     text-align: left;
     font-size: 12px;
     font-weight: 750;
+    transition: border-color 0.18s, color 0.18s, background 0.18s;
 }
 
 .sidebar-link.active,

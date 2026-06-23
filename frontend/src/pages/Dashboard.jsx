@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { io } from 'socket.io-client';
 import {
@@ -116,8 +116,19 @@ function statusClass(status) {
     return 'pending';
 }
 
+function formatMoney(value, currency = 'USD') {
+    const normalizedCurrency = String(currency || 'USD').toUpperCase();
+    if (normalizedCurrency === 'USD') return formatUsd(value);
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: normalizedCurrency }).format(Number(value || 0));
+}
+
+function decimalPlaces(value) {
+    const [, fraction = ''] = String(value || '').trim().split('.');
+    return fraction.length;
+}
+
 function progressPercent(job) {
-    if (job?.status === 'COMPLETED') return 100;
+  if (job?.status === 'COMPLETED') return 100;
     const percent = Number(job?.progress?.percent);
     if (Number.isFinite(percent)) return Math.min(100, Math.max(0, Math.round(percent)));
     if (ACTIVE_STATUSES.has(job?.status)) return job.status === 'IN_QUEUE' ? 4 : 10;
@@ -323,6 +334,8 @@ export default function Dashboard() {
     const [jobs, setJobs] = useState([]);
     const [projects, setProjects] = useState([]);
     const [prepaidPackages, setPrepaidPackages] = useState([]);
+    const [customTopUpConfig, setCustomTopUpConfig] = useState(null);
+    const [customTopUpAmount, setCustomTopUpAmount] = useState('');
     const [recharges, setRecharges] = useState([]);
     const [expandedJobId, setExpandedJobId] = useState(null);
     const [newKeyName, setNewKeyName] = useState('');
@@ -339,6 +352,7 @@ export default function Dashboard() {
     const [creatingProject, setCreatingProject] = useState(false);
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
     const [creatingTopUpPackageId, setCreatingTopUpPackageId] = useState(null);
+    const [creatingCustomTopUp, setCreatingCustomTopUp] = useState(false);
     const [capturingOrderId, setCapturingOrderId] = useState(null);
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true });
     const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '', billingPackages: '', billingHistory: '' });
@@ -460,6 +474,7 @@ export default function Dashboard() {
         try {
             const data = await api('/api/billing/prepaid-packages');
             setPrepaidPackages(data.packages || []);
+            setCustomTopUpConfig(data.customTopUp || null);
         } catch (error) {
             setErrorFlag('billingPackages', error.message || 'Failed to load prepaid packages');
             toast.error(`Failed to load prepaid packages: ${error.message}`);
@@ -657,6 +672,23 @@ export default function Dashboard() {
         return copy[activeView] || copy.overview;
     }, [activeView]);
 
+    const customTopUpValidation = useMemo(() => {
+        if (!customTopUpAmount.trim()) return '';
+        if (!customTopUpConfig) return 'Custom top-ups are not configured.';
+        const trimmed = customTopUpAmount.trim();
+        if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) return 'Enter a positive decimal amount.';
+        if (decimalPlaces(trimmed) > Number(customTopUpConfig.decimalPlaces ?? 2)) {
+            return `Use at most ${customTopUpConfig.decimalPlaces} decimal places.`;
+        }
+        const amount = Number(trimmed);
+        if (!Number.isFinite(amount) || amount <= 0) return 'Enter a positive amount.';
+        if (amount < Number(customTopUpConfig.minAmountUsd)) return `Minimum custom top-up is ${formatMoney(customTopUpConfig.minAmountUsd, customTopUpConfig.currency)}.`;
+        if (amount > Number(customTopUpConfig.maxAmountUsd)) return `Maximum custom top-up is ${formatMoney(customTopUpConfig.maxAmountUsd, customTopUpConfig.currency)}.`;
+        return '';
+    }, [customTopUpAmount, customTopUpConfig]);
+    const customTopUpPreview = customTopUpAmount.trim() && !customTopUpValidation
+        ? formatMoney(customTopUpAmount.trim(), customTopUpConfig?.currency)
+        : null;
     const hasJobFilters = jobStatusFilter !== 'all' || Boolean(jobSearchQuery.trim());
     const hasFileFilters = Boolean(fileSearchQuery.trim());
     const currentTourStep = DASHBOARD_TOUR_STEPS[tourStepIndex] || DASHBOARD_TOUR_STEPS[0];
@@ -881,7 +913,7 @@ export default function Dashboard() {
     };
 
     const handleStartPayPalTopUp = async (packageId) => {
-        if (!packageId || creatingTopUpPackageId) return;
+        if (!packageId || creatingTopUpPackageId || creatingCustomTopUp) return;
         setCreatingTopUpPackageId(packageId);
         try {
             const data = await api('/api/billing/paypal/orders', {
@@ -902,6 +934,41 @@ export default function Dashboard() {
             toast.error(error.message || 'Failed to start PayPal checkout');
         } finally {
             setCreatingTopUpPackageId(null);
+        }
+    };
+
+    const handleStartPayPalCustomTopUp = async (event) => {
+        event.preventDefault();
+        if (creatingCustomTopUp || creatingTopUpPackageId) return;
+        const amount = customTopUpAmount.trim();
+        if (!customTopUpConfig) {
+            toast.error('Custom PayPal top-ups are not configured.');
+            return;
+        }
+        if (!amount || customTopUpValidation) {
+            toast.error(customTopUpValidation || 'Enter a custom top-up amount.');
+            return;
+        }
+        setCreatingCustomTopUp(true);
+        try {
+            const data = await api('/api/billing/paypal/orders', {
+                method: 'POST',
+                body: JSON.stringify({ customAmount: { amountUsd: amount, currency: customTopUpConfig.currency } }),
+            });
+            if (data.order) {
+                setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
+                setBillingPage(1);
+            }
+            if (data.order?.approvalUrl) {
+                toast.success('Redirecting to PayPal checkout...');
+                window.location.assign(data.order.approvalUrl);
+                return;
+            }
+            toast.error('PayPal checkout did not return an approval link.');
+        } catch (error) {
+            toast.error(error.message || 'Failed to start custom PayPal checkout');
+        } finally {
+            setCreatingCustomTopUp(false);
         }
     };
 
@@ -1925,7 +1992,7 @@ export default function Dashboard() {
                 <div className="panel-head billing-panel-head">
                     <div>
                         <h2>Billing</h2>
-                        <p className="muted">Top up prepaid credits with PayPal packages validated by the server, then track capture and ledger status here.</p>
+                        <p className="muted">Top up prepaid credits with PayPal packages or a custom amount validated by the server, then track capture and ledger status here.</p>
                     </div>
                     <button className="button" type="button" onClick={loadAll} disabled={loading.jobs || loading.files || billingBusy}>
                         <RefreshCcw size={16} className={loading.jobs || loading.files || billingBusy ? 'spin' : ''} /> Refresh billing
@@ -1941,36 +2008,72 @@ export default function Dashboard() {
                 <section className="queue-section prepaid-packages-section">
                     <div className="queue-section-head">
                         <div>
-                            <h3>Prepaid credit packages</h3>
-                            <p className="muted">Amounts are selected from backend configuration. The browser never controls the credited amount.</p>
+                            <h3>Prepaid credit top-ups</h3>
+                            <p className="muted">Choose a preset package or enter a custom amount. The backend validates every amount and currency before PayPal checkout.</p>
                         </div>
-                        <span className="count-chip">{prepaidPackages.length}</span>
+                        <span className="count-chip">{prepaidPackages.length} presets</span>
                     </div>
                     {loading.billingPackages ? <LoadingState label="Loading prepaid packages..." /> : null}
                     {!loading.billingPackages && errors.billingPackages ? <ErrorState message={errors.billingPackages} onRetry={loadBillingPackages} /> : null}
-                    {!loading.billingPackages && !errors.billingPackages && prepaidPackages.length === 0 ? (
-                        <EmptyState icon={WalletCards} title="No prepaid packages configured" text="Ask an administrator to configure PayPal prepaid package amounts before checkout can start." />
+                    {!loading.billingPackages && !errors.billingPackages && prepaidPackages.length === 0 && !customTopUpConfig ? (
+                        <EmptyState icon={WalletCards} title="No PayPal top-ups configured" text="Ask an administrator to configure PayPal package or custom top-up amounts before checkout can start." />
                     ) : null}
-                    {!loading.billingPackages && !errors.billingPackages && prepaidPackages.length > 0 ? (
+                    {!loading.billingPackages && !errors.billingPackages && (prepaidPackages.length > 0 || customTopUpConfig) ? (
                         <div className="prepaid-package-grid">
                             {prepaidPackages.map((item) => (
                                 <article className="prepaid-package-card" key={item.id}>
                                     <div>
-                                        <span className="package-eyebrow">PayPal checkout</span>
+                                        <span className="package-eyebrow">Preset PayPal checkout</span>
                                         <h4>{item.label}</h4>
-                                        <strong>{formatUsd(item.amountUsd)}</strong>
-                                        <p className="muted">Adds {formatUsd(item.amountUsd)} to your RenderSphere prepaid balance after PayPal capture succeeds.</p>
+                                        <strong>{formatMoney(item.amountUsd, item.currency)}</strong>
+                                        <p className="muted">Adds {formatMoney(item.amountUsd, item.currency)} to your RenderSphere prepaid balance after PayPal capture succeeds.</p>
                                     </div>
                                     <button
                                         className="button primary"
                                         type="button"
                                         onClick={() => handleStartPayPalTopUp(item.id)}
-                                        disabled={Boolean(creatingTopUpPackageId)}
+                                        disabled={Boolean(creatingTopUpPackageId) || creatingCustomTopUp}
                                     >
                                         {creatingTopUpPackageId === item.id ? 'Starting...' : 'Top up with PayPal'}
                                     </button>
                                 </article>
                             ))}
+                            {customTopUpConfig ? (
+                                <article className="prepaid-package-card custom-top-up-card">
+                                    <div>
+                                        <span className="package-eyebrow">Custom PayPal checkout</span>
+                                        <h4>Choose your amount</h4>
+                                        <strong>{customTopUpPreview || formatMoney(customTopUpConfig.minAmountUsd, customTopUpConfig.currency)}</strong>
+                                        <p className="muted">Enter a custom {customTopUpConfig.currency} amount from {formatMoney(customTopUpConfig.minAmountUsd, customTopUpConfig.currency)} to {formatMoney(customTopUpConfig.maxAmountUsd, customTopUpConfig.currency)}.</p>
+                                    </div>
+                                    <form className="custom-top-up-form" onSubmit={handleStartPayPalCustomTopUp} noValidate>
+                                        <label htmlFor="custom-top-up-amount">
+                                            <span>Custom amount ({customTopUpConfig.currency})</span>
+                                            <input
+                                                id="custom-top-up-amount"
+                                                inputMode="decimal"
+                                                min={customTopUpConfig.minAmountUsd}
+                                                max={customTopUpConfig.maxAmountUsd}
+                                                placeholder={String(customTopUpConfig.minAmountUsd)}
+                                                step={customTopUpConfig.decimalPlaces > 0 ? `0.${'0'.repeat(Math.max(customTopUpConfig.decimalPlaces - 1, 0))}1` : '1'}
+                                                type="text"
+                                                value={customTopUpAmount}
+                                                onChange={(event) => setCustomTopUpAmount(event.target.value)}
+                                            />
+                                        </label>
+                                        <p className={customTopUpValidation ? 'custom-top-up-hint error-text' : 'custom-top-up-hint'}>
+                                            {customTopUpValidation || `Server limit: ${formatMoney(customTopUpConfig.minAmountUsd, customTopUpConfig.currency)}–${formatMoney(customTopUpConfig.maxAmountUsd, customTopUpConfig.currency)}; ${customTopUpConfig.decimalPlaces} decimal places.`}
+                                        </p>
+                                        <button
+                                            className="button primary"
+                                            type="submit"
+                                            disabled={creatingCustomTopUp || Boolean(creatingTopUpPackageId) || Boolean(customTopUpValidation) || !customTopUpAmount.trim()}
+                                        >
+                                            {creatingCustomTopUp ? 'Starting...' : 'Top up custom amount'}
+                                        </button>
+                                    </form>
+                                </article>
+                            ) : null}
                         </div>
                     ) : null}
                 </section>
@@ -2045,10 +2148,10 @@ export default function Dashboard() {
                                         {billingPagination.items.map((order) => (
                                             <tr className="data-row" key={order.id}>
                                                 <td data-label="Recharge">
-                                                    <div className="table-primary">{order.packageId}</div>
-                                                    <div className="table-meta"><span>{order.providerOrderId}</span></div>
+                                                    <div className="table-primary">{order.topUpLabel || order.packageId || 'Custom top-up'}</div>
+                                                    <div className="table-meta"><span>{order.topUpType === 'CUSTOM' ? 'Custom amount' : 'Preset package'}</span><span>{order.providerOrderId}</span></div>
                                                 </td>
-                                                <td data-label="Amount">{formatUsd(order.amountUsd)}</td>
+                                                <td data-label="Amount">{formatMoney(order.amountUsd, order.currency)}</td>
                                                 <td data-label="Status"><StatusPill status={order.status} /></td>
                                                 <td data-label="Provider">
                                                     <div className="table-metric-stack">
@@ -2183,6 +2286,15 @@ export default function Dashboard() {
                     </div>
                 </div>
 
+                <AnimatePresence mode="wait">
+                    <motion.div
+                        key={activeView}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        style={{ gridColumn: '1 / -1', minWidth: 0 }}
+                    >
                 {activeView === 'overview' && (
                     <div className="dashboard-metrics-grid operations-metrics">
                         <MetricCard icon={FolderKanban} label="Projects" value={projects.length} detail={`${stats.unassignedJobs} unassigned jobs`} />
@@ -2206,6 +2318,8 @@ export default function Dashboard() {
                 {activeView === 'usage' && <div className="dashboard-grid operations-grid">{renderUsage()}</div>}
                 {activeView === 'billing' && <div className="dashboard-grid operations-grid">{renderBilling()}</div>}
                 {activeView === 'access' && <div className="dashboard-grid operations-grid">{renderAccessKeys()}</div>}
+                    </motion.div>
+                </AnimatePresence>
             </section>
             {renderCreateKeyDialog()}
             {renderDeleteKeyDialog()}

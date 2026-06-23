@@ -18,6 +18,10 @@ const PAYPAL_API_BASE = {
 
 const COMPLETED_CAPTURE_STATUSES = new Set(['COMPLETED']);
 const CAPTURED_ORDER_STATUSES = new Set(['COMPLETED', 'APPROVED']);
+const TOP_UP_TYPES = Object.freeze({
+  PACKAGE: 'PACKAGE',
+  CUSTOM: 'CUSTOM',
+});
 
 function createHttpError(message, status = 400) {
   const error = new Error(message);
@@ -45,12 +49,104 @@ function requirePayPalConfigured() {
   }
 }
 
+function normalizeTopUpType(value, packageId = null) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === TOP_UP_TYPES.CUSTOM) return TOP_UP_TYPES.CUSTOM;
+  if (normalized === TOP_UP_TYPES.PACKAGE) return TOP_UP_TYPES.PACKAGE;
+  return packageId ? TOP_UP_TYPES.PACKAGE : TOP_UP_TYPES.CUSTOM;
+}
+
+function topUpSelectionLabel(topUpType, packageId, metadata = null) {
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    const label = String(metadata.topUpLabel || metadata.packageLabel || metadata.customLabel || '').trim();
+    if (label) return label;
+  }
+  if (topUpType === TOP_UP_TYPES.PACKAGE && packageId) return packageId;
+  return 'Custom top-up';
+}
+
+function normalizeCustomAmountPayload(customAmount = {}, amountUsd = undefined, currency = undefined) {
+  const payload = customAmount && typeof customAmount === 'object' && !Array.isArray(customAmount) ? customAmount : {};
+  const rawAmount = payload.amountUsd ?? payload.amount ?? payload.value ?? amountUsd;
+  const rawAmountString = typeof rawAmount === 'number'
+    ? (Number.isFinite(rawAmount) ? String(rawAmount) : '')
+    : String(rawAmount ?? '').trim();
+
+  const amountMatch = rawAmountString.match(/^(?:0|[1-9]\d*)(?:\.(\d+))?$/);
+  if (!amountMatch) throw createHttpError('Custom top-up amount must be a positive decimal number.', 400);
+
+  const fraction = amountMatch[1] || '';
+  const decimalPlaces = config.paypal.customTopUp.decimalPlaces;
+  if (fraction.length > decimalPlaces) {
+    throw createHttpError(`Custom top-up amount supports up to ${decimalPlaces} decimal places.`, 400);
+  }
+
+  const amountMicros = moneyToMicros(rawAmountString);
+  if (amountMicros <= 0n) throw createHttpError('Custom top-up amount must be greater than zero.', 400);
+
+  const minMicros = moneyToMicros(config.paypal.customTopUp.minAmountUsd);
+  const maxMicros = moneyToMicros(config.paypal.customTopUp.maxAmountUsd);
+  if (amountMicros < minMicros) {
+    throw createHttpError(`Custom top-up amount must be at least ${moneyString(config.paypal.customTopUp.minAmountUsd)} ${config.paypal.customTopUp.currency}.`, 400);
+  }
+  if (amountMicros > maxMicros) {
+    throw createHttpError(`Custom top-up amount must be at most ${moneyString(config.paypal.customTopUp.maxAmountUsd)} ${config.paypal.customTopUp.currency}.`, 400);
+  }
+
+  const requestedCurrency = String(payload.currency ?? currency ?? config.paypal.customTopUp.currency).trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(requestedCurrency)) {
+    throw createHttpError('Custom top-up currency must be a three-letter ISO currency code.', 400);
+  }
+  if (requestedCurrency !== config.paypal.customTopUp.currency) {
+    throw createHttpError(`Custom top-up currency must be ${config.paypal.customTopUp.currency}.`, 400);
+  }
+
+  return {
+    type: TOP_UP_TYPES.CUSTOM,
+    packageId: null,
+    referenceId: 'custom-top-up',
+    label: `Custom ${requestedCurrency} top-up`,
+    description: 'RenderSphere custom prepaid credits',
+    amountUsd: microsToMoneyString(amountMicros),
+    currency: requestedCurrency,
+    decimalPlaces,
+  };
+}
+
+function normalizeTopUpSelection({ packageId, customAmount, amountUsd, currency }) {
+  const normalizedPackageId = String(packageId || '').trim();
+  const hasCustomPayload = customAmount !== undefined || amountUsd !== undefined || currency !== undefined;
+  if (normalizedPackageId && hasCustomPayload) {
+    throw createHttpError('Choose either a prepaid package or a custom top-up amount, not both.', 400);
+  }
+  if (normalizedPackageId) {
+    const selectedPackage = getPrepaidPackage(normalizedPackageId);
+    return {
+      type: TOP_UP_TYPES.PACKAGE,
+      packageId: selectedPackage.id,
+      referenceId: selectedPackage.id,
+      label: selectedPackage.label,
+      description: `RenderSphere prepaid credits ${selectedPackage.label}`,
+      amountUsd: moneyString(selectedPackage.amountUsd),
+      currency: selectedPackage.currency,
+      package: selectedPackage,
+      decimalPlaces: 2,
+    };
+  }
+  if (hasCustomPayload) return normalizeCustomAmountPayload(customAmount, amountUsd, currency);
+  throw createHttpError('Select a prepaid package or enter a custom top-up amount.', 400);
+}
+
 export function prepaidTopUpIdempotencyKey({ providerOrderId, providerCaptureId }) {
   return `paypal-top-up:${providerOrderId}:${providerCaptureId || 'capture'}`;
 }
 
 export function getPrepaidPackages() {
   return config.paypal.prepaidPackages;
+}
+
+export function getPayPalCustomTopUpConfig() {
+  return config.paypal.customTopUp;
 }
 
 export function getPrepaidPackage(packageId) {
@@ -105,7 +201,7 @@ function configuredCancelUrl() {
   return `${config.publicUrl.replace(/\/$/, '')}/dashboard?view=billing&paypal=cancel`;
 }
 
-async function createProviderOrder({ userId, package: selectedPackage, requestId }) {
+async function createProviderOrder({ userId, topUp, requestId }) {
   if (config.paypal.mock) {
     const providerOrderId = `PAYPAL-MOCK-ORDER-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return {
@@ -122,12 +218,12 @@ async function createProviderOrder({ userId, package: selectedPackage, requestId
   const body = {
     intent: 'CAPTURE',
     purchase_units: [{
-      reference_id: selectedPackage.id,
+      reference_id: topUp.referenceId,
       custom_id: userId,
-      description: `RenderSphere prepaid credits ${selectedPackage.label}`,
+      description: topUp.description,
       amount: {
-        currency_code: selectedPackage.currency,
-        value: moneyString(selectedPackage.amountUsd),
+        currency_code: topUp.currency,
+        value: moneyString(topUp.amountUsd),
       },
     }],
     application_context: {
@@ -186,7 +282,7 @@ async function captureProviderOrder(providerOrderId, requestId) {
   return readProviderResponse(response, 'order capture');
 }
 
-function captureFromProviderOrder(captureResult, fallbackAmountUsd) {
+function captureFromProviderOrder(captureResult, fallbackAmountUsd, fallbackCurrency = 'USD') {
   const capture = captureResult?.purchase_units
     ?.flatMap((unit) => unit?.payments?.captures || [])
     ?.find((item) => item?.id) || null;
@@ -196,7 +292,7 @@ function captureFromProviderOrder(captureResult, fallbackAmountUsd) {
     id: capture.id,
     status: capture.status || captureResult.status || 'UNKNOWN',
     amountUsd: capture.amount?.value || moneyString(fallbackAmountUsd),
-    currency: capture.amount?.currency_code || 'USD',
+    currency: capture.amount?.currency_code || fallbackCurrency,
   };
 }
 
@@ -209,14 +305,38 @@ export function serializePrepaidPackage(selectedPackage) {
   };
 }
 
+export function serializeCustomTopUpConfig(customTopUp = config.paypal.customTopUp) {
+  return {
+    minAmountUsd: moneyNumber(customTopUp.minAmountUsd),
+    maxAmountUsd: moneyNumber(customTopUp.maxAmountUsd),
+    currency: customTopUp.currency,
+    decimalPlaces: customTopUp.decimalPlaces,
+  };
+}
+
+export function serializeTopUpSelection(topUp) {
+  if (!topUp) return null;
+  return {
+    type: topUp.type,
+    packageId: topUp.packageId,
+    amountUsd: moneyNumber(topUp.amountUsd),
+    currency: topUp.currency,
+    label: topUp.label,
+  };
+}
+
 export function serializeTopUpOrder(order) {
   if (!order) return null;
+  const topUpType = normalizeTopUpType(order.topUpType, order.packageId);
+  const metadata = order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata) ? order.metadata : null;
   return {
     id: order.id,
     provider: order.provider,
     providerOrderId: order.providerOrderId,
     providerCaptureId: order.providerCaptureId,
     packageId: order.packageId,
+    topUpType,
+    topUpLabel: topUpSelectionLabel(topUpType, order.packageId, metadata),
     amountUsd: moneyNumber(order.amountUsd),
     currency: order.currency,
     status: order.status,
@@ -231,12 +351,12 @@ export function serializeTopUpOrder(order) {
   };
 }
 
-export async function createPayPalTopUpOrder({ userId, packageId, requestId }) {
+export async function createPayPalTopUpOrder({ userId, packageId, customAmount, amountUsd, currency, requestId }) {
   if (!userId) throw createHttpError('Authentication required.', 401);
   requirePayPalConfigured();
-  const selectedPackage = getPrepaidPackage(packageId);
+  const topUp = normalizeTopUpSelection({ packageId, customAmount, amountUsd, currency });
 
-  const providerOrder = await createProviderOrder({ userId, package: selectedPackage, requestId });
+  const providerOrder = await createProviderOrder({ userId, topUp, requestId });
   const approvalUrl = approvalLinkFromOrder(providerOrder);
   if (!providerOrder?.id || !approvalUrl) throw createHttpError('PayPal order response did not include checkout approval details.', 502);
 
@@ -245,9 +365,10 @@ export async function createPayPalTopUpOrder({ userId, packageId, requestId }) {
       userId,
       provider: 'PAYPAL',
       providerOrderId: providerOrder.id,
-      packageId: selectedPackage.id,
-      amountUsd: moneyString(selectedPackage.amountUsd),
-      currency: selectedPackage.currency,
+      packageId: topUp.packageId,
+      topUpType: topUp.type,
+      amountUsd: moneyString(topUp.amountUsd),
+      currency: topUp.currency,
       status: 'CREATED',
       providerStatus: providerOrder.status || 'CREATED',
       approvalUrl,
@@ -255,6 +376,12 @@ export async function createPayPalTopUpOrder({ userId, packageId, requestId }) {
         requestId,
         paypalEnvironment: config.paypal.environment,
         mock: Boolean(config.paypal.mock),
+        topUpType: topUp.type,
+        topUpLabel: topUp.label,
+        ...(topUp.type === TOP_UP_TYPES.CUSTOM ? {
+          customCurrency: topUp.currency,
+          customDecimalPlaces: topUp.decimalPlaces,
+        } : {}),
       }),
     },
   });
@@ -264,11 +391,12 @@ export async function createPayPalTopUpOrder({ userId, packageId, requestId }) {
     requestId,
     userId,
     providerOrderId: order.providerOrderId,
-    packageId: selectedPackage.id,
-    amountUsd: moneyString(selectedPackage.amountUsd),
+    packageId: topUp.packageId,
+    topUpType: topUp.type,
+    amountUsd: moneyString(topUp.amountUsd),
   });
 
-  return { order, package: selectedPackage };
+  return { order, package: topUp.package || null, topUp };
 }
 
 export async function capturePayPalTopUpOrder({ userId, providerOrderId, requestId }) {
@@ -285,15 +413,18 @@ export async function capturePayPalTopUpOrder({ userId, providerOrderId, request
     return { order: existingOrder, transaction: existingOrder.creditTransaction, idempotent: true };
   }
 
-  const selectedPackage = getPrepaidPackage(existingOrder.packageId);
+  const topUpType = normalizeTopUpType(existingOrder.topUpType, existingOrder.packageId);
   const captureResult = await captureProviderOrder(normalizedProviderOrderId, requestId);
-  const capture = captureFromProviderOrder(captureResult, selectedPackage.amountUsd);
-  if (config.paypal.mock) capture.amountUsd = moneyString(selectedPackage.amountUsd);
+  const capture = captureFromProviderOrder(captureResult, existingOrder.amountUsd, existingOrder.currency);
+  if (config.paypal.mock) {
+    capture.amountUsd = moneyString(existingOrder.amountUsd);
+    capture.currency = existingOrder.currency;
+  }
 
   const expectedAmount = moneyToMicros(existingOrder.amountUsd);
   const capturedAmount = moneyToMicros(capture.amountUsd);
   if (capture.currency !== existingOrder.currency || capturedAmount !== expectedAmount || !COMPLETED_CAPTURE_STATUSES.has(capture.status) || !CAPTURED_ORDER_STATUSES.has(captureResult.status)) {
-    const failureReason = 'PayPal capture was not completed for the expected package amount.';
+    const failureReason = 'PayPal capture was not completed for the expected top-up amount.';
     const failedOrder = await prisma.prepaidTopUpOrder.update({
       where: { id: existingOrder.id },
       data: {
@@ -345,7 +476,8 @@ export async function capturePayPalTopUpOrder({ userId, providerOrderId, request
         provider: 'PAYPAL',
         providerOrderId: normalizedProviderOrderId,
         providerCaptureId: capture.id,
-        packageId: selectedPackage.id,
+        packageId: existingOrder.packageId,
+        topUpType,
         amountUsd: moneyString(existingOrder.amountUsd),
         currency: existingOrder.currency,
         paypalEnvironment: config.paypal.environment,
@@ -383,6 +515,7 @@ export async function capturePayPalTopUpOrder({ userId, providerOrderId, request
     providerOrderId: normalizedProviderOrderId,
     providerCaptureId: capture.id,
     orderId: result.order.id,
+    topUpType,
     transactionId: result.transaction?.id || null,
     idempotent: result.idempotent,
   });

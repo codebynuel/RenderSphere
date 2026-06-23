@@ -76,6 +76,10 @@ Recommended web variables:
 - `RENDERSPHERE_PAYPAL_CLIENT_SECRET`
 - `RENDERSPHERE_PAYPAL_WEBHOOK_ID`
 - `RENDERSPHERE_PAYPAL_PREPAID_PACKAGES`
+- `RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MIN_USD`
+- `RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MAX_USD`
+- `RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_CURRENCY`
+- `RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES`
 
 Validation rules:
 
@@ -87,6 +91,7 @@ Validation rules:
 - Default render budget and minimum reservation cannot exceed the configured max render budget.
 - `RENDERSPHERE_PAYPAL_ENVIRONMENT` must be `sandbox` or `live` when provided.
 - `RENDERSPHERE_PAYPAL_PREPAID_PACKAGES` must resolve to at least one valid server-side package.
+- Custom PayPal top-up minimum and maximum amounts must be positive, minimum cannot exceed maximum, currency must be a three-letter code, and decimal places must be an integer from 0 through 6.
 
 Local development only requires `DATABASE_URL` at server startup so developers can run the gateway without real R2/RunPod/PayPal credentials until they exercise those integrations.
 
@@ -343,7 +348,7 @@ pnpm checksums:extension:verify
 
 ## PayPal Prepaid Top-ups
 
-RenderSphere supports PayPal Orders API prepaid top-ups for configured USD credit packages. The browser can select only a package ID. The gateway looks up the package amount and currency from server configuration before creating the PayPal order, so frontend-sent amounts are ignored.
+RenderSphere supports PayPal Orders API prepaid top-ups for configured credit packages and custom user-entered amounts. Package orders accept only a package ID and the gateway looks up amount/currency from server configuration. Custom orders accept an amount and currency, but the gateway validates them against server-side minimum, maximum, allowed currency, and decimal precision before creating the PayPal order, so browser-sent amounts are never trusted blindly.
 
 ### PayPal app setup
 
@@ -373,13 +378,26 @@ A JSON array is also accepted, for example:
 ]
 ```
 
-Package IDs must be stable because they are stored on `PrepaidTopUpOrder` records. To retire a package, remove it from configuration after confirming no users still need to capture an existing created order for that package.
+Package IDs must be stable because they are stored on `PrepaidTopUpOrder` records. Existing package orders store their amount/currency at creation time, so capture no longer requires a package to remain configured, but keep IDs stable for support, reporting, and recharge history clarity.
+
+### Custom amount configuration
+
+Configure custom top-up limits with:
+
+```env
+RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MIN_USD=5
+RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MAX_USD=500
+RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_CURRENCY=USD
+RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES=2
+```
+
+The Billing page reads these values from `GET /api/billing/prepaid-packages` and uses them for client-side guidance only. The gateway repeats validation on `POST /api/billing/paypal/orders` and rejects amounts below the minimum, above the maximum, using the wrong currency, or using more decimal places than configured.
 
 ### Order and capture behavior
 
-Authenticated users use `POST /api/billing/paypal/orders` with a package ID. The gateway creates a PayPal order and persists a `PrepaidTopUpOrder` row with status, amount, package ID, approval URL, and provider order ID. The Billing page redirects the user to PayPal approval.
+Authenticated users use `POST /api/billing/paypal/orders` with either a package ID or a custom amount payload, not both. The gateway creates a PayPal order and persists a `PrepaidTopUpOrder` row with status, amount, currency, top-up type, nullable package ID, approval URL, and provider order ID. The Billing page redirects the user to PayPal approval.
 
-After PayPal returns to the Billing page, the frontend calls `POST /api/billing/paypal/orders/:providerOrderId/capture`. The gateway captures the provider order, verifies that the captured currency and amount match the stored server-side package, then credits the user by calling the ledger helper with transaction type `PREPAID_TOP_UP` and an idempotency key derived from the PayPal order/capture IDs. A successful capture links the `PrepaidTopUpOrder` to the resulting `CreditTransaction`.
+After PayPal returns to the Billing page, the frontend calls `POST /api/billing/paypal/orders/:providerOrderId/capture`. The gateway captures the provider order, verifies that the captured currency and amount match the stored top-up amount, then credits the user by calling the ledger helper with transaction type `PREPAID_TOP_UP` and an idempotency key derived from the PayPal order/capture IDs. A successful capture links the `PrepaidTopUpOrder` to the resulting `CreditTransaction`.
 
 `GET /api/billing/recharges` returns paginated recharge records for the authenticated user. Use this endpoint, not PayPal payloads exposed to the browser, for customer-visible recharge history.
 
@@ -391,7 +409,7 @@ Operational notes:
 
 - Do not log PayPal client secrets, access tokens, or raw provider payloads.
 - Do not manually update `User.starterBalanceUsd` for PayPal incidents. Inspect `PrepaidTopUpOrder`, `CreditTransaction`, and `CreditAuditEvent` rows and retry idempotent capture or apply reviewed ledger repairs.
-- If capture returns a completed order with a mismatched amount/currency, the local top-up record is marked `FAILED` and no credits are issued. Investigate PayPal dashboard and package configuration before retrying.
+- If capture returns a completed order with a mismatched amount/currency, the local top-up record is marked `FAILED` and no credits are issued. Investigate PayPal dashboard, package/custom configuration, and the stored top-up amount before retrying.
 - Webhook processing is not required for the current capture-on-return flow. If webhooks are added later, verify signatures with `RENDERSPHERE_PAYPAL_WEBHOOK_ID` and keep ledger idempotency keys unchanged.
 
 ## Prepaid Credit Ledger

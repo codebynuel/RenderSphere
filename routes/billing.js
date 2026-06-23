@@ -5,10 +5,13 @@ import { buildPaginationMeta, parsePaginationQuery } from '../src/controllers/pa
 import {
   capturePayPalTopUpOrder,
   createPayPalTopUpOrder,
+  getPayPalCustomTopUpConfig,
   getPrepaidPackages,
   listPrepaidTopUpOrders,
+  serializeCustomTopUpConfig,
   serializePrepaidPackage,
   serializeTopUpOrder,
+  serializeTopUpSelection,
 } from '../src/services/paypalService.js';
 
 function createBillingRouter({ accountRateLimit, requireAuth }) {
@@ -17,7 +20,10 @@ function createBillingRouter({ accountRateLimit, requireAuth }) {
   router.use(requireAuth);
 
   router.get('/prepaid-packages', (req, res) => {
-    res.json({ packages: getPrepaidPackages().map(serializePrepaidPackage) });
+    res.json({
+      packages: getPrepaidPackages().map(serializePrepaidPackage),
+      customTopUp: serializeCustomTopUpConfig(getPayPalCustomTopUpConfig()),
+    });
   });
 
   router.get('/recharges', asyncHandler(async (req, res) => {
@@ -34,12 +40,16 @@ function createBillingRouter({ accountRateLimit, requireAuth }) {
     const result = await createPayPalTopUpOrder({
       userId: req.user.id,
       packageId: req.body?.packageId,
+      customAmount: req.body?.customAmount,
+      amountUsd: req.body?.amountUsd,
+      currency: req.body?.currency,
       requestId: req.id || req.requestId || null,
     });
 
     res.status(201).json({
       order: serializeTopUpOrder(result.order),
-      package: serializePrepaidPackage(result.package),
+      package: result.package ? serializePrepaidPackage(result.package) : null,
+      topUp: serializeTopUpSelection(result.topUp),
     });
   }));
 

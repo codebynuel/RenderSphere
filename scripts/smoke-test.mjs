@@ -87,7 +87,7 @@ const serverEnv = {
   RENDERSPHERE_MAX_PAGE_SIZE: '3',
   RENDERSPHERE_RATE_LIMIT_STORE: 'memory',
   RENDERSPHERE_ACCOUNT_RATE_LIMIT_WINDOW_MS: '60000',
-  RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX: '4',
+  RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX: '12',
   RENDERSPHERE_RENDER_RATE_LIMIT_WINDOW_MS: '60000',
   RENDERSPHERE_RENDER_RATE_LIMIT_MAX: '100',
   RENDERSPHERE_AUTH_RATE_LIMIT_WINDOW_MS: '60000',
@@ -100,6 +100,10 @@ const serverEnv = {
   RENDERSPHERE_PAYPAL_CLIENT_ID: 'smoke-paypal-client',
   RENDERSPHERE_PAYPAL_CLIENT_SECRET: 'smoke-paypal-secret',
   RENDERSPHERE_PAYPAL_PREPAID_PACKAGES: 'smoke-10:10:USD:$10 smoke credits,smoke-25:25:USD:$25 smoke credits',
+  RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MIN_USD: '5',
+  RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_MAX_USD: '100',
+  RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_CURRENCY: 'USD',
+  RENDERSPHERE_PAYPAL_CUSTOM_TOPUP_DECIMAL_PLACES: '2',
   RENDERSPHERE_PAYPAL_MOCK: 'true',
 };
 
@@ -702,6 +706,9 @@ try {
   if (prepaidPackages.packages?.length !== 2 || prepaidPackages.packages[0].id !== 'smoke-10' || prepaidPackages.packages[0].amountUsd !== 10) {
     throw new Error('Billing prepaid packages endpoint did not return the configured PayPal smoke packages.');
   }
+  if (prepaidPackages.customTopUp?.minAmountUsd !== 5 || prepaidPackages.customTopUp?.maxAmountUsd !== 100 || prepaidPackages.customTopUp?.currency !== 'USD' || prepaidPackages.customTopUp?.decimalPlaces !== 2) {
+    throw new Error('Billing prepaid packages endpoint did not return the configured custom PayPal top-up limits.');
+  }
 
   const invalidTopUp = await rawRequest('/api/billing/paypal/orders', {
     method: 'POST',
@@ -713,6 +720,36 @@ try {
   }
   assertRequestId(invalidTopUp, 'invalid PayPal package response');
 
+  const tooLowCustomTopUp = await rawRequest('/api/billing/paypal/orders', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ customAmount: { amountUsd: '4.99', currency: 'USD' } }),
+  });
+  if (tooLowCustomTopUp.response.status !== 400 || !tooLowCustomTopUp.data.error?.includes('at least 5.000000 USD')) {
+    throw new Error(`Expected too-low custom PayPal top-up to return 400, got ${tooLowCustomTopUp.response.status}.`);
+  }
+  assertRequestId(tooLowCustomTopUp, 'too-low custom PayPal top-up response');
+
+  const tooHighCustomTopUp = await rawRequest('/api/billing/paypal/orders', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ customAmount: { amountUsd: '100.01', currency: 'USD' } }),
+  });
+  if (tooHighCustomTopUp.response.status !== 400 || !tooHighCustomTopUp.data.error?.includes('at most 100.000000 USD')) {
+    throw new Error(`Expected too-high custom PayPal top-up to return 400, got ${tooHighCustomTopUp.response.status}.`);
+  }
+  assertRequestId(tooHighCustomTopUp, 'too-high custom PayPal top-up response');
+
+  const invalidPrecisionCustomTopUp = await rawRequest('/api/billing/paypal/orders', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ customAmount: { amountUsd: '12.345', currency: 'USD' } }),
+  });
+  if (invalidPrecisionCustomTopUp.response.status !== 400 || !invalidPrecisionCustomTopUp.data.error?.includes('up to 2 decimal places')) {
+    throw new Error(`Expected invalid precision custom PayPal top-up to return 400, got ${invalidPrecisionCustomTopUp.response.status}.`);
+  }
+  assertRequestId(invalidPrecisionCustomTopUp, 'invalid precision custom PayPal top-up response');
+
   const prepaidTopUpsBefore = await prisma.creditTransaction.count({
     where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.PREPAID_TOP_UP },
   });
@@ -721,7 +758,7 @@ try {
     headers: cookieHeaders,
     body: JSON.stringify({ packageId: 'smoke-10' }),
   });
-  if (paypalOrder.package?.id !== 'smoke-10' || paypalOrder.order?.status !== 'CREATED' || !paypalOrder.order?.providerOrderId || !paypalOrder.order?.approvalUrl?.includes('/mock-paypal/approve/')) {
+  if (paypalOrder.package?.id !== 'smoke-10' || paypalOrder.topUp?.type !== 'PACKAGE' || paypalOrder.order?.topUpType !== 'PACKAGE' || paypalOrder.order?.status !== 'CREATED' || !paypalOrder.order?.providerOrderId || !paypalOrder.order?.approvalUrl?.includes('/mock-paypal/approve/')) {
     throw new Error('Mock PayPal order creation did not return the expected package, order id, and approval URL.');
   }
 
@@ -730,8 +767,8 @@ try {
     headers: cookieHeaders,
     body: '{}',
   });
-  if (paypalCapture.idempotent || paypalCapture.order?.status !== 'CAPTURED' || paypalCapture.order?.amountUsd !== 10 || !paypalCapture.transactionId) {
-    throw new Error('Mock PayPal capture did not credit the prepaid top-up order as expected.');
+  if (paypalCapture.idempotent || paypalCapture.order?.status !== 'CAPTURED' || paypalCapture.order?.amountUsd !== 10 || paypalCapture.order?.topUpType !== 'PACKAGE' || !paypalCapture.transactionId) {
+    throw new Error('Mock PayPal package capture did not credit the prepaid top-up order as expected.');
   }
 
   const duplicatePayPalCapture = await capturePayPalTopUpOrder({
@@ -740,33 +777,64 @@ try {
     requestId: 'smoke-paypal-duplicate-capture',
   });
   if (!duplicatePayPalCapture.idempotent || duplicatePayPalCapture.order?.creditTransactionId !== paypalCapture.transactionId) {
-    throw new Error('Duplicate PayPal capture did not return the existing credited top-up idempotently.');
+    throw new Error('Duplicate PayPal package capture did not return the existing credited top-up idempotently.');
+  }
+
+  const customPayPalOrder = await request('/api/billing/paypal/orders', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ customAmount: { amountUsd: '12.34', currency: 'USD' } }),
+  });
+  if (customPayPalOrder.package !== null || customPayPalOrder.topUp?.type !== 'CUSTOM' || customPayPalOrder.topUp?.amountUsd !== 12.34 || customPayPalOrder.order?.topUpType !== 'CUSTOM' || customPayPalOrder.order?.packageId !== null || customPayPalOrder.order?.amountUsd !== 12.34 || !customPayPalOrder.order?.approvalUrl?.includes('/mock-paypal/approve/')) {
+    throw new Error('Mock custom PayPal order creation did not return the expected custom top-up metadata.');
+  }
+
+  const customPayPalCapture = await request(`/api/billing/paypal/orders/${encodeURIComponent(customPayPalOrder.order.providerOrderId)}/capture`, {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: '{}',
+  });
+  if (customPayPalCapture.idempotent || customPayPalCapture.order?.status !== 'CAPTURED' || customPayPalCapture.order?.amountUsd !== 12.34 || customPayPalCapture.order?.topUpType !== 'CUSTOM' || !customPayPalCapture.transactionId) {
+    throw new Error('Mock custom PayPal capture did not credit the prepaid top-up order as expected.');
+  }
+
+  const duplicateCustomPayPalCapture = await capturePayPalTopUpOrder({
+    userId: registered.user.id,
+    providerOrderId: customPayPalOrder.order.providerOrderId,
+    requestId: 'smoke-paypal-custom-duplicate-capture',
+  });
+  if (!duplicateCustomPayPalCapture.idempotent || duplicateCustomPayPalCapture.order?.creditTransactionId !== customPayPalCapture.transactionId) {
+    throw new Error('Duplicate custom PayPal capture did not return the existing credited top-up idempotently.');
   }
 
   const prepaidTopUpsAfter = await prisma.creditTransaction.findMany({
     where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.PREPAID_TOP_UP },
     orderBy: { createdAt: 'desc' },
   });
-  if (prepaidTopUpsAfter.length !== prepaidTopUpsBefore + 1 || Number(prepaidTopUpsAfter[0].amountUsd) !== 10) {
-    throw new Error('PayPal capture did not create exactly one PREPAID_TOP_UP ledger transaction.');
+  if (prepaidTopUpsAfter.length !== prepaidTopUpsBefore + 2 || Number(prepaidTopUpsAfter[0].amountUsd) !== 12.34 || Number(prepaidTopUpsAfter[1].amountUsd) !== 10) {
+    throw new Error('PayPal captures did not create exactly one package and one custom PREPAID_TOP_UP ledger transaction.');
   }
   const userAfterPayPalTopUp = await prisma.user.findUnique({ where: { id: registered.user.id } });
-  if (Number(userAfterPayPalTopUp.starterBalanceUsd) !== 22.75) {
-    throw new Error(`Expected balance 22.75 after PayPal top-up, got ${userAfterPayPalTopUp.starterBalanceUsd}.`);
+  if (Number(userAfterPayPalTopUp.starterBalanceUsd) !== 35.09) {
+    throw new Error(`Expected balance 35.09 after PayPal top-ups, got ${userAfterPayPalTopUp.starterBalanceUsd}.`);
   }
 
   const rechargeHistory = await request('/api/billing/recharges?page=1&pageSize=2', { headers: cookieHeaders });
-  if (rechargeHistory.recharges?.[0]?.providerOrderId !== paypalOrder.order.providerOrderId || rechargeHistory.recharges[0].status !== 'CAPTURED' || rechargeHistory.pagination?.totalItems !== 1) {
-    throw new Error('Recharge history did not expose the captured PayPal top-up with pagination metadata.');
+  if (rechargeHistory.recharges?.[0]?.providerOrderId !== customPayPalOrder.order.providerOrderId || rechargeHistory.recharges[0].topUpType !== 'CUSTOM' || rechargeHistory.recharges?.[1]?.providerOrderId !== paypalOrder.order.providerOrderId || rechargeHistory.recharges[1].topUpType !== 'PACKAGE' || rechargeHistory.pagination?.totalItems !== 2) {
+    throw new Error('Recharge history did not expose package and custom captured PayPal top-ups with pagination metadata.');
   }
 
-  const rateLimitedProject = await rawRequest('/api/projects', {
-    method: 'POST',
-    headers: cookieHeaders,
-    body: JSON.stringify({ name: 'Smoke project rate limit check' }),
-  });
-  if (rateLimitedProject.response.status !== 429) {
-    throw new Error(`Expected account mutation rate limit to return 429 after repeated project/access-key mutations, got ${rateLimitedProject.response.status}.`);
+  let rateLimitedProject = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    rateLimitedProject = await rawRequest('/api/projects', {
+      method: 'POST',
+      headers: cookieHeaders,
+      body: JSON.stringify({ name: `Smoke project rate limit check ${attempt + 1}` }),
+    });
+    if (rateLimitedProject.response.status === 429) break;
+  }
+  if (rateLimitedProject?.response.status !== 429) {
+    throw new Error(`Expected account mutation rate limit to return 429 after repeated account mutations, got ${rateLimitedProject?.response.status}.`);
   }
 
   const failedJobId = `smoke-failed-${Date.now()}`;

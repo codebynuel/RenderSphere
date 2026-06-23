@@ -1471,7 +1471,9 @@ input:focus {
     gap: 8px;
 }
 
-.project-table-wrap {
+.project-table-wrap,
+.queue-table,
+.file-library {
     overflow: visible;
 }
 
@@ -1489,8 +1491,13 @@ input:focus {
     line-height: 1;
 }
 
-.project-actions-toggle span {
-    transform: translateY(-1px);
+.project-actions-toggle svg {
+    color: var(--muted);
+}
+
+.project-actions-toggle:hover svg,
+.project-actions-toggle:focus-visible svg {
+    color: var(--text);
 }
 
 .project-actions-dropdown {
@@ -1533,7 +1540,12 @@ input:focus {
     font-size: 12px;
     font-weight: 800;
     text-align: left;
+    text-decoration: none;
     white-space: nowrap;
+}
+
+.project-menu-item svg {
+    flex: 0 0 auto;
 }
 
 .project-menu-item:hover,
@@ -2691,6 +2703,7 @@ input:focus-visible {
 
     .table-actions .button,
     .table-actions .link-button,
+    .table-actions .action-menu,
     .access-modal-actions .button,
     .one-time-key-box .button {
         width: 100%;

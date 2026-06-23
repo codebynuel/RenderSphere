@@ -12,11 +12,13 @@ import {
     Download,
     Edit3,
     ExternalLink,
+    Eye,
     FileArchive,
     FolderKanban,
     FolderPlus,
     HelpCircle,
     KeyRound,
+    Menu,
     Plus,
     ReceiptText,
     RefreshCcw,
@@ -44,7 +46,8 @@ const STATUS_OPTIONS = [
 const DASHBOARD_TOUR_STORAGE_KEY = 'rendersphere.dashboardProductTour.v1';
 const TABLE_PAGE_SIZE = 10;
 const SERVER_PAGE_SIZE = 50;
-const PROJECT_ACTION_MENU_GAP = 8;
+const ACTION_MENU_GAP = 8;
+const ACTION_MENU_DEFAULT_HEIGHT = 160;
 const PROJECT_ACTION_MENU_HEIGHT = {
     editing: 104,
     default: 184,
@@ -327,8 +330,8 @@ export default function Dashboard() {
     const [newProjectName, setNewProjectName] = useState('');
     const [editingProjectId, setEditingProjectId] = useState(null);
     const [editingProjectName, setEditingProjectName] = useState('');
-    const [openProjectActionsId, setOpenProjectActionsId] = useState(null);
-    const [projectActionsPlacement, setProjectActionsPlacement] = useState('down');
+    const [openActionMenuId, setOpenActionMenuId] = useState(null);
+    const [actionMenuPlacement, setActionMenuPlacement] = useState('down');
     const [creatingKey, setCreatingKey] = useState(false);
     const [creatingProject, setCreatingProject] = useState(false);
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
@@ -339,31 +342,32 @@ export default function Dashboard() {
     const [tourStepIndex, setTourStepIndex] = useState(0);
     const [tourTargetRect, setTourTargetRect] = useState(null);
     const dashboardMainRef = useRef(null);
-    const projectActionsMenuRef = useRef(null);
-    const projectActionButtonRefs = useRef(new Map());
+    const actionMenuRef = useRef(null);
+    const actionMenuButtonRefs = useRef(new Map());
+    const actionMenuHeightsRef = useRef(new Map());
     const tourDialogRef = useRef(null);
     const initialLoadUserIdRef = useRef(null);
     const jobFilterLoadRef = useRef({ userId: null, status: jobStatusFilter, search: jobSearchQuery });
     const fileFilterLoadRef = useRef({ userId: null, search: fileSearchQuery });
 
-    const getProjectActionPlacement = useCallback((projectId, buttonElement) => {
+    const getActionMenuPlacement = useCallback((menuId, buttonElement) => {
         if (!buttonElement || typeof window === 'undefined') return 'down';
         const buttonRect = buttonElement.getBoundingClientRect();
         const viewportBottom = window.innerHeight || document.documentElement.clientHeight || 0;
         const containerRect = dashboardMainRef.current?.getBoundingClientRect();
         const lowerBoundary = Math.min(viewportBottom, containerRect?.bottom ?? viewportBottom);
         const upperBoundary = Math.max(0, containerRect?.top ?? 0);
-        const estimatedMenuHeight = editingProjectId === projectId ? PROJECT_ACTION_MENU_HEIGHT.editing : PROJECT_ACTION_MENU_HEIGHT.default;
-        const availableBelow = lowerBoundary - buttonRect.bottom - PROJECT_ACTION_MENU_GAP;
-        const availableAbove = buttonRect.top - upperBoundary - PROJECT_ACTION_MENU_GAP;
+        const estimatedMenuHeight = actionMenuHeightsRef.current.get(menuId) || ACTION_MENU_DEFAULT_HEIGHT;
+        const availableBelow = lowerBoundary - buttonRect.bottom - ACTION_MENU_GAP;
+        const availableAbove = buttonRect.top - upperBoundary - ACTION_MENU_GAP;
         return availableBelow < estimatedMenuHeight && availableAbove > availableBelow ? 'up' : 'down';
-    }, [editingProjectId]);
+    }, []);
 
-    const updateProjectActionPlacement = useCallback((projectId = openProjectActionsId) => {
-        if (!projectId) return;
-        const buttonElement = projectActionButtonRefs.current.get(projectId);
-        setProjectActionsPlacement(getProjectActionPlacement(projectId, buttonElement));
-    }, [getProjectActionPlacement, openProjectActionsId]);
+    const updateActionMenuPlacement = useCallback((menuId = openActionMenuId) => {
+        if (!menuId) return;
+        const buttonElement = actionMenuButtonRefs.current.get(menuId);
+        setActionMenuPlacement(getActionMenuPlacement(menuId, buttonElement));
+    }, [getActionMenuPlacement, openActionMenuId]);
 
     useEffect(() => {
         if (!authLoading && !user) navigate('/auth');
@@ -721,22 +725,22 @@ export default function Dashboard() {
     }, [goToNextTourStep, goToPreviousTourStep, isFirstTourStep, markTourDismissed, tourOpen]);
 
     useEffect(() => {
-        if (!openProjectActionsId) return undefined;
+        if (!openActionMenuId) return undefined;
 
-        updateProjectActionPlacement(openProjectActionsId);
+        updateActionMenuPlacement(openActionMenuId);
         const dashboardMain = dashboardMainRef.current;
 
         const handlePointerDown = (event) => {
-            if (projectActionsMenuRef.current?.contains(event.target)) return;
-            setOpenProjectActionsId(null);
+            if (actionMenuRef.current?.contains(event.target)) return;
+            setOpenActionMenuId(null);
         };
 
         const handleKeyDown = (event) => {
-            if (event.key === 'Escape') setOpenProjectActionsId(null);
+            if (event.key === 'Escape') setOpenActionMenuId(null);
         };
 
         const handleViewportChange = () => {
-            updateProjectActionPlacement(openProjectActionsId);
+            updateActionMenuPlacement(openActionMenuId);
         };
 
         document.addEventListener('pointerdown', handlePointerDown);
@@ -751,7 +755,7 @@ export default function Dashboard() {
             window.removeEventListener('scroll', handleViewportChange, true);
             dashboardMain?.removeEventListener('scroll', handleViewportChange);
         };
-    }, [openProjectActionsId, updateProjectActionPlacement]);
+    }, [openActionMenuId, updateActionMenuPlacement]);
 
     const openCreateKeyDialog = () => {
         setNewKeyName('');
@@ -828,27 +832,28 @@ export default function Dashboard() {
         }
     };
 
-    const closeProjectActionMenu = () => {
-        setOpenProjectActionsId(null);
+    const closeActionMenu = () => {
+        setOpenActionMenuId(null);
     };
 
-    const toggleProjectActionMenu = (projectId, buttonElement) => {
-        if (openProjectActionsId === projectId) {
-            setOpenProjectActionsId(null);
+    const toggleActionMenu = (menuId, buttonElement, estimatedHeight = ACTION_MENU_DEFAULT_HEIGHT) => {
+        if (openActionMenuId === menuId) {
+            setOpenActionMenuId(null);
             return;
         }
-        setProjectActionsPlacement(getProjectActionPlacement(projectId, buttonElement));
-        setOpenProjectActionsId(projectId);
+        actionMenuHeightsRef.current.set(menuId, estimatedHeight);
+        setActionMenuPlacement(getActionMenuPlacement(menuId, buttonElement));
+        setOpenActionMenuId(menuId);
     };
 
     const startProjectEdit = (project) => {
-        closeProjectActionMenu();
+        closeActionMenu();
         setEditingProjectId(project.id);
         setEditingProjectName(project.name || '');
     };
 
     const cancelProjectEdit = () => {
-        closeProjectActionMenu();
+        closeActionMenu();
         setEditingProjectId(null);
         setEditingProjectName('');
     };
@@ -877,11 +882,6 @@ export default function Dashboard() {
         } finally {
             setUpdatingProjectId(null);
         }
-    };
-
-    const runProjectMenuAction = (action) => {
-        closeProjectActionMenu();
-        action();
     };
 
     const handleDeleteProject = async (project) => {
@@ -971,7 +971,7 @@ export default function Dashboard() {
     };
 
     const viewProjectRenders = (project) => {
-        closeProjectActionMenu();
+        closeActionMenu();
         setJobStatusFilter('all');
         setJobSearchQuery(project.name || project.id);
         setActiveJobsPage(1);
@@ -980,14 +980,108 @@ export default function Dashboard() {
     };
 
     const viewProjectFiles = (project) => {
-        closeProjectActionMenu();
+        closeActionMenu();
         setFileSearchQuery(project.name || project.id);
         setFilesPage(1);
         setActiveView('files');
     };
 
+    const renderActionMenuItem = (item) => {
+        const Icon = item.icon;
+        const content = (
+            <>
+                <Icon size={15} /> {item.label}
+            </>
+        );
+
+        if (item.href) {
+            return (
+                <a
+                    className={`project-menu-item${item.danger ? ' danger' : ''}${item.primary ? ' primary' : ''}`}
+                    href={item.href}
+                    target={item.target}
+                    rel={item.rel}
+                    download={item.download}
+                    role="menuitem"
+                    onClick={closeActionMenu}
+                    key={item.key}
+                >
+                    {content}
+                </a>
+            );
+        }
+
+        return (
+            <button
+                className={`project-menu-item${item.danger ? ' danger' : ''}${item.primary ? ' primary' : ''}`}
+                type={item.type || 'button'}
+                form={item.form}
+                role="menuitem"
+                disabled={item.disabled}
+                onClick={item.onClick ? () => {
+                    closeActionMenu();
+                    item.onClick();
+                } : undefined}
+                key={item.key}
+            >
+                {content}
+            </button>
+        );
+    };
+
+    const ActionMenu = ({ menuId, label, items, estimatedHeight = ACTION_MENU_DEFAULT_HEIGHT }) => {
+        const menuOpen = openActionMenuId === menuId;
+        return (
+            <div className="project-actions-menu action-menu" ref={menuOpen ? actionMenuRef : null}>
+                <button
+                    ref={(node) => {
+                        if (node) actionMenuButtonRefs.current.set(menuId, node);
+                        else actionMenuButtonRefs.current.delete(menuId);
+                    }}
+                    className="button compact-button project-actions-toggle action-menu-toggle"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    aria-controls={`${menuId}-menu`}
+                    aria-label={label}
+                    onClick={(event) => toggleActionMenu(menuId, event.currentTarget, estimatedHeight)}
+                >
+                    <Menu size={16} aria-hidden="true" />
+                </button>
+                {menuOpen && (
+                    <div className={`project-actions-dropdown action-menu-dropdown placement-${actionMenuPlacement}`} id={`${menuId}-menu`} role="menu" aria-label={label}>
+                        {items.map(renderActionMenuItem)}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     const renderJobRow = (job) => {
         const expanded = expandedJobId === job.jobId;
+        const jobActionItems = [
+            {
+                icon: Eye,
+                key: 'details',
+                label: expanded ? 'Hide details' : 'View details',
+                onClick: () => setExpandedJobId(expanded ? null : job.jobId),
+            },
+            ...(ACTIVE_STATUSES.has(job.status) ? [{
+                danger: true,
+                icon: XCircle,
+                key: 'cancel',
+                label: 'Cancel job',
+                onClick: () => handleCancelJob(job.jobId),
+            }] : []),
+            ...(job.downloadUrl ? [{
+                href: job.downloadUrl,
+                icon: Download,
+                key: 'download',
+                label: 'Download output',
+                rel: 'noopener noreferrer',
+                target: '_blank',
+            }] : []),
+        ];
         return (
             <Fragment key={job.jobId}>
                 <tr className="data-row">
@@ -1011,18 +1105,24 @@ export default function Dashboard() {
                     </td>
                     <td data-label="Actions">
                         <div className="table-actions">
-                            <button className="button compact-button" type="button" onClick={() => setExpandedJobId(expanded ? null : job.jobId)}>
-                                {expanded ? 'Hide' : 'Details'}
-                            </button>
-                            {ACTIVE_STATUSES.has(job.status) && (
-                                <button className="button compact-button danger" type="button" onClick={() => handleCancelJob(job.jobId)}>
-                                    Cancel
-                                </button>
-                            )}
-                            {job.downloadUrl && (
-                                <a className="link-button compact-button" href={job.downloadUrl} target="_blank" rel="noopener noreferrer">
-                                    <Download size={15} /> Download
-                                </a>
+                            {jobActionItems.length > 2 ? (
+                                <ActionMenu menuId={`job-actions-${job.jobId}`} label={`Actions for job ${job.jobId}`} items={jobActionItems} />
+                            ) : (
+                                <>
+                                    <button className="button compact-button" type="button" onClick={() => setExpandedJobId(expanded ? null : job.jobId)}>
+                                        <Eye size={15} /> {expanded ? 'Hide' : 'Details'}
+                                    </button>
+                                    {ACTIVE_STATUSES.has(job.status) && (
+                                        <button className="button compact-button danger" type="button" onClick={() => handleCancelJob(job.jobId)}>
+                                            <XCircle size={15} /> Cancel
+                                        </button>
+                                    )}
+                                    {job.downloadUrl && (
+                                        <a className="link-button compact-button" href={job.downloadUrl} target="_blank" rel="noopener noreferrer">
+                                            <Download size={15} /> Download
+                                        </a>
+                                    )}
+                                </>
                             )}
                         </div>
                     </td>
@@ -1333,8 +1433,50 @@ export default function Dashboard() {
                                     const jobCount = stats.jobsByProject.get(project.id) || project.jobCount || 0;
                                     const fileCount = stats.filesByProject.get(project.id) || 0;
                                     const isEditing = editingProjectId === project.id;
-                                    const actionsMenuOpen = openProjectActionsId === project.id;
                                     const editFormId = `project-edit-${project.id}`;
+                                    const projectActionItems = isEditing ? [
+                                        {
+                                            disabled: updatingProjectId === project.id || !editingProjectName.trim(),
+                                            form: editFormId,
+                                            icon: Save,
+                                            key: 'save',
+                                            label: 'Save rename',
+                                            primary: true,
+                                            type: 'submit',
+                                        },
+                                        {
+                                            icon: X,
+                                            key: 'cancel',
+                                            label: 'Cancel rename',
+                                            onClick: cancelProjectEdit,
+                                        },
+                                    ] : [
+                                        {
+                                            icon: Activity,
+                                            key: 'jobs',
+                                            label: 'View jobs',
+                                            onClick: () => viewProjectRenders(project),
+                                        },
+                                        {
+                                            icon: FileArchive,
+                                            key: 'files',
+                                            label: 'View files',
+                                            onClick: () => viewProjectFiles(project),
+                                        },
+                                        {
+                                            icon: Edit3,
+                                            key: 'rename',
+                                            label: 'Rename',
+                                            onClick: () => startProjectEdit(project),
+                                        },
+                                        {
+                                            danger: true,
+                                            icon: Trash2,
+                                            key: 'delete',
+                                            label: 'Delete',
+                                            onClick: () => handleDeleteProject(project),
+                                        },
+                                    ];
                                     return (
                                         <tr className="data-row" key={project.id}>
                                             <td data-label="Name">
@@ -1365,54 +1507,12 @@ export default function Dashboard() {
                                             </td>
                                             <td data-label="Updated">{formatDate(project.updatedAt || project.createdAt)}</td>
                                             <td data-label="Actions">
-                                                <div className="project-actions-menu" ref={actionsMenuOpen ? projectActionsMenuRef : null}>
-                                                    <button
-                                                        ref={(node) => {
-                                                            if (node) projectActionButtonRefs.current.set(project.id, node);
-                                                            else projectActionButtonRefs.current.delete(project.id);
-                                                        }}
-                                                        className="button compact-button project-actions-toggle"
-                                                        type="button"
-                                                        aria-haspopup="menu"
-                                                        aria-expanded={actionsMenuOpen}
-                                                        aria-controls={`project-actions-${project.id}`}
-                                                        aria-label={`Project actions for ${project.name}`}
-                                                        onClick={(event) => toggleProjectActionMenu(project.id, event.currentTarget)}
-                                                    >
-                                                        <span aria-hidden="true">⋯</span>
-                                                    </button>
-                                                    {actionsMenuOpen && (
-                                                        <div className={`project-actions-dropdown placement-${projectActionsPlacement}`} id={`project-actions-${project.id}`} role="menu" aria-label={`Actions for ${project.name}`}>
-                                                            {isEditing ? (
-                                                                <>
-                                                                    <button
-                                                                        className="project-menu-item primary"
-                                                                        type="submit"
-                                                                        form={editFormId}
-                                                                        role="menuitem"
-                                                                        disabled={updatingProjectId === project.id || !editingProjectName.trim()}
-                                                                    >
-                                                                        <Save size={15} /> Save rename
-                                                                    </button>
-                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={cancelProjectEdit}>
-                                                                        <X size={15} /> Cancel rename
-                                                                    </button>
-                                                                </>
-                                                            ) : (
-                                                                <>
-                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={() => viewProjectRenders(project)}>View jobs</button>
-                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={() => viewProjectFiles(project)}>View files</button>
-                                                                    <button className="project-menu-item" type="button" role="menuitem" onClick={() => startProjectEdit(project)}>
-                                                                        <Edit3 size={15} /> Rename
-                                                                    </button>
-                                                                    <button className="project-menu-item danger" type="button" role="menuitem" onClick={() => runProjectMenuAction(() => handleDeleteProject(project))}>
-                                                                        <Trash2 size={15} /> Delete
-                                                                    </button>
-                                                                </>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                </div>
+                                                <ActionMenu
+                                                    menuId={`project-actions-${project.id}`}
+                                                    label={`Project actions for ${project.name}`}
+                                                    items={projectActionItems}
+                                                    estimatedHeight={isEditing ? PROJECT_ACTION_MENU_HEIGHT.editing : PROJECT_ACTION_MENU_HEIGHT.default}
+                                                />
                                             </td>
                                         </tr>
                                     );
@@ -1560,19 +1660,38 @@ export default function Dashboard() {
                                             <td data-label="Actions">
                                                 <div className="table-actions">
                                                     {file.downloadUrl ? (
-                                                        <a className="link-button compact-button" href={file.downloadUrl} target="_blank" rel="noopener noreferrer">
-                                                            <ExternalLink size={15} /> Open
-                                                        </a>
+                                                        <ActionMenu
+                                                            menuId={`file-actions-${file.id || file.jobId || file.resultKey}`}
+                                                            label={`Actions for file ${file.fileName || file.resultKey || file.jobId}`}
+                                                            items={[
+                                                                {
+                                                                    href: file.downloadUrl,
+                                                                    icon: ExternalLink,
+                                                                    key: 'open',
+                                                                    label: 'Open file',
+                                                                    rel: 'noopener noreferrer',
+                                                                    target: '_blank',
+                                                                },
+                                                                {
+                                                                    icon: Copy,
+                                                                    key: 'copy',
+                                                                    label: 'Copy link',
+                                                                    onClick: () => copyToClipboard(absoluteUrl, 'file link'),
+                                                                },
+                                                                {
+                                                                    download: true,
+                                                                    href: file.downloadUrl,
+                                                                    icon: Download,
+                                                                    key: 'download',
+                                                                    label: 'Download file',
+                                                                },
+                                                            ]}
+                                                        />
                                                     ) : (
-                                                        <button className="button compact-button" disabled>Open</button>
-                                                    )}
-                                                    <button className="button compact-button" type="button" disabled={!file.downloadUrl} onClick={() => copyToClipboard(absoluteUrl, 'file link')}>
-                                                        <Copy size={15} /> Copy link
-                                                    </button>
-                                                    {file.downloadUrl && (
-                                                        <a className="link-button compact-button" href={file.downloadUrl} download>
-                                                            <Download size={15} /> Download
-                                                        </a>
+                                                        <>
+                                                            <button className="button compact-button" type="button" disabled><ExternalLink size={15} /> Open</button>
+                                                            <button className="button compact-button" type="button" disabled><Copy size={15} /> Copy link</button>
+                                                        </>
                                                     )}
                                                 </div>
                                             </td>

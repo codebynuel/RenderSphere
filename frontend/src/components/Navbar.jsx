@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, Moon, Sun, WalletCards } from 'lucide-react';
+import { LogOut, Moon, Shield, Sun, WalletCards } from 'lucide-react';
 import { formatUsd } from '../utils/api';
 
 function getUserDisplayName(user) {
@@ -44,6 +44,11 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                                 <WalletCards size={15} /> {formatUsd(user?.starterBalanceUsd)}
                             </span>
                         </div>
+                        {user?.role === 'admin' && (
+                            <Link className="link-button" to="/admin">
+                                <Shield size={15} /> Admin
+                            </Link>
+                        )}
                         <button className="button" type="button" onClick={logout} title="Sign out">
                             <LogOut size={16} /> Sign out
                         </button>

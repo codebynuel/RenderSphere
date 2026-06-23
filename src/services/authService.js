@@ -41,6 +41,7 @@ export function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
+    role: user.role || 'user',
     createdAt: user.createdAt,
     starterBalanceUsd: Number(user.starterBalanceUsd || 0),
   };
@@ -51,6 +52,7 @@ export function adminUser(user) {
   return {
     id: user.id,
     email: user.email,
+    role: user.role || 'user',
     starterBalanceUsd: Number(user.starterBalanceUsd || 0),
     createdAt: user.createdAt,
   };
@@ -223,11 +225,22 @@ export async function requireAuth(req, res, next) {
   }
 }
 
-export function requireAdmin(req, res, next) {
-  const token = getBearerToken(req);
-  if (!config.adminToken) return res.status(404).json({ error: 'Not found' });
-  if (!token || token !== config.adminToken) return res.status(401).json({ error: 'Admin authentication required' });
-  return next();
+export async function requireAdmin(req, res, next) {
+  try {
+    const requestToken = getRequestToken(req);
+    const auth = await authenticateToken(requestToken.token);
+    if (!auth || auth.user.role !== 'admin') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    req.user = auth.user;
+    req.authType = auth.authType;
+    req.authToken = requestToken.token;
+    req.authSource = requestToken.source;
+    return next();
+  } catch (error) {
+    return res.status(404).json({ error: 'Not found' });
+  }
 }
 
 export async function registerUser({ email, password }) {

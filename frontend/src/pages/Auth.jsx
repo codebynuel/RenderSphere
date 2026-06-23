@@ -5,6 +5,16 @@ import { toast } from 'react-hot-toast';
 import { api } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 
+function BrandMark() {
+    return (
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <circle cx="16" cy="16" r="15" stroke="currentColor" strokeWidth="1.5" opacity="0.3" />
+            <circle cx="16" cy="16" r="8" stroke="currentColor" strokeWidth="1.5" />
+            <circle cx="16" cy="16" r="3" fill="currentColor" />
+        </svg>
+    );
+}
+
 export default function Auth() {
     const [mode, setMode] = useState('register');
     const [config, setConfig] = useState(null);
@@ -58,102 +68,104 @@ export default function Auth() {
         }
     };
 
-    if (authLoading || user) return null; // Avoid flashing the page while checking auth
+    if (authLoading || user) return null;
 
     return (
-        <main className="page auth-page">
-            <section className="auth-layout">
-                <motion.div 
-                    className="workbench"
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.5 }}
-                >
-                    <div>
-                        <p className="eyebrow">RenderSphere account</p>
-                        <h2>Move from scene file to delivered output.</h2>
-                        <p className="lede">Use your account to manage access keys, organize projects, submit renders from Blender, and track completed files.</p>
-                    </div>
-                    <div className="auth-benefits">
-                        <span>Access keys for workstations</span>
-                        <span>Project-scoped render history</span>
-                        <span>Authenticated result downloads</span>
-                    </div>
-                    <div className="placeholder-shot image-shot" data-label="Account access">
-                        <img src="https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=900&q=80" alt="Clean workstation for managing cloud rendering projects" />
-                    </div>
-                </motion.div>
+        <main className="auth-page-v2">
+            <div className="auth-bg-glow" aria-hidden="true" />
 
-                <motion.aside 
-                    className="panel auth-panel"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.5, delay: 0.1 }}
-                >
-                    <div className="panel-head">
-                        <div>
-                            <h2>{mode === 'register' ? 'Create account' : 'Log in'}</h2>
-                            <p className="muted">After sign in, you will land in your production dashboard.</p>
+            <motion.div
+                className="auth-card-v2"
+                initial={{ opacity: 0, y: 24, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            >
+                <div className="auth-card-header">
+                    <BrandMark />
+                    <h1>RenderSphere</h1>
+                    <p className="muted">
+                        {mode === 'register'
+                            ? 'Create an account to get started with cloud rendering.'
+                            : 'Welcome back. Log in to your workspace.'}
+                    </p>
+                </div>
+
+                <div className="auth-mode-tabs" role="tablist" aria-label="Authentication">
+                    <button
+                        className={`auth-mode-tab ${mode === 'register' ? 'active' : ''}`}
+                        type="button"
+                        onClick={() => setMode('register')}
+                    >
+                        Register
+                    </button>
+                    <button
+                        className={`auth-mode-tab ${mode === 'login' ? 'active' : ''}`}
+                        type="button"
+                        onClick={() => setMode('login')}
+                    >
+                        Log in
+                    </button>
+                </div>
+
+                <form className="auth-form-v2" onSubmit={handleSubmit}>
+                    <div className="auth-field">
+                        <label htmlFor="auth-email">Email</label>
+                        <input
+                            id="auth-email"
+                            type="email"
+                            autoComplete="email"
+                            required
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="you@example.com"
+                        />
+                    </div>
+                    <div className="auth-field">
+                        <label htmlFor="auth-password">Password</label>
+                        <input
+                            id="auth-password"
+                            type="password"
+                            autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                            minLength={10}
+                            required
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder={mode === 'register' ? 'At least 10 characters' : 'Your password'}
+                        />
+                    </div>
+                    {mode === 'register' && config?.inviteRequired && (
+                        <div className="auth-field">
+                            <label htmlFor="auth-invite">Invite code</label>
+                            <input
+                                id="auth-invite"
+                                type="password"
+                                autoComplete="off"
+                                required
+                                value={inviteCode}
+                                onChange={(e) => setInviteCode(e.target.value)}
+                                placeholder="Enter your invite code"
+                            />
                         </div>
-                    </div>
-
-                    <div className="tabs" role="tablist" aria-label="Authentication">
-                        <button 
-                            className={`tab ${mode === 'register' ? 'active' : ''}`} 
-                            type="button"
-                            onClick={() => setMode('register')}
-                        >
-                            Register
-                        </button>
-                        <button 
-                            className={`tab ${mode === 'login' ? 'active' : ''}`} 
-                            type="button"
-                            onClick={() => setMode('login')}
-                        >
-                            Log in
-                        </button>
-                    </div>
-
-                    <form className="form" onSubmit={handleSubmit}>
-                        <label>
-                            Email
-                            <input 
-                                type="email" 
-                                autoComplete="email" 
-                                required 
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                            />
-                        </label>
-                        <label>
-                            Password
-                            <input 
-                                type="password" 
-                                autoComplete={mode === 'register' ? 'new-password' : 'current-password'} 
-                                minLength={10} 
-                                required 
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                            />
-                        </label>
-                        {mode === 'register' && config?.inviteRequired && (
-                            <label>
-                                Invite code
-                                <input 
-                                    type="password" 
-                                    autoComplete="off" 
-                                    required 
-                                    value={inviteCode}
-                                    onChange={(e) => setInviteCode(e.target.value)}
-                                />
-                            </label>
+                    )}
+                    <button className="auth-submit" type="submit" disabled={loading}>
+                        {loading ? (
+                            <span className="auth-spinner" />
+                        ) : mode === 'register' ? (
+                            'Create account'
+                        ) : (
+                            'Log in'
                         )}
-                        <button className="button primary" type="submit" disabled={loading}>
-                            {loading ? 'Processing...' : (mode === 'register' ? 'Create account' : 'Log in')}
-                        </button>
-                    </form>
-                </motion.aside>
-            </section>
+                    </button>
+                </form>
+
+                <p className="auth-footer-text">
+                    {mode === 'register' ? (
+                        <>Already have an account?{' '}<button type="button" className="auth-link-btn" onClick={() => setMode('login')}>Log in</button></>
+                    ) : (
+                        <>Don't have an account?{' '}<button type="button" className="auth-link-btn" onClick={() => setMode('register')}>Register</button></>
+                    )}
+                </p>
+            </motion.div>
         </main>
     );
 }

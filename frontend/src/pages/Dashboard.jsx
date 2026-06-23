@@ -317,10 +317,13 @@ export default function Dashboard() {
     const [projectsPage, setProjectsPage] = useState(1);
     const [accessKeysPage, setAccessKeysPage] = useState(1);
     const [usageJobsPage, setUsageJobsPage] = useState(1);
+    const [billingPage, setBillingPage] = useState(1);
     const [accessKeys, setAccessKeys] = useState([]);
     const [files, setFiles] = useState([]);
     const [jobs, setJobs] = useState([]);
     const [projects, setProjects] = useState([]);
+    const [prepaidPackages, setPrepaidPackages] = useState([]);
+    const [recharges, setRecharges] = useState([]);
     const [expandedJobId, setExpandedJobId] = useState(null);
     const [newKeyName, setNewKeyName] = useState('');
     const [accessKeyDialogOpen, setAccessKeyDialogOpen] = useState(false);
@@ -335,9 +338,11 @@ export default function Dashboard() {
     const [creatingKey, setCreatingKey] = useState(false);
     const [creatingProject, setCreatingProject] = useState(false);
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
-    const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true });
-    const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '' });
-    const [paginationMeta, setPaginationMeta] = useState({ keys: null, files: null, jobs: null, projects: null });
+    const [creatingTopUpPackageId, setCreatingTopUpPackageId] = useState(null);
+    const [capturingOrderId, setCapturingOrderId] = useState(null);
+    const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true });
+    const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '', billingPackages: '', billingHistory: '' });
+    const [paginationMeta, setPaginationMeta] = useState({ keys: null, files: null, jobs: null, projects: null, billingHistory: null });
     const [tourOpen, setTourOpen] = useState(false);
     const [tourStepIndex, setTourStepIndex] = useState(0);
     const [tourTargetRect, setTourTargetRect] = useState(null);
@@ -349,6 +354,7 @@ export default function Dashboard() {
     const initialLoadUserIdRef = useRef(null);
     const jobFilterLoadRef = useRef({ userId: null, status: jobStatusFilter, search: jobSearchQuery });
     const fileFilterLoadRef = useRef({ userId: null, search: fileSearchQuery });
+    const paypalReturnHandledRef = useRef(null);
 
     const getActionMenuPlacement = useCallback((menuId, buttonElement) => {
         if (!buttonElement || typeof window === 'undefined') return 'down';
@@ -448,9 +454,51 @@ export default function Dashboard() {
         }
     }, [jobSearchQuery, jobStatusFilter, setErrorFlag, setLoadingFlag, setUser]);
 
+    const loadBillingPackages = useCallback(async () => {
+        setLoadingFlag('billingPackages', true);
+        setErrorFlag('billingPackages', '');
+        try {
+            const data = await api('/api/billing/prepaid-packages');
+            setPrepaidPackages(data.packages || []);
+        } catch (error) {
+            setErrorFlag('billingPackages', error.message || 'Failed to load prepaid packages');
+            toast.error(`Failed to load prepaid packages: ${error.message}`);
+        } finally {
+            setLoadingFlag('billingPackages', false);
+        }
+    }, [setErrorFlag, setLoadingFlag]);
+
+    const loadRechargeHistory = useCallback(async ({ page = 1, append = false } = {}) => {
+        setLoadingFlag('billingHistory', true);
+        setErrorFlag('billingHistory', '');
+        try {
+            const data = await api(`/api/billing/recharges?page=${page}&pageSize=${SERVER_PAGE_SIZE}`);
+            setRecharges((current) => (append ? sortByCreatedDesc([...current, ...(data.recharges || [])]) : data.recharges || []));
+            setPaginationMeta((current) => ({ ...current, billingHistory: data.pagination || null }));
+        } catch (error) {
+            setErrorFlag('billingHistory', error.message || 'Failed to load recharge history');
+            toast.error(`Failed to load recharge history: ${error.message}`);
+        } finally {
+            setLoadingFlag('billingHistory', false);
+        }
+    }, [setErrorFlag, setLoadingFlag]);
+
+    const refreshCurrentUser = useCallback(async () => {
+        const data = await api('/api/auth/me');
+        if (data.user) setUser(data.user);
+        return data.user;
+    }, [setUser]);
+
     const loadAll = useCallback(async () => {
-        await Promise.all([loadAccessKeys(), loadProjects(), loadFiles({ page: 1 }), loadJobs({ page: 1 })]);
-    }, [loadAccessKeys, loadFiles, loadJobs, loadProjects]);
+        await Promise.all([
+            loadAccessKeys(),
+            loadProjects(),
+            loadFiles({ page: 1 }),
+            loadJobs({ page: 1 }),
+            loadBillingPackages(),
+            loadRechargeHistory({ page: 1 }),
+        ]);
+    }, [loadAccessKeys, loadBillingPackages, loadFiles, loadJobs, loadProjects, loadRechargeHistory]);
 
     useEffect(() => {
         if (!user?.id) return undefined;
@@ -830,6 +878,81 @@ export default function Dashboard() {
         } finally {
             setCreatingProject(false);
         }
+    };
+
+    const handleStartPayPalTopUp = async (packageId) => {
+        if (!packageId || creatingTopUpPackageId) return;
+        setCreatingTopUpPackageId(packageId);
+        try {
+            const data = await api('/api/billing/paypal/orders', {
+                method: 'POST',
+                body: JSON.stringify({ packageId }),
+            });
+            if (data.order) {
+                setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
+                setBillingPage(1);
+            }
+            if (data.order?.approvalUrl) {
+                toast.success('Redirecting to PayPal checkout...');
+                window.location.assign(data.order.approvalUrl);
+                return;
+            }
+            toast.error('PayPal checkout did not return an approval link.');
+        } catch (error) {
+            toast.error(error.message || 'Failed to start PayPal checkout');
+        } finally {
+            setCreatingTopUpPackageId(null);
+        }
+    };
+
+    const handleCapturePayPalOrder = useCallback(async (providerOrderId) => {
+        if (!providerOrderId || capturingOrderId) return;
+        setCapturingOrderId(providerOrderId);
+        try {
+            const data = await api(`/api/billing/paypal/orders/${encodeURIComponent(providerOrderId)}/capture`, {
+                method: 'POST',
+                body: '{}',
+            });
+            if (data.order) {
+                setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
+            }
+            await refreshCurrentUser();
+            await loadRechargeHistory({ page: 1 });
+            setBillingPage(1);
+            toast.success(data.idempotent ? 'PayPal top-up was already credited.' : 'PayPal top-up captured and credits added.');
+        } catch (error) {
+            toast.error(error.message || 'Failed to capture PayPal top-up');
+            loadRechargeHistory({ page: 1 });
+        } finally {
+            setCapturingOrderId(null);
+        }
+    }, [capturingOrderId, loadRechargeHistory, refreshCurrentUser]);
+
+    useEffect(() => {
+        if (!user?.id || typeof window === 'undefined') return undefined;
+        const params = new URLSearchParams(window.location.search);
+        const isPayPalReturn = params.get('paypal') === 'return';
+        const providerOrderId = params.get('token') || params.get('orderId') || params.get('providerOrderId');
+        if (!isPayPalReturn || !providerOrderId) return undefined;
+        if (paypalReturnHandledRef.current === providerOrderId) return undefined;
+        paypalReturnHandledRef.current = providerOrderId;
+        setActiveView('billing');
+        const timer = window.setTimeout(() => {
+            handleCapturePayPalOrder(providerOrderId);
+            params.delete('paypal');
+            params.delete('token');
+            params.delete('PayerID');
+            params.delete('orderId');
+            params.delete('providerOrderId');
+            const nextSearch = params.toString();
+            window.history.replaceState({}, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`);
+        }, 0);
+        return () => window.clearTimeout(timer);
+    }, [handleCapturePayPalOrder, user?.id]);
+
+    const loadMoreRecharges = () => {
+        if (!paginationMeta.billingHistory?.hasNextPage || loading.billingHistory) return;
+        loadRechargeHistory({ page: paginationMeta.billingHistory.page + 1, append: true });
     };
 
     const closeActionMenu = () => {
@@ -1794,75 +1917,171 @@ export default function Dashboard() {
         );
     };
 
-    const renderBilling = () => (
-        <motion.div className="panel dashboard-panel full billing-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="panel-head billing-panel-head">
-                <div>
-                    <h2>Billing</h2>
-                    <p className="muted">Current credit balance is sourced from your account. Recharge records are shown only when an API exists.</p>
-                </div>
-                <button className="button" type="button" onClick={loadAll} disabled={loading.jobs || loading.files}>
-                    <RefreshCcw size={16} className={loading.jobs || loading.files ? 'spin' : ''} /> Refresh billing
-                </button>
-            </div>
-
-            <div className="dashboard-metrics-grid billing-metrics-grid">
-                <MetricCard icon={WalletCards} label="Current credit balance" value={formatUsd(user.starterBalanceUsd)} detail="Available account credit" tone="good" />
-                <MetricCard icon={ReceiptText} label="Render spend" value={formatUsd(stats.totalSpend)} detail={`${formatDuration(stats.billableSeconds)} billed from completed jobs`} />
-                <MetricCard icon={CheckCircle2} label="Billed renders" value={stats.completedJobs} detail={`${stats.totalFiles} delivered files`} tone="active" />
-            </div>
-
-            <section className="queue-section billing-summary-section">
-                <div className="queue-section-head">
+    const renderBilling = () => {
+        const billingPagination = paginateItems(recharges, billingPage);
+        const billingBusy = loading.billingPackages || loading.billingHistory;
+        return (
+            <motion.div className="panel dashboard-panel full billing-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+                <div className="panel-head billing-panel-head">
                     <div>
-                        <h3>Account credit summary</h3>
-                        <p className="muted">Credit and render deductions are based on existing account and job fields.</p>
+                        <h2>Billing</h2>
+                        <p className="muted">Top up prepaid credits with PayPal packages validated by the server, then track capture and ledger status here.</p>
                     </div>
+                    <button className="button" type="button" onClick={loadAll} disabled={loading.jobs || loading.files || billingBusy}>
+                        <RefreshCcw size={16} className={loading.jobs || loading.files || billingBusy ? 'spin' : ''} /> Refresh billing
+                    </button>
                 </div>
-                <div className="data-table-wrap billing-table-wrap">
-                    <table className="data-table billing-data-table" aria-label="Account credit summary">
-                        <thead>
-                            <tr>
-                                <th scope="col">Item</th>
-                                <th scope="col">Amount</th>
-                                <th scope="col">Source</th>
-                                <th scope="col">Last updated</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr className="data-row">
-                                <td data-label="Item"><div className="table-primary">Current credit balance</div></td>
-                                <td data-label="Amount">{formatUsd(user.starterBalanceUsd)}</td>
-                                <td data-label="Source">Account field starterBalanceUsd</td>
-                                <td data-label="Last updated">{formatDate(user.updatedAt || user.createdAt)}</td>
-                            </tr>
-                            <tr className="data-row">
-                                <td data-label="Item"><div className="table-primary">Total render deductions</div></td>
-                                <td data-label="Amount">{formatUsd(stats.totalSpend)}</td>
-                                <td data-label="Source">Completed job costs</td>
-                                <td data-label="Last updated">{jobs[0]?.createdAt ? formatDate(jobs[0].createdAt) : 'No jobs yet'}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
 
-            <section className="queue-section recharge-history-section">
-                <div className="queue-section-head">
-                    <div>
-                        <h3>Recharge history</h3>
-                        <p className="muted">No recharge or payment records are exposed by the current backend schema or APIs.</p>
-                    </div>
-                    <span className="count-chip">0</span>
+                <div className="dashboard-metrics-grid billing-metrics-grid">
+                    <MetricCard icon={WalletCards} label="Current credit balance" value={formatUsd(user.starterBalanceUsd)} detail="Available prepaid account credit" tone="good" />
+                    <MetricCard icon={ReceiptText} label="Successful top-ups" value={recharges.filter((order) => order.status === 'CAPTURED').length} detail={`${recharges.length} recharge records loaded`} />
+                    <MetricCard icon={CheckCircle2} label="Render spend" value={formatUsd(stats.totalSpend)} detail={`${formatDuration(stats.billableSeconds)} billed from completed jobs`} tone="active" />
                 </div>
-                <EmptyState
-                    icon={ReceiptText}
-                    title="No recharge history available yet"
-                    text="This account currently exposes credit balance and render deductions only. Recharge records will appear here when a billing/recharge API is added."
-                />
-            </section>
-        </motion.div>
-    );
+
+                <section className="queue-section prepaid-packages-section">
+                    <div className="queue-section-head">
+                        <div>
+                            <h3>Prepaid credit packages</h3>
+                            <p className="muted">Amounts are selected from backend configuration. The browser never controls the credited amount.</p>
+                        </div>
+                        <span className="count-chip">{prepaidPackages.length}</span>
+                    </div>
+                    {loading.billingPackages ? <LoadingState label="Loading prepaid packages..." /> : null}
+                    {!loading.billingPackages && errors.billingPackages ? <ErrorState message={errors.billingPackages} onRetry={loadBillingPackages} /> : null}
+                    {!loading.billingPackages && !errors.billingPackages && prepaidPackages.length === 0 ? (
+                        <EmptyState icon={WalletCards} title="No prepaid packages configured" text="Ask an administrator to configure PayPal prepaid package amounts before checkout can start." />
+                    ) : null}
+                    {!loading.billingPackages && !errors.billingPackages && prepaidPackages.length > 0 ? (
+                        <div className="prepaid-package-grid">
+                            {prepaidPackages.map((item) => (
+                                <article className="prepaid-package-card" key={item.id}>
+                                    <div>
+                                        <span className="package-eyebrow">PayPal checkout</span>
+                                        <h4>{item.label}</h4>
+                                        <strong>{formatUsd(item.amountUsd)}</strong>
+                                        <p className="muted">Adds {formatUsd(item.amountUsd)} to your RenderSphere prepaid balance after PayPal capture succeeds.</p>
+                                    </div>
+                                    <button
+                                        className="button primary"
+                                        type="button"
+                                        onClick={() => handleStartPayPalTopUp(item.id)}
+                                        disabled={Boolean(creatingTopUpPackageId)}
+                                    >
+                                        {creatingTopUpPackageId === item.id ? 'Starting...' : 'Top up with PayPal'}
+                                    </button>
+                                </article>
+                            ))}
+                        </div>
+                    ) : null}
+                </section>
+
+                <section className="queue-section billing-summary-section">
+                    <div className="queue-section-head">
+                        <div>
+                            <h3>Account credit summary</h3>
+                            <p className="muted">Credits come from the ledger-backed account balance; render deductions stay based on completed jobs.</p>
+                        </div>
+                    </div>
+                    <div className="data-table-wrap billing-table-wrap">
+                        <table className="data-table billing-data-table" aria-label="Account credit summary">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Item</th>
+                                    <th scope="col">Amount</th>
+                                    <th scope="col">Source</th>
+                                    <th scope="col">Last updated</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr className="data-row">
+                                    <td data-label="Item"><div className="table-primary">Current credit balance</div></td>
+                                    <td data-label="Amount">{formatUsd(user.starterBalanceUsd)}</td>
+                                    <td data-label="Source">Ledger cached balance</td>
+                                    <td data-label="Last updated">{formatDate(user.updatedAt || user.createdAt)}</td>
+                                </tr>
+                                <tr className="data-row">
+                                    <td data-label="Item"><div className="table-primary">Total render deductions</div></td>
+                                    <td data-label="Amount">{formatUsd(stats.totalSpend)}</td>
+                                    <td data-label="Source">Completed job costs</td>
+                                    <td data-label="Last updated">{jobs[0]?.createdAt ? formatDate(jobs[0].createdAt) : 'No jobs yet'}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section className="queue-section recharge-history-section">
+                    <div className="queue-section-head">
+                        <div>
+                            <h3>Recharge history</h3>
+                            <p className="muted">PayPal order status, capture status, and linked ledger transaction are shown from backend records.</p>
+                        </div>
+                        <div className="section-actions">
+                            <span className="count-chip">{paginationMeta.billingHistory?.totalItems ?? recharges.length}</span>
+                            {paginationMeta.billingHistory?.hasNextPage ? <button className="button compact-button" type="button" onClick={loadMoreRecharges} disabled={loading.billingHistory}>Load more</button> : null}
+                        </div>
+                    </div>
+                    {loading.billingHistory ? <LoadingState label="Loading recharge history..." /> : null}
+                    {!loading.billingHistory && errors.billingHistory ? <ErrorState message={errors.billingHistory} onRetry={loadRechargeHistory} /> : null}
+                    {!loading.billingHistory && !errors.billingHistory && recharges.length === 0 ? (
+                        <EmptyState icon={ReceiptText} title="No recharge history yet" text="PayPal prepaid top-ups will appear here after checkout is started." />
+                    ) : null}
+                    {!loading.billingHistory && !errors.billingHistory && recharges.length > 0 ? (
+                        <>
+                            <div className="data-table-wrap billing-table-wrap">
+                                <table className="data-table recharge-data-table" aria-label="Recharge history">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Recharge</th>
+                                            <th scope="col">Amount</th>
+                                            <th scope="col">Status</th>
+                                            <th scope="col">Provider</th>
+                                            <th scope="col">Ledger</th>
+                                            <th scope="col">Created / captured</th>
+                                            <th scope="col">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {billingPagination.items.map((order) => (
+                                            <tr className="data-row" key={order.id}>
+                                                <td data-label="Recharge">
+                                                    <div className="table-primary">{order.packageId}</div>
+                                                    <div className="table-meta"><span>{order.providerOrderId}</span></div>
+                                                </td>
+                                                <td data-label="Amount">{formatUsd(order.amountUsd)}</td>
+                                                <td data-label="Status"><StatusPill status={order.status} /></td>
+                                                <td data-label="Provider">
+                                                    <div className="table-metric-stack">
+                                                        <strong>{order.provider}</strong>
+                                                        <span>{order.providerStatus || '—'}</span>
+                                                    </div>
+                                                </td>
+                                                <td data-label="Ledger">{order.creditTransactionId ? <span className="pill status-pill complete">Credited</span> : <span className="pill status-pill pending">Pending</span>}</td>
+                                                <td data-label="Created / captured">
+                                                    <div className="table-metric-stack">
+                                                        <span>Created {formatDate(order.createdAt)}</span>
+                                                        <span>Captured {order.capturedAt ? formatDate(order.capturedAt) : '—'}</span>
+                                                    </div>
+                                                </td>
+                                                <td data-label="Action">
+                                                    {order.status === 'CAPTURED' ? <span className="muted">Complete</span> : (
+                                                        <button className="button compact-button" type="button" onClick={() => handleCapturePayPalOrder(order.providerOrderId)} disabled={capturingOrderId === order.providerOrderId}>
+                                                            {capturingOrderId === order.providerOrderId ? 'Capturing...' : 'Confirm capture'}
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <PaginationControls label="Recharge history" totalItems={recharges.length} page={billingPagination.page} onPageChange={setBillingPage} />
+                        </>
+                    ) : null}
+                </section>
+            </motion.div>
+        );
+    };
 
     const getTourPanelStyle = () => {
         if (!tourTargetRect || typeof window === 'undefined' || window.innerWidth <= 760) return {};

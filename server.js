@@ -18,6 +18,7 @@ import { jobIsProviderDispatched, persistRunpodStatus, providerJobIdForJob, seri
 
 import { createAdminRouter } from './routes/admin.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createBillingRouter } from './routes/billing.js';
 import { createJobsRouter } from './routes/jobs.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createRenderRouter } from './routes/render.js';
@@ -125,6 +126,7 @@ io.on('connection', (socket) => {
 app.use(createSystemRouter({ buildOperationalSnapshot, config }));
 app.use('/api/admin', createAdminRouter({ buildOperationalSnapshot, requireAdmin }));
 app.use('/api/auth', createAuthRouter({ accountRateLimit, authRateLimit, requireAuth }));
+app.use('/api/billing', createBillingRouter({ accountRateLimit, requireAuth }));
 app.use('/api/projects', createProjectsRouter({ accountRateLimit, requireAuth }));
 app.use('/api', createJobsRouter({ emitJobUpdate, requireAuth }));
 app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth }));

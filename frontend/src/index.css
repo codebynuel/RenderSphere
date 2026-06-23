@@ -1391,6 +1391,10 @@ input:focus {
     min-width: 760px;
 }
 
+.recharge-data-table {
+    min-width: 1080px;
+}
+
 .data-table th,
 .data-table td {
     padding: 13px 14px;
@@ -2405,9 +2409,65 @@ input:focus-visible {
 }
 
 .usage-breakdown-section,
+.prepaid-packages-section,
 .billing-summary-section,
 .recharge-history-section {
     margin-top: 12px;
+}
+
+.prepaid-package-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.prepaid-package-card {
+    min-height: 240px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 18px;
+    border: 1px solid var(--line-soft);
+    border-radius: 18px;
+    padding: 18px;
+    background:
+        linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 60%, transparent), transparent 62%),
+        var(--panel-card-strong);
+}
+
+.prepaid-package-card h4 {
+    margin: 8px 0 0;
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.2;
+}
+
+.prepaid-package-card strong {
+    display: block;
+    margin-top: 12px;
+    color: var(--text);
+    font-size: clamp(24px, 3vw, 34px);
+    letter-spacing: -0.04em;
+}
+
+.prepaid-package-card p {
+    margin: 12px 0 0;
+    line-height: 1.55;
+}
+
+.package-eyebrow {
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.section-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
 }
 
 .usage-table-wrap,

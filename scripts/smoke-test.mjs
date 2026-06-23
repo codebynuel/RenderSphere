@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 
 const port = process.env.SMOKE_TEST_PORT || '3999';
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -86,7 +87,7 @@ const serverEnv = {
   RENDERSPHERE_MAX_PAGE_SIZE: '3',
   RENDERSPHERE_RATE_LIMIT_STORE: 'memory',
   RENDERSPHERE_ACCOUNT_RATE_LIMIT_WINDOW_MS: '60000',
-  RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX: '1',
+  RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX: '4',
   RENDERSPHERE_RENDER_RATE_LIMIT_WINDOW_MS: '60000',
   RENDERSPHERE_RENDER_RATE_LIMIT_MAX: '100',
   RENDERSPHERE_AUTH_RATE_LIMIT_WINDOW_MS: '60000',
@@ -95,6 +96,11 @@ const serverEnv = {
   RENDERSPHERE_LOG_FORMAT: 'json',
   RENDERSPHERE_REQUEST_LOGGING: 'true',
   RENDERSPHERE_PUBLIC_METRICS: 'false',
+  RENDERSPHERE_PAYPAL_ENVIRONMENT: 'sandbox',
+  RENDERSPHERE_PAYPAL_CLIENT_ID: 'smoke-paypal-client',
+  RENDERSPHERE_PAYPAL_CLIENT_SECRET: 'smoke-paypal-secret',
+  RENDERSPHERE_PAYPAL_PREPAID_PACKAGES: 'smoke-10:10:USD:$10 smoke credits,smoke-25:25:USD:$25 smoke credits',
+  RENDERSPHERE_PAYPAL_MOCK: 'true',
 };
 
 await runCommand('npx', ['prisma', 'generate'], serverEnv);
@@ -105,6 +111,7 @@ const { publicErrorPayload } = await import('../helpers/errors.js');
 const { logger, redactSecrets } = await import('../helpers/logger.js');
 const { prisma } = await import('../src/db.js');
 const { CREDIT_TRANSACTION_TYPES, applyCreditTransaction, chargeRenderCredits, grantCredits } = await import('../src/services/creditService.js');
+const { capturePayPalTopUpOrder } = await import('../src/services/paypalService.js');
 const { persistRunpodStatus } = await import('../src/services/jobService.js');
 const { RunpodProviderError, fetchRunpodJobStatus } = await import('../src/services/runpodService.js');
 
@@ -253,8 +260,41 @@ try {
   if (publicMetrics.response.status !== 404) throw new Error(`Expected public /metrics to be disabled by default, got ${publicMetrics.response.status}.`);
   assertRequestId(publicMetrics, '/metrics disabled response');
 
+  // Create an admin user via Prisma so we can test admin endpoints
+  const adminEmail = `smoke-admin-${Date.now()}@example.com`;
+  const adminPassword = 'admin-smoke-password-long';
+
+  // Hash the password for the admin user
+  const adminPwHash = await new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    crypto.scrypt(adminPassword, salt, 64, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve({ salt, hash: derivedKey.toString('hex') });
+    });
+  });
+
+  const adminUser = await prisma.user.create({
+    data: {
+      email: adminEmail,
+      passwordHash: adminPwHash.hash,
+      passwordSalt: adminPwHash.salt,
+      role: 'admin',
+      starterBalanceUsd: 0,
+    },
+  });
+
+  const adminLoginResult = await rawRequest('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+  });
+  if (!adminLoginResult.response.ok) {
+    throw new Error(`Admin login failed: ${adminLoginResult.response.status} ${adminLoginResult.data.error || ''}`);
+  }
+  const adminToken = adminLoginResult.data.token;
+  const adminAuthHeaders = { Authorization: `Bearer ${adminToken}` };
+
   const initialSummaryResult = await rawRequest('/api/admin/summary', {
-    headers: { Authorization: 'Bearer smoke-admin' },
+    headers: adminAuthHeaders,
   });
   if (!initialSummaryResult.response.ok) {
     throw new Error(`GET /api/admin/summary failed: ${initialSummaryResult.response.status} ${initialSummaryResult.data.error || ''}`);
@@ -263,7 +303,7 @@ try {
   const initialSummary = initialSummaryResult.data;
 
   const initialMetrics = await rawRequest('/api/admin/metrics', {
-    headers: { Authorization: 'Bearer smoke-admin' },
+    headers: adminAuthHeaders,
   });
   if (!initialMetrics.response.ok) throw new Error(`GET /api/admin/metrics failed: ${initialMetrics.response.status} ${initialMetrics.data.error || ''}`);
   assertRequestId(initialMetrics, '/api/admin/metrics');
@@ -658,6 +698,68 @@ try {
     throw new Error('Access keys endpoint did not return expected paginated response.');
   }
 
+  const prepaidPackages = await request('/api/billing/prepaid-packages', { headers: cookieHeaders });
+  if (prepaidPackages.packages?.length !== 2 || prepaidPackages.packages[0].id !== 'smoke-10' || prepaidPackages.packages[0].amountUsd !== 10) {
+    throw new Error('Billing prepaid packages endpoint did not return the configured PayPal smoke packages.');
+  }
+
+  const invalidTopUp = await rawRequest('/api/billing/paypal/orders', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ packageId: 'browser-supplied-999' }),
+  });
+  if (invalidTopUp.response.status !== 400 || !invalidTopUp.data.error?.includes('Selected prepaid package')) {
+    throw new Error(`Expected invalid PayPal package selection to return 400, got ${invalidTopUp.response.status}.`);
+  }
+  assertRequestId(invalidTopUp, 'invalid PayPal package response');
+
+  const prepaidTopUpsBefore = await prisma.creditTransaction.count({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.PREPAID_TOP_UP },
+  });
+  const paypalOrder = await request('/api/billing/paypal/orders', {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: JSON.stringify({ packageId: 'smoke-10' }),
+  });
+  if (paypalOrder.package?.id !== 'smoke-10' || paypalOrder.order?.status !== 'CREATED' || !paypalOrder.order?.providerOrderId || !paypalOrder.order?.approvalUrl?.includes('/mock-paypal/approve/')) {
+    throw new Error('Mock PayPal order creation did not return the expected package, order id, and approval URL.');
+  }
+
+  const paypalCapture = await request(`/api/billing/paypal/orders/${encodeURIComponent(paypalOrder.order.providerOrderId)}/capture`, {
+    method: 'POST',
+    headers: cookieHeaders,
+    body: '{}',
+  });
+  if (paypalCapture.idempotent || paypalCapture.order?.status !== 'CAPTURED' || paypalCapture.order?.amountUsd !== 10 || !paypalCapture.transactionId) {
+    throw new Error('Mock PayPal capture did not credit the prepaid top-up order as expected.');
+  }
+
+  const duplicatePayPalCapture = await capturePayPalTopUpOrder({
+    userId: registered.user.id,
+    providerOrderId: paypalOrder.order.providerOrderId,
+    requestId: 'smoke-paypal-duplicate-capture',
+  });
+  if (!duplicatePayPalCapture.idempotent || duplicatePayPalCapture.order?.creditTransactionId !== paypalCapture.transactionId) {
+    throw new Error('Duplicate PayPal capture did not return the existing credited top-up idempotently.');
+  }
+
+  const prepaidTopUpsAfter = await prisma.creditTransaction.findMany({
+    where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.PREPAID_TOP_UP },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (prepaidTopUpsAfter.length !== prepaidTopUpsBefore + 1 || Number(prepaidTopUpsAfter[0].amountUsd) !== 10) {
+    throw new Error('PayPal capture did not create exactly one PREPAID_TOP_UP ledger transaction.');
+  }
+  const userAfterPayPalTopUp = await prisma.user.findUnique({ where: { id: registered.user.id } });
+  if (Number(userAfterPayPalTopUp.starterBalanceUsd) !== 22.75) {
+    throw new Error(`Expected balance 22.75 after PayPal top-up, got ${userAfterPayPalTopUp.starterBalanceUsd}.`);
+  }
+
+  const rechargeHistory = await request('/api/billing/recharges?page=1&pageSize=2', { headers: cookieHeaders });
+  if (rechargeHistory.recharges?.[0]?.providerOrderId !== paypalOrder.order.providerOrderId || rechargeHistory.recharges[0].status !== 'CAPTURED' || rechargeHistory.pagination?.totalItems !== 1) {
+    throw new Error('Recharge history did not expose the captured PayPal top-up with pagination metadata.');
+  }
+
   const rateLimitedProject = await rawRequest('/api/projects', {
     method: 'POST',
     headers: cookieHeaders,
@@ -668,6 +770,7 @@ try {
   }
 
   const failedJobId = `smoke-failed-${Date.now()}`;
+  const balanceBeforeFailedJob = Number((await prisma.user.findUnique({ where: { id: registered.user.id } })).starterBalanceUsd);
   await prisma.job.create({
     data: {
       jobId: failedJobId,
@@ -697,12 +800,12 @@ try {
     where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RESERVATION_RELEASE, jobId: failedJobId },
   });
   const userAfterFailure = await prisma.user.findUnique({ where: { id: registered.user.id } });
-  if (releasedFailedJob?.billingState !== 'RELEASED' || !failedRelease || Number(userAfterFailure.starterBalanceUsd) !== 12.75) {
+  if (releasedFailedJob?.billingState !== 'RELEASED' || !failedRelease || Number(userAfterFailure.starterBalanceUsd) !== balanceBeforeFailedJob) {
     throw new Error('Failed render did not release/refund its reservation hold.');
   }
 
   const metrics = await rawRequest('/api/admin/metrics', {
-    headers: { Authorization: 'Bearer smoke-admin' },
+    headers: adminAuthHeaders,
   });
   if (!metrics.response.ok) throw new Error(`GET /api/admin/metrics after activity failed: ${metrics.response.status} ${metrics.data.error || ''}`);
   assertRequestId(metrics, '/api/admin/metrics after activity');
@@ -718,7 +821,7 @@ try {
   }
 
   const summary = await request('/api/admin/summary', {
-    headers: { Authorization: 'Bearer smoke-admin' },
+    headers: adminAuthHeaders,
   });
   if (summary.users !== initialSummary.users + 1) {
     throw new Error(`Expected admin summary user count to increase by one, got ${summary.users - initialSummary.users}.`);

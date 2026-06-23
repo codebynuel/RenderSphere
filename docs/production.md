@@ -1,6 +1,6 @@
 # RenderSphere Production Deployment Guide
 
-This guide describes the current production model for the RenderSphere web gateway, built frontend, PostgreSQL/Prisma database, RunPod worker, production logging, health checks, and safe metrics snapshots. It intentionally does not cover payment-provider top-ups, legal policies, or multi-instance job polling coordination.
+This guide describes the current production model for the RenderSphere web gateway, built frontend, PostgreSQL/Prisma database, RunPod worker, PayPal prepaid-credit top-ups, production logging, health checks, and safe metrics snapshots. It intentionally does not cover legal policies or multi-instance job polling coordination.
 
 ## Runtime Components
 
@@ -71,6 +71,11 @@ Recommended web variables:
 - `RENDERSPHERE_LOG_FORMAT`
 - `RENDERSPHERE_REQUEST_LOGGING`
 - `RENDERSPHERE_PUBLIC_METRICS`
+- `RENDERSPHERE_PAYPAL_ENVIRONMENT`
+- `RENDERSPHERE_PAYPAL_CLIENT_ID`
+- `RENDERSPHERE_PAYPAL_CLIENT_SECRET`
+- `RENDERSPHERE_PAYPAL_WEBHOOK_ID`
+- `RENDERSPHERE_PAYPAL_PREPAID_PACKAGES`
 
 Validation rules:
 
@@ -80,8 +85,10 @@ Validation rules:
 - `RENDERSPHERE_RATE_LIMIT_REDIS_URL` is required when `RENDERSPHERE_RATE_LIMIT_STORE=redis`.
 - Default page size cannot exceed max page size.
 - Default render budget and minimum reservation cannot exceed the configured max render budget.
+- `RENDERSPHERE_PAYPAL_ENVIRONMENT` must be `sandbox` or `live` when provided.
+- `RENDERSPHERE_PAYPAL_PREPAID_PACKAGES` must resolve to at least one valid server-side package.
 
-Local development only requires `DATABASE_URL` at server startup so developers can run the gateway without real R2/RunPod credentials until they exercise those integrations.
+Local development only requires `DATABASE_URL` at server startup so developers can run the gateway without real R2/RunPod/PayPal credentials until they exercise those integrations.
 
 ## Build and Release Flow
 
@@ -211,7 +218,7 @@ Configure gateway logging with:
 
 Every HTTP response includes an `X-Request-Id` header and JSON API responses include `requestId`. Incoming `X-Request-Id` or `X-Correlation-Id` values are honored when they are safe identifier strings; otherwise the gateway generates a UUID. Include this ID in incident notes so application logs, provider dispatch logs, billing logs, and client reports can be correlated.
 
-The logger redacts authorization headers, cookies, session/access tokens, secrets, passwords, API keys, and matching token-looking values before writing. Do not add raw provider payloads, R2 signed URLs, access keys, payment tokens, or user-private scene data to log metadata.
+The logger redacts authorization headers, cookies, session/access tokens, secrets, passwords, API keys, and matching token-looking values before writing. Do not add raw provider payloads, R2 signed URLs, access keys, PayPal access tokens, payment tokens, or user-private scene data to log metadata.
 
 ### Metrics snapshot contents
 
@@ -275,7 +282,7 @@ Required GitHub secrets for worker publishing:
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 
-No production application secrets are required for CI validation. CI uses disposable PostgreSQL credentials from the job service container and mock provider configuration in smoke tests. Do not add real R2, RunPod, admin, payment, or database secrets to CI logs.
+No production application secrets are required for CI validation. CI uses disposable PostgreSQL credentials from the job service container and mock provider configuration in smoke tests. Do not add real R2, RunPod, PayPal, admin, payment, or database secrets to CI logs.
 
 ### Release checklist
 
@@ -334,6 +341,59 @@ pnpm checksums:extension:verify
 4. If the failed release included migrations, review whether the migration was backward-compatible before rolling app code back. Current migration policy should favor additive/backward-compatible changes.
 5. Do not reset or drop production data. Use database backup/PITR only as an explicit incident-recovery action.
 
+## PayPal Prepaid Top-ups
+
+RenderSphere supports PayPal Orders API prepaid top-ups for configured USD credit packages. The browser can select only a package ID. The gateway looks up the package amount and currency from server configuration before creating the PayPal order, so frontend-sent amounts are ignored.
+
+### PayPal app setup
+
+1. Create or select a PayPal REST app in the PayPal developer dashboard.
+2. Use `RENDERSPHERE_PAYPAL_ENVIRONMENT=sandbox` with sandbox app credentials for test deployments.
+3. Switch to `RENDERSPHERE_PAYPAL_ENVIRONMENT=live` only after PayPal account/app approval and operational sign-off.
+4. Set the app return URL to `${RENDERSPHERE_PUBLIC_URL}/dashboard?view=billing&paypal=return` and cancel URL to `${RENDERSPHERE_PUBLIC_URL}/dashboard?view=billing&paypal=cancel`.
+5. Store credentials in the deployment secrets manager, not in source control:
+   - `RENDERSPHERE_PAYPAL_CLIENT_ID`
+   - `RENDERSPHERE_PAYPAL_CLIENT_SECRET`
+   - optional `RENDERSPHERE_PAYPAL_WEBHOOK_ID` for future webhook verification work.
+
+### Package configuration
+
+Configure packages with `RENDERSPHERE_PAYPAL_PREPAID_PACKAGES`. The compact format is:
+
+```text
+starter-10:10:USD:$10 prepaid credits,creator-25:25:USD:$25 prepaid credits,studio-50:50:USD:$50 prepaid credits
+```
+
+A JSON array is also accepted, for example:
+
+```json
+[
+  { "id": "starter-10", "amountUsd": 10, "currency": "USD", "label": "$10 prepaid credits" },
+  { "id": "creator-25", "amountUsd": 25, "currency": "USD", "label": "$25 prepaid credits" }
+]
+```
+
+Package IDs must be stable because they are stored on `PrepaidTopUpOrder` records. To retire a package, remove it from configuration after confirming no users still need to capture an existing created order for that package.
+
+### Order and capture behavior
+
+Authenticated users use `POST /api/billing/paypal/orders` with a package ID. The gateway creates a PayPal order and persists a `PrepaidTopUpOrder` row with status, amount, package ID, approval URL, and provider order ID. The Billing page redirects the user to PayPal approval.
+
+After PayPal returns to the Billing page, the frontend calls `POST /api/billing/paypal/orders/:providerOrderId/capture`. The gateway captures the provider order, verifies that the captured currency and amount match the stored server-side package, then credits the user by calling the ledger helper with transaction type `PREPAID_TOP_UP` and an idempotency key derived from the PayPal order/capture IDs. A successful capture links the `PrepaidTopUpOrder` to the resulting `CreditTransaction`.
+
+`GET /api/billing/recharges` returns paginated recharge records for the authenticated user. Use this endpoint, not PayPal payloads exposed to the browser, for customer-visible recharge history.
+
+### Testing and operations
+
+Smoke tests use `RENDERSPHERE_PAYPAL_MOCK=true`, which avoids PayPal network calls and generates deterministic mock order/capture responses. Never enable mock mode in live production. For sandbox manual testing, create a sandbox buyer and seller account in PayPal, top up from Billing, return to RenderSphere, and confirm that credit balance increases exactly once even if capture is retried.
+
+Operational notes:
+
+- Do not log PayPal client secrets, access tokens, or raw provider payloads.
+- Do not manually update `User.starterBalanceUsd` for PayPal incidents. Inspect `PrepaidTopUpOrder`, `CreditTransaction`, and `CreditAuditEvent` rows and retry idempotent capture or apply reviewed ledger repairs.
+- If capture returns a completed order with a mismatched amount/currency, the local top-up record is marked `FAILED` and no credits are issued. Investigate PayPal dashboard and package configuration before retrying.
+- Webhook processing is not required for the current capture-on-return flow. If webhooks are added later, verify signatures with `RENDERSPHERE_PAYPAL_WEBHOOK_ID` and keep ledger idempotency keys unchanged.
+
 ## Prepaid Credit Ledger
 
 Prepaid credits are tracked with an append-only ledger backed by the `CreditTransaction` and `CreditAuditEvent` tables. The legacy `User.starterBalanceUsd` field remains as the current balance cache for compatibility with existing dashboard and render-start checks, but balance-changing code must write a ledger row and an audit event in the same Prisma transaction that updates the cache.
@@ -344,7 +404,7 @@ Supported transaction types are:
 
 - `CREDIT_GRANT` for system-issued starter grants.
 - `PROMO_CREDIT` for promotional grants.
-- `PREPAID_TOP_UP` for future payment-provider recharge completion.
+- `PREPAID_TOP_UP` for PayPal payment-provider recharge completion.
 - `RENDER_RESERVATION_HOLD` for pre-render holds.
 - `RENDER_CHARGE` for completed render deductions.
 - `REFUND` and `RESERVATION_RELEASE` for returning user credits.
@@ -357,7 +417,7 @@ Operational rules:
 - Include `referenceType`, `referenceId`, optional `jobId`, and safe actor metadata when available.
 - Keep audit metadata operational only; do not include secrets, payment tokens, access keys, or private render payloads.
 - Debit helpers prevent negative cached balances by default.
-- Payment-provider checkout/recharge integration is intentionally out of scope for this batch.
+- PayPal checkout/capture must use `PrepaidTopUpOrder` records plus ledger idempotency keys so a provider retry or duplicate browser confirmation credits exactly once.
 
 ## Render Credit Reservations and Budgets
 

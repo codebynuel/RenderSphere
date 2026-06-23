@@ -237,6 +237,7 @@ function parseNowPaymentsCustomTopUpConfig() {
 
 function parseNowPaymentsAllowedPayCurrencies() {
   const raw = envValue(['RENDERSPHERE_NOWPAYMENTS_ALLOWED_PAY_CURRENCIES', 'NOWPAYMENTS_ALLOWED_PAY_CURRENCIES']);
+  if (!raw) return ['btc', 'eth', 'usdt', 'usdc', 'dai', 'litecoin'];
   return raw
     .split(/[;,\s]+/)
     .map((item) => item.trim().toLowerCase())

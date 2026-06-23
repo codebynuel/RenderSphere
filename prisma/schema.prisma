@@ -160,6 +160,8 @@ model PrepaidTopUpOrder {
   provider            String             @default("PAYPAL")
   providerOrderId     String             @unique
   providerCaptureId   String?            @unique
+  providerInvoiceId   String?            @unique
+  providerPaymentId   String?            @unique
   packageId           String?
   topUpType           String             @default("PACKAGE")
   amountUsd           Decimal            @db.Decimal(12, 6)
@@ -167,6 +169,8 @@ model PrepaidTopUpOrder {
   status              String             @default("CREATED")
   providerStatus      String?
   approvalUrl         String?
+  payCurrency         String?
+  payAmount           Decimal?           @db.Decimal(24, 12)
   creditTransactionId String?            @unique
   failureReason       String?
   metadata            Json?
@@ -182,6 +186,8 @@ model PrepaidTopUpOrder {
   @@index([userId, status])
   @@index([userId, topUpType])
   @@index([provider, providerOrderId])
+  @@index([provider, providerInvoiceId])
+  @@index([provider, providerPaymentId])
 }
 
 model CreditAuditEvent {
@@ -225,4 +231,13 @@ enum CreditActorType {
   USER
   ADMIN
   SYSTEM
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
 }

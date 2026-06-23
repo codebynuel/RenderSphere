@@ -8,7 +8,7 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
   router.use(requireAdmin);
 
   router.get('/summary', async (req, res) => {
-    const [usersCount, uploadsCount, jobsCount, activeJobs, failedJobs, completedJobs, revenue] = await Promise.all([
+    const [usersCount, uploadsCount, jobsCount, activeJobs, failedJobs, completedJobs, revenue, projectsCount] = await Promise.all([
       prisma.user.count(),
       prisma.upload.count(),
       prisma.job.count(),
@@ -16,12 +16,14 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
       prisma.job.count({ where: { status: 'FAILED' } }),
       prisma.job.count({ where: { status: 'COMPLETED' } }),
       prisma.job.aggregate({ _sum: { priceUsd: true, billableSeconds: true } }),
+      prisma.project.count(),
     ]);
 
     res.json({
       users: usersCount,
       uploads: uploadsCount,
       jobs: jobsCount,
+      projects: projectsCount,
       activeJobs,
       failedJobs,
       completedJobs,
@@ -64,6 +66,7 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
     const mappedUsers = users.map((user) => ({
       id: user.id,
       email: user.email,
+      role: user.role,
       starterBalanceUsd: user.starterBalanceUsd,
       accessKeyCount: user.accessKeys.length,
       projectCount: user.projects.length,
@@ -73,6 +76,23 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
     }));
 
     res.json({ users: mappedUsers });
+  });
+
+  router.get('/user/:id', async (req, res) => {
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: {
+        _count: { select: { jobs: true, projects: true, accessKeys: true, uploads: true, sessions: true } },
+        jobs: { orderBy: { createdAt: 'desc' }, take: 50, include: { project: { select: { name: true } } } },
+        projects: { orderBy: { createdAt: 'desc' } },
+        accessKeys: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const { passwordHash, passwordSalt, ...safeUser } = user;
+    res.json({ user: safeUser });
   });
 
   router.get('/jobs', async (req, res) => {
@@ -86,6 +106,61 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
     });
 
     res.json({ jobs });
+  });
+
+  router.get('/job/:jobId', async (req, res) => {
+    const job = await prisma.job.findUnique({
+      where: { jobId: req.params.jobId },
+      include: {
+        user: { select: { id: true, email: true } },
+        project: true,
+        creditTransactions: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    res.json({ job });
+  });
+
+  router.get('/projects', async (req, res) => {
+    const projects = await prisma.project.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { id: true, email: true } },
+        _count: { select: { jobs: true } },
+      },
+    });
+
+    res.json({ projects });
+  });
+
+  router.get('/uploads', async (req, res) => {
+    const uploads = await prisma.upload.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        user: { select: { id: true, email: true } },
+      },
+    });
+
+    const safeUploads = uploads.map((u) => ({
+      ...u,
+      fileSizeBytes: Number(u.fileSizeBytes || 0),
+    }));
+    res.json({ uploads: safeUploads });
+  });
+
+  router.get('/credits', async (req, res) => {
+    const transactions = await prisma.creditTransaction.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        user: { select: { id: true, email: true } },
+        job: { select: { jobId: true, status: true } },
+      },
+    });
+
+    res.json({ transactions });
   });
 
   router.get('/metrics', async (req, res) => {
@@ -114,6 +189,41 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
         jobs: deletedJobs.count,
       },
     });
+  });
+
+  router.get('/settings', async (req, res) => {
+    const rows = await prisma.systemSetting.findMany();
+    const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    res.json({
+      settings,
+      defaults: {
+        payment_provider_paypal: 'enabled',
+        payment_provider_nowpayments: 'enabled',
+      },
+    });
+  });
+
+  router.put('/settings', async (req, res) => {
+    const allowed = new Set(['payment_provider_paypal', 'payment_provider_nowpayments']);
+    const entries = Object.entries(req.body || {});
+    const results = [];
+
+    for (const [key, value] of entries) {
+      if (!allowed.has(key)) continue;
+      const stringValue = String(value).trim();
+      if (stringValue !== 'enabled' && stringValue !== 'disabled') continue;
+
+      const upserted = await prisma.systemSetting.upsert({
+        where: { key },
+        update: { value: stringValue },
+        create: { key, value: stringValue },
+      });
+      results.push(upserted);
+    }
+
+    const rows = await prisma.systemSetting.findMany();
+    const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    res.json({ settings, updated: results.length });
   });
 
   return router;

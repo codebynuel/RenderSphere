@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import Navbar from './Navbar';
 import Footer from './Footer';
 
@@ -32,7 +33,18 @@ export default function Layout() {
     return (
         <div className={`shell site-frame${isApp ? ' app-frame' : ''}`}>
             <Navbar theme={theme} onToggleTheme={toggleTheme} />
-            <Outlet />
+            <AnimatePresence mode="wait">
+                <motion.div
+                    key={location.pathname}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.18, ease: 'easeInOut' }}
+                    style={{ display: 'contents' }}
+                >
+                    <Outlet />
+                </motion.div>
+            </AnimatePresence>
             <Footer className={isApp ? 'app-footer' : ''} />
         </div>
     );

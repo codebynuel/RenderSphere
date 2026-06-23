@@ -1488,34 +1488,17 @@ input:focus {
 
 .data-table {
     width: 100%;
-    min-width: 820px;
     border-collapse: collapse;
     color: var(--muted);
     font-size: 12px;
 }
 
-.jobs-data-table {
-    min-width: 1040px;
-}
-
-.projects-data-table {
-    min-width: 760px;
-}
-
-.files-data-table {
-    min-width: 920px;
-}
-
-.access-key-table {
-    min-width: 860px;
-}
-
 .usage-data-table {
-    min-width: 1040px;
+    min-width: 820px;
 }
 
 .billing-data-table {
-    min-width: 760px;
+    min-width: 600px;
 }
 
 .recharge-data-table {

@@ -139,8 +139,16 @@ async function buildOperationalSnapshot() {
     }),
   ]);
 
+  const memoryUsage = process.memoryUsage();
+  const memoryUsageMb = Math.round(memoryUsage.rss / 1024 / 1024);
+
   return {
     generatedAt: new Date().toISOString(),
+    uptime: Math.round(process.uptime()),
+    memoryUsageMb,
+    nodeVersion: process.version,
+    platform: process.platform,
+    activeJobs,
     process: {
       startedAt: startedAt.toISOString(),
       uptimeSeconds: Math.round(process.uptime()),

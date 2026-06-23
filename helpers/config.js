@@ -34,6 +34,17 @@ const DEFAULT_PAYPAL_CUSTOM_TOP_UP = Object.freeze({
   currency: 'USD',
   decimalPlaces: 2,
 });
+const DEFAULT_NOWPAYMENTS_PREPAID_PACKAGES = Object.freeze([
+  { id: 'crypto-10', amountUsd: 10, currency: 'USD', label: '$10 crypto prepaid credits' },
+  { id: 'crypto-25', amountUsd: 25, currency: 'USD', label: '$25 crypto prepaid credits' },
+  { id: 'crypto-50', amountUsd: 50, currency: 'USD', label: '$50 crypto prepaid credits' },
+]);
+const DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP = Object.freeze({
+  minAmountUsd: 5,
+  maxAmountUsd: 500,
+  currency: 'USD',
+  decimalPlaces: 2,
+});
 const VALID_ENGINES = new Set(['CYCLES', 'BLENDER_EEVEE_NEXT']);
 const VALID_OUTPUT_FORMATS = new Set(['PNG', 'JPEG', 'OPEN_EXR', 'OPEN_EXR_MULTILAYER']);
 const VALID_DENOISERS = new Set(['NONE', 'OPTIX', 'OPENIMAGEDENOISE']);
@@ -182,6 +193,57 @@ function parsePayPalCustomTopUpConfig() {
   };
 }
 
+function parseNowPaymentsPrepaidPackages() {
+  const raw = envValue(['RENDERSPHERE_NOWPAYMENTS_PREPAID_PACKAGES', 'NOWPAYMENTS_PREPAID_PACKAGES']);
+  if (!raw) return [...DEFAULT_NOWPAYMENTS_PREPAID_PACKAGES];
+
+  let parsed = null;
+  if (raw.trim().startsWith('[')) {
+    try {
+      parsed = JSON.parse(raw).map(normalizePrepaidPackage).filter(Boolean);
+    } catch {
+      parsed = [];
+    }
+  } else {
+    parsed = raw.split(/[;,]/).map(parsePrepaidPackageToken).filter(Boolean);
+  }
+
+  const seen = new Set();
+  return parsed.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+function parseNowPaymentsCustomTopUpConfig() {
+  const currency = envValue(['RENDERSPHERE_NOWPAYMENTS_FIAT_CURRENCY', 'NOWPAYMENTS_FIAT_CURRENCY', 'RENDERSPHERE_NOWPAYMENTS_CUSTOM_TOPUP_CURRENCY', 'NOWPAYMENTS_CUSTOM_TOPUP_CURRENCY'], DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.currency).toUpperCase();
+  return {
+    minAmountUsd: parsePositiveNumberValue(
+      envValue(['RENDERSPHERE_NOWPAYMENTS_CUSTOM_TOPUP_MIN_USD', 'NOWPAYMENTS_CUSTOM_TOPUP_MIN_USD'], String(DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.minAmountUsd)),
+      DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.minAmountUsd,
+    ),
+    maxAmountUsd: parsePositiveNumberValue(
+      envValue(['RENDERSPHERE_NOWPAYMENTS_CUSTOM_TOPUP_MAX_USD', 'NOWPAYMENTS_CUSTOM_TOPUP_MAX_USD'], String(DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.maxAmountUsd)),
+      DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.maxAmountUsd,
+    ),
+    currency: /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.currency,
+    decimalPlaces: parseIntegerValue(
+      envValue(['RENDERSPHERE_NOWPAYMENTS_CUSTOM_TOPUP_DECIMAL_PLACES', 'NOWPAYMENTS_CUSTOM_TOPUP_DECIMAL_PLACES'], String(DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.decimalPlaces)),
+      DEFAULT_NOWPAYMENTS_CUSTOM_TOP_UP.decimalPlaces,
+    ),
+  };
+}
+
+function parseNowPaymentsAllowedPayCurrencies() {
+  const raw = envValue(['RENDERSPHERE_NOWPAYMENTS_ALLOWED_PAY_CURRENCIES', 'NOWPAYMENTS_ALLOWED_PAY_CURRENCIES']);
+  return raw
+    .split(/[;,\s]+/)
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => /^[a-z0-9_:-]{2,32}$/.test(item))
+    .filter((item, index, list) => list.indexOf(item) === index);
+}
+
 function groupConfigured(names) {
   return names.every(envPresent);
 }
@@ -255,6 +317,17 @@ const config = {
     mock: parseBooleanEnv('RENDERSPHERE_PAYPAL_MOCK', false),
     prepaidPackages: parsePayPalPrepaidPackages(),
     customTopUp: parsePayPalCustomTopUpConfig(),
+  },
+  nowpayments: {
+    apiKey: envValue(['RENDERSPHERE_NOWPAYMENTS_API_KEY', 'NOWPAYMENTS_API_KEY']),
+    ipnSecret: envValue(['RENDERSPHERE_NOWPAYMENTS_IPN_SECRET', 'NOWPAYMENTS_IPN_SECRET']),
+    mock: parseBooleanEnv('RENDERSPHERE_NOWPAYMENTS_MOCK', false),
+    publicUrl: envValue(['RENDERSPHERE_NOWPAYMENTS_PUBLIC_URL', 'NOWPAYMENTS_PUBLIC_URL'], process.env.RENDERSPHERE_PUBLIC_URL || ''),
+    fiatCurrency: envValue(['RENDERSPHERE_NOWPAYMENTS_FIAT_CURRENCY', 'NOWPAYMENTS_FIAT_CURRENCY'], 'USD').toUpperCase(),
+    allowedPayCurrencies: parseNowPaymentsAllowedPayCurrencies(),
+    defaultPayCurrency: envValue(['RENDERSPHERE_NOWPAYMENTS_DEFAULT_PAY_CURRENCY', 'NOWPAYMENTS_DEFAULT_PAY_CURRENCY'], 'btc').toLowerCase(),
+    prepaidPackages: parseNowPaymentsPrepaidPackages(),
+    customTopUp: parseNowPaymentsCustomTopUpConfig(),
   },
   jobRecordRetentionDays: parsePositiveIntegerEnv('RENDERSPHERE_JOB_RECORD_RETENTION_DAYS', 30),
   runpodRequestTimeoutMs: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS', 15000),

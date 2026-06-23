@@ -335,7 +335,9 @@ export default function Dashboard() {
     const [projects, setProjects] = useState([]);
     const [prepaidPackages, setPrepaidPackages] = useState([]);
     const [customTopUpConfig, setCustomTopUpConfig] = useState(null);
+    const [nowpaymentsConfig, setNowpaymentsConfig] = useState(null);
     const [customTopUpAmount, setCustomTopUpAmount] = useState('');
+    const [customNpAmount, setCustomNpAmount] = useState('');
     const [recharges, setRecharges] = useState([]);
     const [expandedJobId, setExpandedJobId] = useState(null);
     const [newKeyName, setNewKeyName] = useState('');
@@ -353,6 +355,8 @@ export default function Dashboard() {
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
     const [creatingTopUpPackageId, setCreatingTopUpPackageId] = useState(null);
     const [creatingCustomTopUp, setCreatingCustomTopUp] = useState(false);
+    const [creatingNpPackageId, setCreatingNpPackageId] = useState(null);
+    const [creatingCustomNp, setCreatingCustomNp] = useState(false);
     const [capturingOrderId, setCapturingOrderId] = useState(null);
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true });
     const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '', billingPackages: '', billingHistory: '' });
@@ -475,6 +479,7 @@ export default function Dashboard() {
             const data = await api('/api/billing/prepaid-packages');
             setPrepaidPackages(data.packages || []);
             setCustomTopUpConfig(data.customTopUp || null);
+            setNowpaymentsConfig(data.nowpayments || null);
         } catch (error) {
             setErrorFlag('billingPackages', error.message || 'Failed to load prepaid packages');
             toast.error(`Failed to load prepaid packages: ${error.message}`);
@@ -995,6 +1000,67 @@ export default function Dashboard() {
         }
     }, [capturingOrderId, loadRechargeHistory, refreshCurrentUser]);
 
+    const handleStartNowPaymentsTopUp = async (packageId, payCurrency) => {
+        if (!packageId || creatingNpPackageId || creatingCustomNp) return;
+        setCreatingNpPackageId(packageId);
+        try {
+            const data = await api('/api/billing/nowpayments/invoices', {
+                method: 'POST',
+                body: JSON.stringify({ packageId, payCurrency }),
+            });
+            if (data.order) {
+                setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
+                setBillingPage(1);
+            }
+            if (data.order?.invoice_url) {
+                toast.success('Opening NOWPayments checkout...');
+                window.open(data.order.invoice_url, '_blank', 'noopener');
+                return;
+            }
+            toast.error('NOWPayments did not return an invoice URL.');
+        } catch (error) {
+            toast.error(error.message || 'Failed to start NOWPayments checkout');
+        } finally {
+            setCreatingNpPackageId(null);
+        }
+    };
+
+    const handleStartNowPaymentsCustomTopUp = async (event) => {
+        event.preventDefault();
+        if (creatingCustomNp || creatingNpPackageId) return;
+        const npConfig = nowpaymentsConfig;
+        if (!npConfig?.configured) {
+            toast.error('NOWPayments is not configured.');
+            return;
+        }
+        const amount = customNpAmount.trim();
+        if (!amount) {
+            toast.error('Enter a custom top-up amount.');
+            return;
+        }
+        setCreatingCustomNp(true);
+        try {
+            const data = await api('/api/billing/nowpayments/invoices', {
+                method: 'POST',
+                body: JSON.stringify({ customAmount: { amountUsd: amount, currency: 'USD' }, payCurrency: npConfig.defaultPayCurrency }),
+            });
+            if (data.order) {
+                setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
+                setBillingPage(1);
+            }
+            if (data.order?.invoice_url) {
+                toast.success('Opening NOWPayments checkout...');
+                window.open(data.order.invoice_url, '_blank', 'noopener');
+                return;
+            }
+            toast.error('NOWPayments did not return an invoice URL.');
+        } catch (error) {
+            toast.error(error.message || 'Failed to start custom NOWPayments checkout');
+        } finally {
+            setCreatingCustomNp(false);
+        }
+    };
+
     useEffect(() => {
         if (!user?.id || typeof window === 'undefined') return undefined;
         const params = new URLSearchParams(window.location.search);
@@ -1247,7 +1313,7 @@ export default function Dashboard() {
         );
     };
 
-    const renderJobRow = (job) => {
+    const renderJobRow = (job, overview = false) => {
         const expanded = expandedJobId === job.jobId;
         const jobActionItems = [
             {
@@ -1275,6 +1341,22 @@ export default function Dashboard() {
         return (
             <Fragment key={job.jobId}>
                 <tr className="data-row">
+                    {overview ? (
+                        <>
+                            <td data-label="Job">
+                                <div className="table-primary job-id">{job.fileName || job.jobId}</div>
+                                <div className="table-meta"><span>{job.jobId}</span></div>
+                            </td>
+                            <td data-label="Status"><StatusPill status={job.status} /></td>
+                            <td data-label="Submitted">{formatDate(job.createdAt)}</td>
+                            <td data-label="Cost">
+                                <div className="table-money">
+                                    <span>{job.status === 'COMPLETED' ? formatUsd(job.priceUsd) : '—'}</span>
+                                </div>
+                            </td>
+                        </>
+                    ) : (
+                        <>
                     <td data-label="Job">
                         <div className="table-primary job-id">{job.fileName || job.jobId}</div>
                         <div className="table-meta">
@@ -1316,10 +1398,12 @@ export default function Dashboard() {
                             )}
                         </div>
                     </td>
+                        </>
+                    )}
                 </tr>
                 {expanded && (
                     <tr className="data-row-details">
-                        <td colSpan={7}>
+                        <td colSpan={overview ? 4 : 7}>
                             <div className="job-details queue-details">
                                 <div><span>Engine</span><strong>{job.settings?.engine || 'Unknown'}</strong></div>
                                 <div><span>Samples</span><strong>{job.settings?.samples || '—'}</strong></div>
@@ -1339,21 +1423,32 @@ export default function Dashboard() {
         );
     };
 
-    const renderJobTable = (rows, label) => (
+    const renderJobTable = (rows, label, overview = false) => (
         <div className="data-table-wrap queue-table" aria-live="polite">
-            <table className="data-table jobs-data-table" aria-label={label}>
+            <table className="data-table" aria-label={label}>
                 <thead>
                     <tr>
-                        <th scope="col">Job / file</th>
-                        <th scope="col">Project</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Progress</th>
-                        <th scope="col">Submitted</th>
-                        <th scope="col">Duration / cost</th>
-                        <th scope="col">Actions</th>
+                        {overview ? (
+                            <>
+                                <th scope="col">Job</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Submitted</th>
+                                <th scope="col">Cost</th>
+                            </>
+                        ) : (
+                            <>
+                                <th scope="col">Job / file</th>
+                                <th scope="col">Project</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Progress</th>
+                                <th scope="col">Submitted</th>
+                                <th scope="col">Duration / cost</th>
+                                <th scope="col">Actions</th>
+                            </>
+                        )}
                     </tr>
                 </thead>
-                <tbody>{rows.map(renderJobRow)}</tbody>
+                <tbody>{rows.map((job) => renderJobRow(job, overview))}</tbody>
             </table>
         </div>
     );
@@ -1371,7 +1466,7 @@ export default function Dashboard() {
                 </div>
                 {rows.length === 0 ? <EmptyState title={emptyTitle} text={emptyText} /> : (
                     <>
-                        {renderJobTable(pagination.items, title)}
+                        {renderJobTable(pagination.items, title, false)}
                         <PaginationControls label={title} totalItems={rows.length} page={pagination.page} onPageChange={onPageChange} />
                     </>
                 )}
@@ -1608,12 +1703,11 @@ export default function Dashboard() {
                 {!loading.projects && !errors.projects && projects.length > 0 ? (
                     <>
                     <div className="data-table-wrap project-table-wrap">
-                        <table className="data-table projects-data-table" aria-label="Projects">
+                        <table className="data-table" aria-label="Projects">
                             <thead>
                                 <tr>
                                     <th scope="col">Name</th>
                                     <th scope="col">Jobs</th>
-                                    <th scope="col">Delivered</th>
                                     <th scope="col">Updated</th>
                                     <th scope="col">Actions</th>
                                 </tr>
@@ -1757,7 +1851,7 @@ export default function Dashboard() {
                 {!loading.jobs && !errors.jobs && overview && (
                     previewJobs.length === 0
                         ? <EmptyState icon={Activity} title="No render jobs yet" text="Submit a render from Blender and it will appear here with real-time progress." />
-                        : renderJobTable(previewJobs, 'Queue snapshot')
+                        : renderJobTable(previewJobs, 'Queue snapshot', true)
                 )}
                 {!loading.jobs && !errors.jobs && !overview && (
                     visibleJobs.length === 0 ? (
@@ -1818,15 +1912,25 @@ export default function Dashboard() {
                 ) : null}
                 {!loading.files && !errors.files && previewFiles.length > 0 ? (
                     <div className="data-table-wrap file-library">
-                        <table className="data-table files-data-table" aria-label={overview ? 'Latest deliveries' : 'Rendered files'}>
+                        <table className="data-table" aria-label={overview ? 'Latest deliveries' : 'Rendered files'}>
                             <thead>
                                 <tr>
-                                    <th scope="col">File</th>
-                                    <th scope="col">Project</th>
-                                    <th scope="col">Created</th>
-                                    <th scope="col">Type</th>
-                                    <th scope="col">Render metrics</th>
-                                    <th scope="col">Actions</th>
+                                    {overview ? (
+                                        <>
+                                            <th scope="col">File</th>
+                                            <th scope="col">Created</th>
+                                            <th scope="col">Type</th>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <th scope="col">File</th>
+                                            <th scope="col">Project</th>
+                                            <th scope="col">Created</th>
+                                            <th scope="col">Type</th>
+                                            <th scope="col">Render metrics</th>
+                                            <th scope="col">Actions</th>
+                                        </>
+                                    )}
                                 </tr>
                             </thead>
                             <tbody>
@@ -1834,6 +1938,17 @@ export default function Dashboard() {
                                     const absoluteUrl = file.downloadUrl ? new URL(file.downloadUrl, window.location.origin).href : '';
                                     return (
                                         <tr className="data-row" key={file.id || file.jobId || file.resultKey}>
+                                            {overview ? (
+                                                <>
+                                                    <td data-label="File">
+                                                        <div className="table-primary">{file.fileName || file.resultKey}</div>
+                                                        <div className="table-meta"><span>{file.jobId}</span></div>
+                                                    </td>
+                                                    <td data-label="Created">{formatDate(file.completedAt || file.createdAt)}</td>
+                                                    <td data-label="Type">{file.outputFormat || file.contentType || 'Output'}</td>
+                                                </>
+                                            ) : (
+                                                <>
                                             <td data-label="File">
                                                 <div className="table-primary">{file.fileName || file.resultKey}</div>
                                                 <div className="table-meta"><span>{file.jobId}</span></div>
@@ -1885,6 +2000,8 @@ export default function Dashboard() {
                                                     )}
                                                 </div>
                                             </td>
+                                                </>
+                                            )}
                                         </tr>
                                     );
                                 })}
@@ -2077,6 +2194,70 @@ export default function Dashboard() {
                         </div>
                     ) : null}
                 </section>
+
+                {nowpaymentsConfig?.configured ? (
+                <section className="queue-section nowpayments-section">
+                    <div className="queue-section-head">
+                        <div>
+                            <h3>Crypto top-ups via NOWPayments</h3>
+                            <p className="muted">Pay with Bitcoin, Ethereum, USDT, and other cryptocurrencies. The invoice opens in a new window.</p>
+                        </div>
+                        <span className="count-chip">{nowpaymentsConfig.packages.length} presets</span>
+                    </div>
+                    <div className="prepaid-package-grid">
+                        {nowpaymentsConfig.packages.map((item) => (
+                            <article className="prepaid-package-card" key={item.id}>
+                                <div>
+                                    <span className="package-eyebrow">Crypto preset</span>
+                                    <h4>{item.label}</h4>
+                                    <strong>{formatMoney(item.amountUsd, item.currency)}</strong>
+                                    <p className="muted">Pay {formatMoney(item.amountUsd, item.currency)} worth of crypto via NOWPayments invoice.</p>
+                                </div>
+                                <button
+                                    className="button primary"
+                                    type="button"
+                                    onClick={() => handleStartNowPaymentsTopUp(item.id, nowpaymentsConfig.defaultPayCurrency)}
+                                    disabled={Boolean(creatingNpPackageId) || creatingCustomNp}
+                                >
+                                    {creatingNpPackageId === item.id ? 'Opening...' : 'Pay with crypto'}
+                                </button>
+                            </article>
+                        ))}
+                        {nowpaymentsConfig.customTopUp ? (
+                            <article className="prepaid-package-card custom-top-up-card">
+                                <div>
+                                    <span className="package-eyebrow">Custom crypto top-up</span>
+                                    <h4>Choose your amount</h4>
+                                    <strong>{customNpAmount || formatMoney(nowpaymentsConfig.customTopUp.minAmountUsd, nowpaymentsConfig.customTopUp.currency)}</strong>
+                                    <p className="muted">Enter a USD amount from {formatMoney(nowpaymentsConfig.customTopUp.minAmountUsd, nowpaymentsConfig.customTopUp.currency)} to {formatMoney(nowpaymentsConfig.customTopUp.maxAmountUsd, nowpaymentsConfig.customTopUp.currency)}. Paid in {nowpaymentsConfig.defaultPayCurrency?.toUpperCase() || 'crypto'}.</p>
+                                </div>
+                                <form className="custom-top-up-form" onSubmit={handleStartNowPaymentsCustomTopUp} noValidate>
+                                    <label htmlFor="custom-np-amount">
+                                        <span>Amount (USD)</span>
+                                        <input
+                                            id="custom-np-amount"
+                                            inputMode="decimal"
+                                            min={nowpaymentsConfig.customTopUp.minAmountUsd}
+                                            max={nowpaymentsConfig.customTopUp.maxAmountUsd}
+                                            placeholder={String(nowpaymentsConfig.customTopUp.minAmountUsd)}
+                                            type="text"
+                                            value={customNpAmount}
+                                            onChange={(event) => setCustomNpAmount(event.target.value)}
+                                        />
+                                    </label>
+                                    <button
+                                        className="button primary"
+                                        type="submit"
+                                        disabled={creatingCustomNp || Boolean(creatingNpPackageId) || !customNpAmount.trim()}
+                                    >
+                                        {creatingCustomNp ? 'Opening...' : 'Pay with crypto'}
+                                    </button>
+                                </form>
+                            </article>
+                        ) : null}
+                    </div>
+                </section>
+                ) : null}
 
                 <section className="queue-section billing-summary-section">
                     <div className="queue-section-head">

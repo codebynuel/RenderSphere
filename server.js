@@ -40,7 +40,14 @@ app.use(requestIdMiddleware);
 app.use(responseRequestIdMiddleware);
 app.use(securityHeaders);
 app.use(requireSameOriginForBrowserWrites);
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, res, buffer) => {
+    if (req.originalUrl?.startsWith('/api/billing/nowpayments/ipn')) {
+      req.rawBody = buffer.toString('utf8');
+    }
+  },
+}));
 app.use(requestLoggingMiddleware);
 app.use(express.static(publicDir));
 

@@ -43,7 +43,6 @@ function moneyNumber(value) {
 }
 
 function requirePayPalConfigured() {
-  if (config.paypal.mock) return;
   if (!config.paypal.clientId || !config.paypal.clientSecret) {
     throw createHttpError('PayPal checkout is not configured.', 503);
   }
@@ -201,16 +200,8 @@ function configuredCancelUrl() {
   return `${config.publicUrl.replace(/\/$/, '')}/dashboard?view=billing&paypal=cancel`;
 }
 
-async function createProviderOrder({ userId, topUp, requestId }) {
-  if (config.paypal.mock) {
-    const providerOrderId = `PAYPAL-MOCK-ORDER-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    return {
-      id: providerOrderId,
-      status: 'CREATED',
-      links: [{ rel: 'approve', href: `${config.publicUrl || 'http://127.0.0.1:3000'}/mock-paypal/approve/${providerOrderId}` }],
-      mock: true,
-    };
-  }
+async function createProviderOrder({ userId, topUp, requestId, origin }) {
+  const baseOrigin = origin || config.publicUrl || `http://127.0.0.1:${process.env.PORT || 3000}`;
 
   const accessToken = await getPayPalAccessToken();
   const returnUrl = configuredReturnUrl();
@@ -250,24 +241,6 @@ async function createProviderOrder({ userId, topUp, requestId }) {
 }
 
 async function captureProviderOrder(providerOrderId, requestId) {
-  if (config.paypal.mock) {
-    const captureId = `PAYPAL-MOCK-CAPTURE-${providerOrderId}`;
-    return {
-      id: providerOrderId,
-      status: 'COMPLETED',
-      purchase_units: [{
-        payments: {
-          captures: [{
-            id: captureId,
-            status: 'COMPLETED',
-            amount: { currency_code: 'USD', value: '0.00' },
-          }],
-        },
-      }],
-      mock: true,
-    };
-  }
-
   const accessToken = await getPayPalAccessToken();
   const response = await fetch(`${paypalApiBase()}/v2/checkout/orders/${encodeURIComponent(providerOrderId)}/capture`, {
     method: 'POST',
@@ -334,6 +307,8 @@ export function serializeTopUpOrder(order) {
     provider: order.provider,
     providerOrderId: order.providerOrderId,
     providerCaptureId: order.providerCaptureId,
+    providerInvoiceId: order.providerInvoiceId,
+    providerPaymentId: order.providerPaymentId,
     packageId: order.packageId,
     topUpType,
     topUpLabel: topUpSelectionLabel(topUpType, order.packageId, metadata),
@@ -342,6 +317,8 @@ export function serializeTopUpOrder(order) {
     status: order.status,
     providerStatus: order.providerStatus,
     approvalUrl: order.approvalUrl,
+    payCurrency: order.payCurrency,
+    payAmount: order.payAmount === null || order.payAmount === undefined ? null : Number(order.payAmount),
     creditTransactionId: order.creditTransactionId,
     failureReason: order.failureReason,
     createdAt: order.createdAt,
@@ -351,12 +328,12 @@ export function serializeTopUpOrder(order) {
   };
 }
 
-export async function createPayPalTopUpOrder({ userId, packageId, customAmount, amountUsd, currency, requestId }) {
+export async function createPayPalTopUpOrder({ userId, packageId, customAmount, amountUsd, currency, requestId, origin }) {
   if (!userId) throw createHttpError('Authentication required.', 401);
   requirePayPalConfigured();
   const topUp = normalizeTopUpSelection({ packageId, customAmount, amountUsd, currency });
 
-  const providerOrder = await createProviderOrder({ userId, topUp, requestId });
+  const providerOrder = await createProviderOrder({ userId, topUp, requestId, origin });
   const approvalUrl = approvalLinkFromOrder(providerOrder);
   if (!providerOrder?.id || !approvalUrl) throw createHttpError('PayPal order response did not include checkout approval details.', 502);
 

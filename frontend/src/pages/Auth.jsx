@@ -22,6 +22,7 @@ export default function Auth() {
     const [password, setPassword] = useState('');
     const [inviteCode, setInviteCode] = useState('');
     const [loading, setLoading] = useState(false);
+    const [errorKey, setErrorKey] = useState(0);
     
     const navigate = useNavigate();
     const { user, reloadUser, loading: authLoading } = useAuth();
@@ -63,6 +64,7 @@ export default function Auth() {
             navigate('/app');
         } catch (error) {
             toast.error(error.message || 'Authentication failed');
+            setErrorKey((k) => k + 1);
         } finally {
             setLoading(false);
         }
@@ -76,9 +78,10 @@ export default function Auth() {
 
             <motion.div
                 className="auth-card-v2"
+                key={errorKey}
                 initial={{ opacity: 0, y: 24, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                animate={errorKey > 0 ? { x: [0, -8, 8, -6, 6, -3, 3, 0] } : { opacity: 1, y: 0, scale: 1 }}
+                transition={errorKey > 0 ? { duration: 0.35 } : { duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
             >
                 <div className="auth-card-header">
                     <BrandMark />

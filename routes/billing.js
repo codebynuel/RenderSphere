@@ -43,17 +43,23 @@ function createBillingRouter({ accountRateLimit, requireAuth }) {
 
   router.use(requireAuth);
 
-  router.get('/prepaid-packages', (req, res) => {
-    const paypalPackages = getPrepaidPackages().map(serializePrepaidPackage);
-    const paypalCustomTopUp = serializeCustomTopUpConfig(getPayPalCustomTopUpConfig());
+  router.get('/prepaid-packages', async (req, res) => {
+    const [paypalEnabled, nowpaymentsConfig] = await Promise.all([
+      isPaymentProviderEnabled('paypal'),
+      Promise.resolve(serializeNowPaymentsConfig()),
+    ]);
+
+    const paypalPackages = paypalEnabled ? getPrepaidPackages().map(serializePrepaidPackage) : [];
+    const paypalCustomTopUp = paypalEnabled ? serializeCustomTopUpConfig(getPayPalCustomTopUpConfig()) : null;
+
     res.json({
       packages: paypalPackages,
       customTopUp: paypalCustomTopUp,
-      paypal: {
+      paypal: paypalEnabled ? {
         packages: paypalPackages,
         customTopUp: paypalCustomTopUp,
-      },
-      nowpayments: serializeNowPaymentsConfig(),
+      } : null,
+      nowpayments: nowpaymentsConfig,
     });
   });
 

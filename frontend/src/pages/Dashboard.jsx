@@ -1012,9 +1012,9 @@ export default function Dashboard() {
                 setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
                 setBillingPage(1);
             }
-            if (data.order?.invoice_url) {
+            if (data.order?.approvalUrl) {
                 toast.success('Opening NOWPayments checkout...');
-                window.open(data.order.invoice_url, '_blank', 'noopener');
+                window.open(data.order.approvalUrl, '_blank', 'noopener');
                 return;
             }
             toast.error('NOWPayments did not return an invoice URL.');
@@ -1048,9 +1048,9 @@ export default function Dashboard() {
                 setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
                 setBillingPage(1);
             }
-            if (data.order?.invoice_url) {
+            if (data.order?.approvalUrl) {
                 toast.success('Opening NOWPayments checkout...');
-                window.open(data.order.invoice_url, '_blank', 'noopener');
+                window.open(data.order.approvalUrl, '_blank', 'noopener');
                 return;
             }
             toast.error('NOWPayments did not return an invoice URL.');

@@ -3360,6 +3360,74 @@ input:focus-visible {
     font-size: 14px;
 }
 
+/* ── Comparison table ──────────────────────────────────────────── */
+
+.pricing-compare-section .section-copy {
+    margin-bottom: 8px;
+}
+
+.pricing-compare-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line-soft);
+    border-radius: 18px;
+    background: var(--panel-card-strong);
+}
+
+.pricing-compare {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.pricing-compare th,
+.pricing-compare td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.pricing-compare thead th {
+    color: var(--subtle);
+    background: color-mix(in srgb, var(--panel-section) 82%, transparent);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.pricing-compare thead th:first-child {
+    width: 18%;
+}
+
+.pricing-compare tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.pricing-compare tbody tr:hover td {
+    background: color-mix(in srgb, var(--panel-section) 60%, transparent);
+}
+
+.pricing-compare td:first-child {
+    color: var(--text);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.col-rs {
+    color: var(--text);
+    font-weight: 750;
+}
+
+.col-rs strong {
+    color: var(--accent);
+}
+
+.pricing-compare td.col-rs {
+    background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+}
+
 /* ── FAQ ───────────────────────────────────────────────────────── */
 
 .pricing-faq-section {
@@ -3435,5 +3503,265 @@ input:focus-visible {
         position: static;
         display: inline-block;
         margin-bottom: 8px;
+    }
+}
+
+@media (max-width: 760px) {
+    .pricing-highlights {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ── Steps section ─────────────────────────────────────────────── */
+
+.steps-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 30px;
+}
+
+.step-card {
+    position: relative;
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    padding: 28px 24px;
+    background: var(--panel-card);
+    box-shadow: inset 0 1px 0 var(--frame-ring);
+    overflow: hidden;
+}
+
+.step-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+.step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-size: 16px;
+    font-weight: 900;
+    margin-bottom: 18px;
+}
+
+.step-card h3 {
+    margin: 0 0 10px;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 750;
+}
+
+.step-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.65;
+}
+
+/* ── Benefits section ──────────────────────────────────────────── */
+
+.benefits-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 30px;
+}
+
+.benefit-card {
+    text-align: center;
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    padding: 32px 24px;
+    background: var(--panel-card);
+    box-shadow: inset 0 1px 0 var(--frame-ring);
+}
+
+.benefit-icon-wrap {
+    width: 56px;
+    height: 56px;
+    display: grid;
+    place-items: center;
+    margin: 0 auto 18px;
+    border-radius: 16px;
+    color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.benefit-card h3 {
+    margin: 0 0 8px;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 750;
+}
+
+.benefit-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.65;
+    max-width: 320px;
+    margin-inline: auto;
+}
+
+/* ── Pricing preview ───────────────────────────────────────────── */
+
+.pricing-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 30px;
+}
+
+.pricing-preview-card {
+    position: relative;
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    padding: 24px;
+    background: var(--panel-card);
+    box-shadow: inset 0 1px 0 var(--frame-ring);
+    display: grid;
+    gap: 14px;
+    align-content: start;
+}
+
+.pricing-preview-card--featured {
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background:
+        radial-gradient(circle at 100% 0%, var(--accent-soft), transparent 50%),
+        var(--panel-card);
+    box-shadow:
+        inset 0 1px 0 color-mix(in srgb, var(--accent) 20%, transparent),
+        0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.pricing-preview-badge {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    color: var(--button-primary-text);
+    background: var(--button-primary-bg);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+}
+
+.pricing-preview-card h3 {
+    margin: 0;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 750;
+}
+
+.pricing-preview-price {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.pricing-preview-price strong {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--text);
+}
+
+.pricing-preview-price span {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.pricing-preview-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.pricing-preview-card .button {
+    width: 100%;
+    justify-content: center;
+    margin-top: 4px;
+}
+
+.pricing-preview-cta {
+    text-align: center;
+    margin-top: 24px;
+}
+
+.pricing-preview-cta a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: color 0.15s;
+}
+
+.pricing-preview-cta a:hover {
+    color: var(--text);
+}
+
+/* ── Final CTA ─────────────────────────────────────────────────── */
+
+.final-cta-section {
+    text-align: center;
+    padding-top: 60px;
+    padding-bottom: 80px;
+}
+
+.final-cta-section .section-copy {
+    margin-inline: auto;
+}
+
+.final-cta-section .eyebrow {
+    margin-bottom: 12px;
+}
+
+.final-cta-section h2 {
+    margin-inline: auto;
+}
+
+.final-cta-section .muted {
+    max-width: 520px;
+    margin: 18px auto 0;
+    line-height: 1.65;
+}
+
+.final-cta-section .hero-actions {
+    justify-content: center;
+}
+
+/* ── Responsive overrides for new sections ─────────────────────── */
+
+@media (max-width: 900px) {
+    .steps-grid,
+    .benefits-grid,
+    .pricing-preview-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .steps-grid,
+    .benefits-grid,
+    .pricing-preview-grid {
+        grid-template-columns: 1fr;
     }
 }

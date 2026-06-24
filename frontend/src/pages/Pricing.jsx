@@ -132,6 +132,106 @@ export default function Pricing() {
                 ))}
             </section>
 
+            <section className="section pricing-compare-section">
+                <motion.div className="section-copy" {...fadeUp}>
+                    <p className="eyebrow">How we compare</p>
+                    <h2>RenderSphere vs. other render farms.</h2>
+                    <p className="muted">
+                        Most render farms use complex tiered pricing (GHz-hours, node-hours, Ob-hours) with
+                        different rates for different priorities. We keep it simple: one flat rate across all
+                        engines, all jobs, all priorities.
+                    </p>
+                </motion.div>
+                <motion.div className="pricing-compare-wrap" {...fadeUp} transition={{ duration: 0.45, delay: 0.15 }}>
+                    <table className="pricing-compare">
+                        <thead>
+                            <tr>
+                                <th>Feature</th>
+                                <th className="col-rs">RenderSphere</th>
+                                <th>GarageFarm</th>
+                                <th>RebusFarm</th>
+                                <th>Fox Renderfarm</th>
+                                <th>SheepIt</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Pricing model</td>
+                                <td className="col-rs">Flat $0.01 / GPU-sec</td>
+                                <td>$0.024–$0.072 / GHz-hr<br />$1.12–$25.76 / node-hr</td>
+                                <td>1.41¢ / GHz-hr<br />0.53¢ / Ob-hr</td>
+                                <td>Varies by project</td>
+                                <td>Free (community)</td>
+                            </tr>
+                            <tr>
+                                <td>$10 buys you</td>
+                                <td className="col-rs"><strong>~16m 40s</strong> GPU render</td>
+                                <td>~46 min (Low, CPU N5)</td>
+                                <td>~47 min (CPU, base rate)</td>
+                                <td>Varies</td>
+                                <td>Free</td>
+                            </tr>
+                            <tr>
+                                <td>$25 buys you</td>
+                                <td className="col-rs"><strong>~41m 40s</strong> GPU render</td>
+                                <td>~3.5 hrs (Low, CPU N5)</td>
+                                <td>~2 hrs (CPU, base rate)</td>
+                                <td>Varies</td>
+                                <td>Free</td>
+                            </tr>
+                            <tr>
+                                <td>Engine pricing</td>
+                                <td className="col-rs">Same rate for Cycles &amp; Eevee</td>
+                                <td>Different rates per node type</td>
+                                <td>Different rates CPU vs GPU</td>
+                                <td>Different rates</td>
+                                <td>N/A</td>
+                            </tr>
+                            <tr>
+                                <td>Feature tiers</td>
+                                <td className="col-rs"><strong>None</strong> — full access for all</td>
+                                <td>Priority-based (3 tiers)</td>
+                                <td>Single tier + volume discounts</td>
+                                <td>Single tier</td>
+                                <td>Single tier</td>
+                            </tr>
+                            <tr>
+                                <td>Free trial</td>
+                                <td className="col-rs">No — buy a pack, use it</td>
+                                <td>Available</td>
+                                <td>$29.38 free RenderPoints</td>
+                                <td>$25 free trial</td>
+                                <td>Always free</td>
+                            </tr>
+                            <tr>
+                                <td>Subscriptions</td>
+                                <td className="col-rs"><strong>No</strong> — prepaid only</td>
+                                <td>No (prepaid credits)</td>
+                                <td>No (RenderPoints)</td>
+                                <td>No</td>
+                                <td>No</td>
+                            </tr>
+                            <tr>
+                                <td>Blender support</td>
+                                <td className="col-rs">Cycles, Eevee</td>
+                                <td>Cycles (CPU + GPU)</td>
+                                <td>Cycles</td>
+                                <td>Cycles, Eevee</td>
+                                <td>Cycles, Eevee, Workbench</td>
+                            </tr>
+                            <tr>
+                                <td>Security</td>
+                                <td className="col-rs">Encrypted transfers &amp; storage</td>
+                                <td>ISO 27001</td>
+                                <td>ISO 27001, NDA</td>
+                                <td>TPN-accredited</td>
+                                <td>Community-run</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </motion.div>
+            </section>
+
             <section className="section pricing-faq-section">
                 <motion.div className="section-copy" {...fadeUp}>
                     <p className="eyebrow">FAQ</p>

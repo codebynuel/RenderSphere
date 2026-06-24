@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { Activity, CheckCircle2, CloudUpload, Download, FolderKanban, KeyRound, ShieldCheck, Timer, WalletCards } from 'lucide-react';
+import { Activity, ArrowRight, CheckCircle2, Clock, CloudUpload, Download, FolderKanban, KeyRound, ShieldCheck, Timer, Users, WalletCards } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const fadeUp = {
     initial: { opacity: 0, y: 18 },
@@ -11,7 +12,31 @@ const fadeUp = {
 const metrics = [
     { label: 'Production flow', value: '5 steps', detail: 'Key, project, submit, monitor, deliver' },
     { label: 'Render types', value: 'Still + animation', detail: 'Single frames and zipped frame ranges' },
-    { label: 'Storage path', value: 'Direct R2', detail: 'Authenticated downloads after completion' },
+    { label: 'Pricing', value: '$0.01/GPU-sec', detail: 'One flat rate across all engines and jobs' },
+];
+
+const steps = [
+    {
+        number: '1',
+        title: 'Connect Blender',
+        text: 'Install the add-on, generate a scoped access key from the dashboard, and pair your Blender instance in seconds — no passwords exposed.',
+    },
+    {
+        number: '2',
+        title: 'Submit your scene',
+        text: 'Choose Cycles or Eevee, set samples, frame range, and output format. One click dispatches your job to the render queue.',
+    },
+    {
+        number: '3',
+        title: 'Download results',
+        text: 'Track progress live, watch costs in real time, and grab authenticated delivery links when your frames are ready.',
+    },
+];
+
+const benefits = [
+    { icon: Clock, title: 'Save time', text: 'No infrastructure to manage. From install to first render in under five minutes.' },
+    { icon: Star, title: 'Simple pricing', text: 'One flat rate. No tiered feature gates, no complex node-hour formulas.' },
+    { icon: Users, title: 'Team ready', text: 'Projects, keys, and billing are designed for teams, not just individuals.' },
 ];
 
 const workflow = [
@@ -30,6 +55,7 @@ const assurances = [
 export default function Home() {
     return (
         <>
+            {/* ─── Hero ─────────────────────────────────────── */}
             <main className="marketing-hero">
                 <motion.div
                     className="marketing-copy"
@@ -44,9 +70,12 @@ export default function Home() {
                         organize projects, dispatch jobs, monitor progress, and download results from one production workspace.
                     </p>
                     <div className="hero-actions">
-                        <a className="link-button" href="/downloads/rendersphere-blender-addon.zip">
+                        <a className="link-button primary" href="/downloads/rendersphere-blender-addon.zip">
                             <Download size={18} /> Download add-on
                         </a>
+                        <Link className="link-button" to="/auth">
+                            Get Started Free <ArrowRight size={16} />
+                        </Link>
                     </div>
                     <div className="hero-proof">
                         <span><CheckCircle2 size={16} /> Live progress updates</span>
@@ -91,6 +120,7 @@ export default function Home() {
                 </motion.div>
             </main>
 
+            {/* ─── Metrics strip ────────────────────────────── */}
             <section className="metric-strip" aria-label="RenderSphere highlights">
                 {metrics.map((metric, index) => (
                     <motion.div className="metric-tile" key={metric.label} {...fadeUp} transition={{ duration: 0.45, delay: index * 0.06 }}>
@@ -101,7 +131,50 @@ export default function Home() {
                 ))}
             </section>
 
-            <section id="workflow" className="section product-section">
+            {/* ─── How it works (numbered steps) ────────────── */}
+            <section id="workflow" className="section steps-section">
+                <motion.div className="section-copy" {...fadeUp}>
+                    <p className="eyebrow">How it works</p>
+                    <h2>Render in three steps.</h2>
+                    <p className="muted">
+                        No complex setup. Install the add-on, submit your scene, and download the results.
+                    </p>
+                </motion.div>
+                <div className="steps-grid">
+                    {steps.map((step, index) => (
+                        <motion.article className="step-card" key={step.number} {...fadeUp} transition={{ duration: 0.45, delay: index * 0.1 }}>
+                            <span className="step-number">{step.number}</span>
+                            <h3>{step.title}</h3>
+                            <p>{step.text}</p>
+                        </motion.article>
+                    ))}
+                </div>
+            </section>
+
+            {/* ─── Benefits ─────────────────────────────────── */}
+            <section id="benefits" className="section benefits-section">
+                <motion.div className="section-copy" {...fadeUp}>
+                    <p className="eyebrow">Why RenderSphere</p>
+                    <h2>Built for artists who just want to render.</h2>
+                </motion.div>
+                <div className="benefits-grid">
+                    {benefits.map((item, index) => {
+                        const Icon = item.icon;
+                        return (
+                            <motion.article className="benefit-card" key={item.title} {...fadeUp} transition={{ duration: 0.45, delay: index * 0.08 }}>
+                                <div className="benefit-icon-wrap">
+                                    <Icon size={24} />
+                                </div>
+                                <h3>{item.title}</h3>
+                                <p>{item.text}</p>
+                            </motion.article>
+                        );
+                    })}
+                </div>
+            </section>
+
+            {/* ─── Production workflow (existing) ─────────── */}
+            <section className="section product-section">
                 <motion.div className="section-copy" {...fadeUp}>
                     <p className="eyebrow">Production workflow</p>
                     <h2>A render pipeline artists can understand in minutes.</h2>
@@ -121,6 +194,7 @@ export default function Home() {
                 </div>
             </section>
 
+            {/* ─── Assurance ────────────────────────────────── */}
             <section className="section assurance-section">
                 <motion.div className="section-copy" {...fadeUp}>
                     <p className="eyebrow">Built for confidence</p>
@@ -140,6 +214,60 @@ export default function Home() {
                         );
                     })}
                 </div>
+            </section>
+
+            {/* ─── Pricing preview ──────────────────────────── */}
+            <section className="section pricing-preview-section">
+                <motion.div className="section-copy" {...fadeUp}>
+                    <p className="eyebrow">Simple pricing</p>
+                    <h2>Full access. One rate. No subscriptions.</h2>
+                    <p className="muted">
+                        Every account gets every feature. You only pay for GPU seconds at a flat <strong>$0.01/second</strong>.
+                    </p>
+                </motion.div>
+                <motion.div className="pricing-preview-grid" {...fadeUp} transition={{ duration: 0.45, delay: 0.1 }}>
+                    <div className="pricing-preview-card">
+                        <h3>Starter</h3>
+                        <div className="pricing-preview-price"><strong>$10</strong> <span>one-time</span></div>
+                        <p>1,000 GPU-seconds to test the workflow.</p>
+                        <Link className="button primary" to="/auth">Get Started</Link>
+                    </div>
+                    <div className="pricing-preview-card pricing-preview-card--featured">
+                        <span className="pricing-preview-badge">Most popular</span>
+                        <h3>Creator</h3>
+                        <div className="pricing-preview-price"><strong>$25</strong> <span>one-time</span></div>
+                        <p>2,500 GPU-seconds for regular rendering work.</p>
+                        <Link className="button primary" to="/auth">Get Started</Link>
+                    </div>
+                    <div className="pricing-preview-card">
+                        <h3>Studio</h3>
+                        <div className="pricing-preview-price"><strong>$50</strong> <span>one-time</span></div>
+                        <p>5,000 GPU-seconds for studios and heavy jobs.</p>
+                        <Link className="button primary" to="/auth">Get Started</Link>
+                    </div>
+                </motion.div>
+                <motion.div className="pricing-preview-cta" {...fadeUp} transition={{ duration: 0.45, delay: 0.2 }}>
+                    <Link to="/pricing">View full pricing details <ArrowRight size={14} /></Link>
+                </motion.div>
+            </section>
+
+            {/* ─── Final CTA ────────────────────────────────── */}
+            <section className="section final-cta-section">
+                <motion.div {...fadeUp}>
+                    <p className="eyebrow">Ready to get started?</p>
+                    <h2>From install to render in minutes.</h2>
+                    <p className="muted">
+                        Download the Blender add-on, create an account, and submit your first job — no credit card required to start.
+                    </p>
+                    <div className="hero-actions" style={{ justifyContent: 'center' }}>
+                        <a className="link-button primary" href="/downloads/rendersphere-blender-addon.zip">
+                            <Download size={18} /> Download add-on
+                        </a>
+                        <Link className="link-button" to="/auth">
+                            Create free account <ArrowRight size={16} />
+                        </Link>
+                    </div>
+                </motion.div>
             </section>
         </>
     );

@@ -14,6 +14,7 @@ import {
     ExternalLink,
     Eye,
     FileArchive,
+    FileUp,
     FolderKanban,
     FolderPlus,
     KeyRound,
@@ -24,6 +25,7 @@ import {
     Save,
     Search,
     Trash2,
+    Upload,
     WalletCards,
     X,
     XCircle,
@@ -357,6 +359,22 @@ export default function Dashboard() {
     const [creatingNpPackageId] = useState(null);
     const [creatingCustomNp, setCreatingCustomNp] = useState(false);
     const [capturingOrderId, setCapturingOrderId] = useState(null);
+    const [submitFile, setSubmitFile] = useState(null);
+    const [submitUploading, setSubmitUploading] = useState(false);
+    const [submitUploadProgress, setSubmitUploadProgress] = useState(0);
+    const [submitFileKey, setSubmitFileKey] = useState(null);
+    const [submitEngine, setSubmitEngine] = useState('CYCLES');
+    const [submitSamples, setSubmitSamples] = useState(256);
+    const [submitResolution, setSubmitResolution] = useState(100);
+    const [submitAnimation, setSubmitAnimation] = useState(false);
+    const [submitStartFrame, setSubmitStartFrame] = useState(1);
+    const [submitEndFrame, setSubmitEndFrame] = useState(1);
+    const [submitDenoiser, setSubmitDenoiser] = useState('NONE');
+    const [submitFormat, setSubmitFormat] = useState('PNG');
+    const [submitProjectId, setSubmitProjectId] = useState('');
+    const [submitGpuDevice, setSubmitGpuDevice] = useState('AUTO');
+    const [submitting, setSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState('');
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true });
     const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '', billingPackages: '', billingHistory: '' });
     const [paginationMeta, setPaginationMeta] = useState({ keys: null, files: null, jobs: null, projects: null, billingHistory: null });
@@ -1160,6 +1178,97 @@ export default function Dashboard() {
         loadFiles({ page: paginationMeta.files.page + 1, append: true });
     };
 
+    const handleFileSelect = useCallback((event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        if (!file.name.endsWith('.blend')) {
+            toast.error('Only .blend files are supported');
+            return;
+        }
+        setSubmitFile(file);
+        setSubmitFileKey(null);
+        setSubmitError('');
+    }, []);
+
+    const handleDropFile = useCallback((event) => {
+        event.preventDefault();
+        const file = event.dataTransfer?.files?.[0];
+        if (!file) return;
+        if (!file.name.endsWith('.blend')) {
+            toast.error('Only .blend files are supported');
+            return;
+        }
+        setSubmitFile(file);
+        setSubmitFileKey(null);
+        setSubmitError('');
+    }, []);
+
+    const handleUploadAndSubmit = useCallback(async () => {
+        if (!submitFile) return;
+        setSubmitError('');
+        setSubmitUploading(true);
+        setSubmitUploadProgress(0);
+
+        try {
+            // 1. Get presigned upload URL
+            const { uploadUrl, key } = await api('/api/render/get-upload-url', {
+                method: 'POST',
+                body: JSON.stringify({ fileName: submitFile.name, fileSizeBytes: submitFile.size }),
+            });
+            setSubmitFileKey(key);
+
+            // 2. Upload file directly to R2
+            const xhr = new XMLHttpRequest();
+            await new Promise((resolve, reject) => {
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) setSubmitUploadProgress(Math.round((e.loaded / e.total) * 100));
+                });
+                xhr.addEventListener('load', () => resolve());
+                xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+                xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+                xhr.open('PUT', uploadUrl);
+                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+                xhr.send(submitFile);
+            });
+
+            setSubmitUploading(false);
+
+            // 3. Submit render job
+            setSubmitting(true);
+            const payload = {
+                fileKey: key,
+                engine: submitEngine,
+                samples: submitSamples,
+                resolutionPct: submitResolution,
+                outputFormat: submitFormat,
+                denoiser: submitDenoiser,
+                isAnimation: submitAnimation,
+                startFrame: submitAnimation ? submitStartFrame : 1,
+                endFrame: submitAnimation ? submitEndFrame : 1,
+                gpuDeviceType: submitGpuDevice,
+                noiseThreshold: 0.01,
+            };
+            if (submitProjectId) payload.projectId = submitProjectId;
+
+            const result = await api('/api/render/trigger-render', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+
+            toast.success('Render submitted successfully!');
+            setSubmitFile(null);
+            setSubmitFileKey(null);
+            setActiveView('renders');
+            loadJobs();
+        } catch (error) {
+            setSubmitError(error.message || 'Failed to submit render');
+            toast.error(error.message || 'Failed to submit render');
+        } finally {
+            setSubmitUploading(false);
+            setSubmitting(false);
+        }
+    }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId]);
+
     const resetJobFilters = () => {
         setJobStatusFilter('all');
         setJobSearchQuery('');
@@ -1498,6 +1607,183 @@ export default function Dashboard() {
                 ) : null}
             </div>
         </motion.div>
+        );
+    };
+
+    const renderSubmitForm = () => {
+        const fileSizeMb = submitFile ? (submitFile.size / (1024 * 1024)).toFixed(1) : 0;
+        return (
+            <motion.div className="panel dashboard-panel submit-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+                <div className="panel-head">
+                    <div>
+                        <h2>Submit a new render</h2>
+                        <p className="muted">Upload a .blend file and configure render settings. Estimate shown before submission.</p>
+                    </div>
+                </div>
+
+                <div className="submit-form-layout">
+                    <div className="submit-form-fields">
+                        {/* File upload */}
+                        <div className="submit-field">
+                            <label>.blend file</label>
+                            <div
+                                className={`submit-dropzone ${submitFile ? 'submit-dropzone--has-file' : ''}`}
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={handleDropFile}
+                                onClick={() => document.getElementById('blend-file-input')?.click()}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') document.getElementById('blend-file-input')?.click(); }}
+                            >
+                                {submitFile ? (
+                                    <div className="submit-dropzone-file">
+                                        <FileArchive size={24} />
+                                        <div>
+                                            <strong>{submitFile.name}</strong>
+                                            <span className="subtle">{fileSizeMb} MB</span>
+                                        </div>
+                                        <button
+                                            className="button"
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); setSubmitFile(null); setSubmitFileKey(null); }}
+                                        >
+                                            <X size={14} /> Remove
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="submit-dropzone-empty">
+                                        <Upload size={28} />
+                                        <strong>Drop a .blend file here</strong>
+                                        <span className="subtle">or click to browse (max 10 GB)</span>
+                                    </div>
+                                )}
+                                <input id="blend-file-input" type="file" accept=".blend" onChange={handleFileSelect} style={{ display: 'none' }} />
+                            </div>
+                            {submitUploading && (
+                                <div className="submit-progress-wrap">
+                                    <div className="submit-progress-track">
+                                        <div className="submit-progress-fill" style={{ width: `${submitUploadProgress}%` }} />
+                                    </div>
+                                    <span>{submitUploadProgress}% uploaded</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Engine */}
+                        <div className="submit-field">
+                            <label htmlFor="submit-engine">Render engine</label>
+                            <select id="submit-engine" value={submitEngine} onChange={(e) => setSubmitEngine(e.target.value)}>
+                                <option value="CYCLES">Cycles</option>
+                                <option value="BLENDER_EEVEE_NEXT">Eevee</option>
+                            </select>
+                        </div>
+
+                        {/* Samples + Resolution row */}
+                        <div className="submit-field-row">
+                            <div className="submit-field">
+                                <label htmlFor="submit-samples">Samples</label>
+                                <div className="submit-slider-wrap">
+                                    <input id="submit-samples" type="range" min={8} max={2048} step={8} value={submitSamples} onChange={(e) => setSubmitSamples(Number(e.target.value))} className="submit-slider" />
+                                    <input type="text" inputMode="numeric" value={submitSamples} onChange={(e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 8 && v <= 2048) setSubmitSamples(v); }} className="submit-number" />
+                                </div>
+                            </div>
+                            <div className="submit-field">
+                                <label htmlFor="submit-resolution">Resolution %</label>
+                                <div className="submit-slider-wrap">
+                                    <input id="submit-resolution" type="range" min={25} max={150} step={5} value={submitResolution} onChange={(e) => setSubmitResolution(Number(e.target.value))} className="submit-slider" />
+                                    <input type="text" inputMode="numeric" value={submitResolution} onChange={(e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v) && v >= 25 && v <= 150) setSubmitResolution(v); }} className="submit-number" />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Animation toggle */}
+                        <div className="submit-field">
+                            <label className="submit-checkbox-label">
+                                <input type="checkbox" checked={submitAnimation} onChange={(e) => setSubmitAnimation(e.target.checked)} />
+                                <span>Animation</span>
+                            </label>
+                        </div>
+
+                        {submitAnimation && (
+                            <div className="submit-field-row">
+                                <div className="submit-field">
+                                    <label htmlFor="submit-start">Start frame</label>
+                                    <input id="submit-start" type="number" min={0} value={submitStartFrame} onChange={(e) => setSubmitStartFrame(Number(e.target.value))} className="submit-input" />
+                                </div>
+                                <div className="submit-field">
+                                    <label htmlFor="submit-end">End frame</label>
+                                    <input id="submit-end" type="number" min={submitStartFrame} value={submitEndFrame} onChange={(e) => setSubmitEndFrame(Number(e.target.value))} className="submit-input" />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Format + Denoiser row */}
+                        <div className="submit-field-row">
+                            <div className="submit-field">
+                                <label htmlFor="submit-format">Output format</label>
+                                <select id="submit-format" value={submitFormat} onChange={(e) => setSubmitFormat(e.target.value)}>
+                                    <option value="PNG">PNG</option>
+                                    <option value="JPEG">JPEG</option>
+                                    <option value="OPEN_EXR">OpenEXR</option>
+                                    <option value="OPEN_EXR_MULTILAYER">OpenEXR Multilayer</option>
+                                </select>
+                            </div>
+                            <div className="submit-field">
+                                <label htmlFor="submit-denoiser">Denoiser</label>
+                                <select id="submit-denoiser" value={submitDenoiser} onChange={(e) => setSubmitDenoiser(e.target.value)}>
+                                    <option value="NONE">None</option>
+                                    <option value="OPTIX">OptiX</option>
+                                    <option value="OPENIMAGEDENOISE">OpenImageDenoise</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* GPU device */}
+                        <div className="submit-field">
+                            <label htmlFor="submit-gpu">GPU device type</label>
+                            <select id="submit-gpu" value={submitGpuDevice} onChange={(e) => setSubmitGpuDevice(e.target.value)}>
+                                <option value="AUTO">Auto</option>
+                                <option value="OPTIX">OptiX</option>
+                                <option value="CUDA">CUDA</option>
+                            </select>
+                        </div>
+
+                        {/* Project selector */}
+                        <div className="submit-field">
+                            <label htmlFor="submit-project">Project <span className="subtle">(optional)</span></label>
+                            <select id="submit-project" value={submitProjectId} onChange={(e) => setSubmitProjectId(e.target.value)}>
+                                <option value="">No project</option>
+                                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                        </div>
+
+                        {submitError && <div className="submit-error">{submitError}</div>}
+
+                        <div className="submit-actions">
+                            <button
+                                className="button primary"
+                                type="button"
+                                onClick={handleUploadAndSubmit}
+                                disabled={!submitFile || submitUploading || submitting}
+                            >
+                                {submitUploading
+                                    ? `Uploading ${submitUploadProgress}%...`
+                                    : submitting
+                                        ? 'Submitting render...'
+                                        : !submitFile
+                                            ? 'Select a file first'
+                                            : <><FileUp size={18} /> Submit render</>
+                                }
+                            </button>
+
+                            <p className="submit-disclaimer subtle">
+                                By submitting, you authorize a credit reservation from your balance.
+                                You will only be charged for actual GPU seconds used (min. $0.02).
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </motion.div>
         );
     };
 
@@ -2383,6 +2669,7 @@ export default function Dashboard() {
                         transition={{ duration: 0.15 }}
                         style={{ gridColumn: '1 / -1', minWidth: 0 }}
                     >
+                {activeView === 'submit' && <div className="dashboard-grid operations-grid">{renderSubmitForm()}</div>}
                 {activeView === 'overview' && (
                     <div className="dashboard-metrics-grid operations-metrics">
                         <MetricCard icon={FolderKanban} label="Projects" value={projects.length} detail={`${stats.unassignedJobs} unassigned jobs`} />

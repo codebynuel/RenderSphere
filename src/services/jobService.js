@@ -468,8 +468,7 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
     if (status === 'COMPLETED' && updateData.resultKey && !job.billedAt) {
       const billableSeconds = getRunpodExecutionSeconds(rpData, job);
       const uncappedPriceUsd = roundMoney(billableSeconds * config.renderPricePerSecondUsd);
-      const maxBudgetUsd = roundMoney(Number(job.maxBudgetUsd || config.maxRenderBudgetUsd));
-      const priceUsd = roundMoney(Math.min(uncappedPriceUsd, maxBudgetUsd));
+      const priceUsd = roundMoney(Math.max(uncappedPriceUsd, config.minimumJobChargeUsd));
       const reservationAmount = unreleasedReservationAmount(job);
       const releaseAmount = reservationAmount;
       const billingMetadata = {

@@ -303,6 +303,7 @@ const config = {
   renderPricePerSecondUsd: parseNonNegativeNumberEnv('RENDERSPHERE_RENDER_PRICE_PER_SECOND_USD', 0.01),
   renderEstimateBaseSecondsPerFrame: parsePositiveNumberEnv('RENDERSPHERE_RENDER_ESTIMATE_BASE_SECONDS_PER_FRAME', 60),
   minRenderReservationUsd: parseNonNegativeNumberEnv('RENDERSPHERE_MIN_RENDER_RESERVATION_USD', 1),
+  minimumJobChargeUsd: parseNonNegativeNumberEnv('RENDERSPHERE_MINIMUM_JOB_CHARGE_USD', 0.02),
   defaultRenderMaxBudgetUsd: parsePositiveNumberEnv('RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD', 10),
   maxRenderBudgetUsd: parsePositiveNumberEnv('RENDERSPHERE_MAX_RENDER_BUDGET_USD', 250),
   freeRenderCredits: parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS_USD', parseNonNegativeNumberEnv('RENDERSPHERE_FREE_RENDER_CREDITS', 0)),

@@ -1,8 +1,10 @@
+import { useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle2, Clock, Cpu, Gauge, HelpCircle, Users, WalletCards } from 'lucide-react';
+import { Calculator, CheckCircle2, Clock, Cpu, Gauge, HelpCircle, Users, WalletCards } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const PRICE_PER_SECOND = 0.00028;
+const PRICE_PER_HOUR = PRICE_PER_SECOND * 3600;
 
 const fadeUp = {
     initial: { opacity: 0, y: 18 },
@@ -69,6 +71,24 @@ function formatSeconds(secs) {
 }
 
 export default function Pricing() {
+    const [secondsPerFrame, setSecondsPerFrame] = useState(120);
+    const [frameCount, setFrameCount] = useState(1);
+    const [engine, setEngine] = useState('cycles');
+
+    const costPerFrame = secondsPerFrame * PRICE_PER_SECOND;
+    const totalCost = costPerFrame * frameCount;
+    const totalSeconds = secondsPerFrame * frameCount;
+
+    const handleSecondsChange = useCallback((event) => {
+        const value = parseInt(event.target.value, 10);
+        if (!isNaN(value) && value >= 1) setSecondsPerFrame(value);
+    }, []);
+
+    const handleFramesChange = useCallback((event) => {
+        const value = parseInt(event.target.value, 10);
+        if (!isNaN(value) && value >= 1) setFrameCount(value);
+    }, []);
+
     return (
         <>
             <main className="pricing-hero">
@@ -130,6 +150,103 @@ export default function Pricing() {
                         </div>
                     </motion.article>
                 ))}
+            </section>
+
+            <section className="section pricing-calc-section">
+                <motion.div className="section-copy" {...fadeUp}>
+                    <p className="eyebrow">Cost calculator</p>
+                    <h2>Estimate what your render will cost.</h2>
+                    <p className="muted">
+                        Tell us about your scene and we'll estimate the cost at our flat rate.
+                        All prices are in USD.
+                    </p>
+                </motion.div>
+                <motion.div className="pricing-calc" {...fadeUp} transition={{ duration: 0.45, delay: 0.1 }}>
+                    <div className="pricing-calc-controls">
+                        <div className="pricing-calc-field">
+                            <label htmlFor="calc-engine">Render engine</label>
+                            <select id="calc-engine" value={engine} onChange={(e) => setEngine(e.target.value)}>
+                                <option value="cycles">Cycles (GPU)</option>
+                                <option value="eevee">Eevee (GPU)</option>
+                            </select>
+                        </div>
+                        <div className="pricing-calc-field">
+                            <label htmlFor="calc-seconds">
+                                Render time per frame <span className="subtle">(seconds)</span>
+                            </label>
+                            <div className="pricing-calc-slider-wrap">
+                                <input
+                                    id="calc-seconds"
+                                    type="range"
+                                    min={5}
+                                    max={3600}
+                                    step={5}
+                                    value={secondsPerFrame}
+                                    onChange={(e) => setSecondsPerFrame(Number(e.target.value))}
+                                    className="pricing-calc-slider"
+                                />
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={secondsPerFrame}
+                                    onChange={handleSecondsChange}
+                                    className="pricing-calc-number"
+                                />
+                            </div>
+                        </div>
+                        <div className="pricing-calc-field">
+                            <label htmlFor="calc-frames">
+                                Number of frames <span className="subtle">(1 = still frame)</span>
+                            </label>
+                            <div className="pricing-calc-slider-wrap">
+                                <input
+                                    id="calc-frames"
+                                    type="range"
+                                    min={1}
+                                    max={250}
+                                    step={1}
+                                    value={frameCount}
+                                    onChange={(e) => setFrameCount(Number(e.target.value))}
+                                    className="pricing-calc-slider"
+                                />
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={frameCount}
+                                    onChange={handleFramesChange}
+                                    className="pricing-calc-number"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <div className="pricing-calc-results">
+                        <div className="pricing-calc-result-card">
+                            <span className="pricing-calc-result-label">Cost per frame</span>
+                            <strong className="pricing-calc-result-value">${costPerFrame.toFixed(4)}</strong>
+                            <span className="pricing-calc-result-hint">{formatSeconds(secondsPerFrame)} @ $0.00028/sec</span>
+                        </div>
+                        <div className="pricing-calc-result-card pricing-calc-result-card--total">
+                            <span className="pricing-calc-result-label">Total estimated cost</span>
+                            <strong className="pricing-calc-result-value">${totalCost.toFixed(2)}</strong>
+                            <span className="pricing-calc-result-hint">{formatSeconds(totalSeconds)} total GPU time</span>
+                        </div>
+                        <div className="pricing-calc-result-card pricing-calc-result-card--pack">
+                            <span className="pricing-calc-result-label">Recommended pack</span>
+                            <strong className="pricing-calc-result-value">
+                                {totalCost <= 10 ? '$10 Starter' : totalCost <= 25 ? '$25 Creator' : totalCost <= 50 ? '$50 Studio' : '$50 Studio + custom top-up'}
+                            </strong>
+                            <span className="pricing-calc-result-hint">
+                                {totalCost <= 10
+                                    ? `$${(10 - totalCost).toFixed(2)} credit remaining`
+                                    : totalCost <= 25
+                                        ? `$${(25 - totalCost).toFixed(2)} credit remaining`
+                                        : totalCost <= 50
+                                            ? `$${(50 - totalCost).toFixed(2)} credit remaining`
+                                            : 'Contact sales for bulk pricing'}
+                            </span>
+                        </div>
+                    </div>
+                </motion.div>
             </section>
 
             <section className="section pricing-compare-section">

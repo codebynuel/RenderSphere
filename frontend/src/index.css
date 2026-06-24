@@ -3360,6 +3360,164 @@ input:focus-visible {
     font-size: 14px;
 }
 
+/* ── Cost calculator ──────────────────────────────────────────── */
+
+.pricing-calc-section {
+    position: relative;
+}
+
+.pricing-calc {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-top: 24px;
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    padding: 28px;
+    background:
+        radial-gradient(circle at 0% 100%, var(--accent-soft), transparent 50%),
+        var(--panel-card);
+    box-shadow: inset 0 1px 0 var(--frame-ring);
+}
+
+.pricing-calc-controls {
+    display: grid;
+    gap: 20px;
+    align-content: start;
+}
+
+.pricing-calc-field {
+    display: grid;
+    gap: 8px;
+}
+
+.pricing-calc-field label {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.pricing-calc-slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.pricing-calc-slider {
+    flex: 1;
+    min-height: 6px;
+    appearance: none;
+    border-radius: 999px;
+    background: var(--line-soft);
+    outline: none;
+    cursor: pointer;
+}
+
+.pricing-calc-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.pricing-calc-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.pricing-calc-number {
+    width: 72px;
+    min-height: 38px;
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 0 10px;
+    color: var(--text);
+    background: var(--input-bg);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+    outline: none;
+}
+
+.pricing-calc-number:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.pricing-calc-results {
+    display: grid;
+    gap: 12px;
+    align-content: start;
+}
+
+.pricing-calc-result-card {
+    border: 1px solid var(--line-soft);
+    border-radius: 16px;
+    padding: 18px;
+    background: var(--panel-card-strong);
+    box-shadow: inset 0 1px 0 var(--frame-ring);
+}
+
+.pricing-calc-result-card--total {
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    background:
+        radial-gradient(circle at 100% 0%, var(--accent-soft), transparent 60%),
+        var(--panel-card-strong);
+}
+
+.pricing-calc-result-card--pack {
+    border-color: color-mix(in srgb, var(--good) 24%, transparent);
+}
+
+.pricing-calc-result-label {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.pricing-calc-result-value {
+    display: block;
+    margin-top: 8px;
+    font-size: clamp(22px, 2.8vw, 32px);
+    font-weight: 750;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--text);
+}
+
+.pricing-calc-result-card--total .pricing-calc-result-value {
+    color: var(--accent);
+}
+
+.pricing-calc-result-card--pack .pricing-calc-result-value {
+    font-size: clamp(16px, 2vw, 22px);
+}
+
+.pricing-calc-result-hint {
+    display: block;
+    margin-top: 8px;
+    color: var(--subtle);
+    font-size: 12px;
+}
+
+@media (max-width: 760px) {
+    .pricing-calc {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ── Comparison table ──────────────────────────────────────────── */
 
 .pricing-compare-section .section-copy {

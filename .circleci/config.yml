@@ -9,6 +9,15 @@ jobs:
       - image: cimg/node:22.0
     steps:
       - checkout
+      - run:
+          name: Check for [docker-release] in commit message
+          command: |
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            if [[ "$COMMIT_MSG" != *"[docker-release]"* ]]; then
+              echo "Commit message does not contain [docker-release], skipping build"
+              circleci step halt
+            fi
+            echo "Found [docker-release] in commit message, proceeding with build"
       - setup_remote_docker:
           version: "20.10.24"
       - run: |
@@ -21,9 +30,5 @@ jobs:
 
 workflows:
   build-worker:
-    when:
-      matches:
-        pattern: "^main$"
-        value: << pipeline.git.branch >>
     jobs:
       - build-runpod-worker

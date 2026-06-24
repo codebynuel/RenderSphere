@@ -17,6 +17,7 @@ export default function Footer({ className = '' }) {
             </span>
             <div className="footer-links">
                 <a href="mailto:support@rendersphere.app">Support</a>
+                <Link to="/pricing">Pricing</Link>
                 <Link to="/legal/terms">Terms</Link>
                 <Link to="/legal/privacy">Privacy</Link>
             </div>

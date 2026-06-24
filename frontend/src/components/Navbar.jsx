@@ -104,9 +104,12 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                     </>
                 )}
                 {!isApp && !isAuth && (
-                    <Link className="link-button" to={user ? '/app' : '/auth'}>
-                        {user ? 'Dashboard' : 'Login/Register'}
-                    </Link>
+                    <>
+                        <Link className="nav-link" to="/pricing">Pricing</Link>
+                        <Link className="link-button" to={user ? '/app' : '/auth'}>
+                            {user ? 'Dashboard' : 'Login/Register'}
+                        </Link>
+                    </>
                 )}
             </div>
         </header>

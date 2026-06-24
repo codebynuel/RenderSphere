@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, Moon, Shield, Sun, WalletCards } from 'lucide-react';
+import { HelpCircle, LogOut, Moon, Shield, Sun, WalletCards } from 'lucide-react';
 import { formatUsd } from '../utils/api';
 
 function getUserDisplayName(user) {
@@ -81,6 +81,9 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                                         </div>
                                     </div>
                                     <div className="profile-dropdown-actions">
+                                        <button className="profile-dropdown-item" type="button" onClick={() => { setProfileOpen(false); window.dispatchEvent(new CustomEvent('start-tour')); }}>
+                                            <HelpCircle size={15} /> Product tour
+                                        </button>
                                         {user?.role === 'admin' && (
                                             <Link className="profile-dropdown-item" to="/admin" onClick={() => setProfileOpen(false)}>
                                                 <Shield size={15} /> Admin panel

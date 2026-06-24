@@ -16,7 +16,6 @@ import {
     FileArchive,
     FolderKanban,
     FolderPlus,
-    HelpCircle,
     KeyRound,
     Menu,
     Plus,
@@ -363,7 +362,6 @@ export default function Dashboard() {
     const [paginationMeta, setPaginationMeta] = useState({ keys: null, files: null, jobs: null, projects: null, billingHistory: null });
     const [tourOpen, setTourOpen] = useState(false);
     const [tourStepIndex, setTourStepIndex] = useState(0);
-    const [tourTargetRect, setTourTargetRect] = useState(null);
     const dashboardMainRef = useRef(null);
     const actionMenuRef = useRef(null);
     const actionMenuButtonRefs = useRef(new Map());
@@ -707,7 +705,6 @@ export default function Dashboard() {
             // Storage may be unavailable in private contexts; still dismiss for this session.
         }
         setTourOpen(false);
-        setTourTargetRect(null);
     }, []);
 
     const restartTour = useCallback(() => {
@@ -715,23 +712,12 @@ export default function Dashboard() {
         setTourOpen(true);
     }, []);
 
-    const updateTourTarget = useCallback(() => {
-        if (!tourOpen || !currentTourStep) return;
-        const target = document.querySelector(currentTourStep.target);
-        if (!target) {
-            setTourTargetRect(null);
-            return;
-        }
-        const rect = target.getBoundingClientRect();
-        setTourTargetRect({
-            top: rect.top,
-            left: rect.left,
-            right: rect.right,
-            bottom: rect.bottom,
-            width: rect.width,
-            height: rect.height,
-        });
-    }, [currentTourStep, tourOpen]);
+    // Listen for tour start event from navbar profile dropdown
+    useEffect(() => {
+        const handler = () => restartTour();
+        window.addEventListener('start-tour', handler);
+        return () => window.removeEventListener('start-tour', handler);
+    }, [restartTour]);
 
     const goToNextTourStep = useCallback(() => {
         if (isLastTourStep) {
@@ -767,36 +753,21 @@ export default function Dashboard() {
         return () => window.clearTimeout(viewTimer);
     }, [activeView, currentTourStep, tourOpen]);
 
+    // Focus tour dialog when open
     useEffect(() => {
-        if (!tourOpen || !currentTourStep) return undefined;
-
-        const dashboardMain = dashboardMainRef.current;
+        if (!tourOpen) return;
         const focusTimer = window.setTimeout(() => {
             tourDialogRef.current?.focus();
         }, 0);
-        const measureTimer = window.setTimeout(updateTourTarget, 0);
-        let scrollMeasureTimer;
+        return () => window.clearTimeout(focusTimer);
+    }, [tourOpen]);
 
-        const scrollTimer = window.setTimeout(() => {
-            const target = document.querySelector(currentTourStep.target);
-            target?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-            scrollMeasureTimer = window.setTimeout(updateTourTarget, 180);
-        }, 60);
-
-        window.addEventListener('resize', updateTourTarget);
-        window.addEventListener('scroll', updateTourTarget, true);
-        dashboardMain?.addEventListener('scroll', updateTourTarget, { passive: true });
-
-        return () => {
-            window.clearTimeout(focusTimer);
-            window.clearTimeout(measureTimer);
-            window.clearTimeout(scrollTimer);
-            window.clearTimeout(scrollMeasureTimer);
-            window.removeEventListener('resize', updateTourTarget);
-            window.removeEventListener('scroll', updateTourTarget, true);
-            dashboardMain?.removeEventListener('scroll', updateTourTarget);
-        };
-    }, [activeView, currentTourStep, tourOpen, updateTourTarget]);
+    // Listen for tour start event from navbar profile dropdown
+    useEffect(() => {
+        const handler = () => restartTour();
+        window.addEventListener('start-tour', handler);
+        return () => window.removeEventListener('start-tour', handler);
+    }, [restartTour]);
 
     useEffect(() => {
         if (!tourOpen) return undefined;
@@ -2367,76 +2338,47 @@ export default function Dashboard() {
         );
     };
 
-    const getTourPanelStyle = () => {
-        if (!tourTargetRect || typeof window === 'undefined' || window.innerWidth <= 760) return {};
-        const margin = 18;
-        const panelWidth = Math.min(360, window.innerWidth - 32);
-        const maxTop = Math.max(16, window.innerHeight - 290);
-        const top = Math.min(Math.max(16, tourTargetRect.top), maxTop);
-        const preferredLeft = currentTourStep.placement === 'right'
-            ? tourTargetRect.right + margin
-            : tourTargetRect.left - panelWidth - margin;
-        const left = Math.min(Math.max(16, preferredLeft), window.innerWidth - panelWidth - 16);
-        return { top, left, width: panelWidth };
-    };
-
     const renderProductTour = () => {
         if (!tourOpen || !currentTourStep) return null;
-        const spotlightStyle = tourTargetRect ? {
-            top: Math.max(8, tourTargetRect.top - 8),
-            left: Math.max(8, tourTargetRect.left - 8),
-            width: Math.min(window.innerWidth - 16, tourTargetRect.width + 16),
-            height: Math.min(window.innerHeight - 16, tourTargetRect.height + 16),
-        } : undefined;
-        const spotlightBounds = spotlightStyle ? {
-            ...spotlightStyle,
-            right: Math.min(window.innerWidth - 8, spotlightStyle.left + spotlightStyle.width),
-            bottom: Math.min(window.innerHeight - 8, spotlightStyle.top + spotlightStyle.height),
-        } : null;
-        const backdropSegments = spotlightBounds ? [
-            { top: 0, left: 0, right: 0, height: spotlightBounds.top },
-            { top: spotlightBounds.bottom, left: 0, right: 0, bottom: 0 },
-            { top: spotlightBounds.top, left: 0, width: spotlightBounds.left, height: spotlightBounds.height },
-            { top: spotlightBounds.top, left: spotlightBounds.right, right: 0, height: spotlightBounds.height },
-        ] : [];
 
         return (
-            <div className="product-tour" aria-live="polite">
-                {spotlightBounds ? backdropSegments.map((segmentStyle, index) => (
-                    <div className="product-tour-backdrop product-tour-backdrop-segment" style={segmentStyle} aria-hidden="true" key={index} />
-                )) : <div className="product-tour-backdrop" aria-hidden="true" />}
-                {spotlightStyle && <div className="product-tour-spotlight" style={spotlightStyle} aria-hidden="true" />}
-                <motion.section
-                    className={`product-tour-card placement-${currentTourStep.placement}`}
-                    ref={tourDialogRef}
+            <div className="tour-overlay" role="presentation" onClick={markTourDismissed}>
+                <motion.article
+                    className="tour-card"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="product-tour-title"
                     aria-describedby="product-tour-copy"
                     tabIndex={-1}
-                    style={getTourPanelStyle()}
-                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    ref={tourDialogRef}
+                    onClick={(e) => e.stopPropagation()}
+                    initial={{ opacity: 0, y: 10, scale: 0.97 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ duration: 0.18 }}
+                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                 >
-                    <div className="product-tour-topline">
-                        <span>Product tour</span>
-                        <button className="button compact-button ghost-button" type="button" onClick={markTourDismissed}>Skip</button>
+                    <div className="tour-card-top">
+                        <span className="tour-step-label">Step {tourStepIndex + 1} of {DASHBOARD_TOUR_STEPS.length}</span>
+                        <button className="tour-skip-btn" type="button" onClick={markTourDismissed}>Skip tour</button>
                     </div>
-                    <h2 id="product-tour-title">{currentTourStep.title}</h2>
-                    <p id="product-tour-copy">{currentTourStep.text}</p>
-                    <div className="product-tour-progress" aria-label={`Step ${tourStepIndex + 1} of ${DASHBOARD_TOUR_STEPS.length}`}>
+
+                    <h2 id="product-tour-title" className="tour-card-title">{currentTourStep.title}</h2>
+                    <p id="product-tour-copy" className="tour-card-text">{currentTourStep.text}</p>
+
+                    <div className="tour-dots">
                         {DASHBOARD_TOUR_STEPS.map((step, index) => (
-                            <span className={index === tourStepIndex ? 'active' : ''} key={step.id} />
+                            <span key={step.id} className={`tour-dot ${index === tourStepIndex ? 'active' : ''}`} />
                         ))}
                     </div>
-                    <div className="product-tour-actions">
+
+                    <div className="tour-card-footer">
                         <button className="button" type="button" onClick={goToPreviousTourStep} disabled={isFirstTourStep}>Back</button>
-                        <span>{tourStepIndex + 1} / {DASHBOARD_TOUR_STEPS.length}</span>
-                        <button className="button primary" type="button" onClick={goToNextTourStep}>{isLastTourStep ? 'Done' : 'Next'}</button>
+                        <button className="button primary" type="button" onClick={goToNextTourStep}>
+                            {isLastTourStep ? 'Done' : 'Next'}
+                        </button>
                     </div>
-                    <p className="product-tour-hint">Use ArrowLeft, ArrowRight, or Escape to navigate.</p>
-                </motion.section>
+
+                    <div className="tour-arrow" />
+                </motion.article>
             </div>
         );
     };
@@ -2458,9 +2400,6 @@ export default function Dashboard() {
                         <p className="muted">{viewMeta.description}</p>
                     </div>
                     <div className="titlebar-actions">
-                        <button className="button" type="button" onClick={restartTour}>
-                            <HelpCircle size={16} /> Tour
-                        </button>
                         <button className="button" type="button" onClick={loadAll}>
                             <RefreshCcw size={16} /> Refresh all
                         </button>

@@ -1182,6 +1182,106 @@ input:focus {
     margin-top: 14px;
 }
 
+/* ── Product tour ───────────────────────────────────────────────── */
+
+.tour-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+}
+
+.tour-card {
+    position: relative;
+    width: min(440px, 100%);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 28px 28px 22px;
+    background: var(--panel-solid);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    pointer-events: auto;
+}
+
+.tour-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.tour-step-label {
+    color: var(--subtle);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.tour-skip-btn {
+    border: 0;
+    padding: 6px 12px;
+    border-radius: 8px;
+    color: var(--muted);
+    background: var(--button-bg);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+}
+
+.tour-skip-btn:hover {
+    color: var(--text);
+    background: var(--panel-section);
+}
+
+.tour-card-title {
+    margin: 0 0 10px;
+    font-size: 18px;
+    font-weight: 750;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+}
+
+.tour-card-text {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.tour-dots {
+    display: flex;
+    gap: 6px;
+    margin: 20px 0 18px;
+}
+
+.tour-dot {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line-soft);
+    transition: background 0.25s;
+}
+
+.tour-dot.active {
+    background: var(--accent);
+}
+
+.tour-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.tour-arrow {
+    display: none;
+}
+
 .stack-list {
     display: grid;
     gap: 12px;
@@ -1401,7 +1501,7 @@ input:focus {
 .dashboard-sidebar {
     position: sticky;
     top: 0;
-    z-index: 8;
+    z-index: 31;
     width: var(--dashboard-sidebar-width);
     height: 100%;
     min-height: 0;

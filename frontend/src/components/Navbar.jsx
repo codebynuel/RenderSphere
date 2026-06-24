@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { LogOut, Moon, Shield, Sun, WalletCards } from 'lucide-react';
@@ -15,9 +16,32 @@ function getUserInitial(user) {
 export default function Navbar({ theme = 'dark', onToggleTheme }) {
     const location = useLocation();
     const { user, logout } = useAuth();
+    const [profileOpen, setProfileOpen] = useState(false);
+    const profileRef = useRef(null);
 
     const isApp = location.pathname.startsWith('/app');
     const isAuth = location.pathname.startsWith('/auth');
+
+    const handleClickOutside = useCallback((event) => {
+        if (profileRef.current && !profileRef.current.contains(event.target)) {
+            setProfileOpen(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!profileOpen) return;
+        document.addEventListener('pointerdown', handleClickOutside);
+        return () => document.removeEventListener('pointerdown', handleClickOutside);
+    }, [profileOpen, handleClickOutside]);
+
+    const handleProfileToggle = () => {
+        setProfileOpen((prev) => !prev);
+    };
+
+    const handleLogout = async () => {
+        setProfileOpen(false);
+        await logout();
+    };
 
     return (
         <header className="nav">
@@ -34,24 +58,41 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                 </button>
                 {isApp && (
                     <>
-                        <div className="account-summary" aria-label="Signed-in account summary">
-                            <div className="profile-avatar" aria-hidden="true">{getUserInitial(user)}</div>
-                            <div className="account-copy">
-                                <span className="account-name">{getUserDisplayName(user)}</span>
-                                <span className="account-email">{user?.email || 'Not signed in'}</span>
-                            </div>
-                            <span className="account-balance" title="Current credit balance">
-                                <WalletCards size={15} /> {formatUsd(user?.starterBalanceUsd)}
-                            </span>
+                        <span className="account-balance" title="Current credit balance">
+                            <WalletCards size={15} /> {formatUsd(user?.starterBalanceUsd)}
+                        </span>
+                        <div className="profile-dropdown-wrap" ref={profileRef}>
+                            <button
+                                className="profile-trigger"
+                                type="button"
+                                onClick={handleProfileToggle}
+                                aria-label="Account menu"
+                                aria-expanded={profileOpen}
+                            >
+                                <span className="profile-avatar" aria-hidden="true">{getUserInitial(user)}</span>
+                            </button>
+                            {profileOpen && (
+                                <div className="profile-dropdown">
+                                    <div className="profile-dropdown-head">
+                                        <span className="profile-avatar small" aria-hidden="true">{getUserInitial(user)}</span>
+                                        <div className="profile-dropdown-copy">
+                                            <span className="profile-dropdown-name">{getUserDisplayName(user)}</span>
+                                            <span className="profile-dropdown-email">{user?.email || ''}</span>
+                                        </div>
+                                    </div>
+                                    <div className="profile-dropdown-actions">
+                                        {user?.role === 'admin' && (
+                                            <Link className="profile-dropdown-item" to="/admin" onClick={() => setProfileOpen(false)}>
+                                                <Shield size={15} /> Admin panel
+                                            </Link>
+                                        )}
+                                        <button className="profile-dropdown-item" type="button" onClick={handleLogout}>
+                                            <LogOut size={15} /> Sign out
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                        {user?.role === 'admin' && (
-                            <Link className="link-button" to="/admin">
-                                <Shield size={15} /> Admin
-                            </Link>
-                        )}
-                        <button className="button" type="button" onClick={logout} title="Sign out">
-                            <LogOut size={16} /> Sign out
-                        </button>
                     </>
                 )}
                 {isAuth && (

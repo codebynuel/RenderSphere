@@ -28,6 +28,7 @@ function createAuthRouter({
   router.post('/register', authRateLimit, async (req, res) => {
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || '');
+    const name = String(req.body.name || '').trim().slice(0, 80) || undefined;
     const inviteCode = String(req.body.inviteCode || '');
 
     if (!email || !email.includes('@')) {
@@ -43,7 +44,7 @@ function createAuthRouter({
     }
 
     try {
-      const result = await registerUser({ email, password });
+      const result = await registerUser({ email, password, name });
       setSessionCookie(req, res, result.sessionToken);
 
       return res.status(201).json({

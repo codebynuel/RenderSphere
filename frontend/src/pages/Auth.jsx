@@ -18,6 +18,7 @@ function BrandMark() {
 export default function Auth() {
     const [mode, setMode] = useState('register');
     const [config, setConfig] = useState(null);
+    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [inviteCode, setInviteCode] = useState('');
@@ -50,8 +51,9 @@ export default function Auth() {
         setLoading(true);
 
         const body = { email, password };
-        if (mode === 'register' && config?.inviteRequired) {
-            body.inviteCode = inviteCode;
+        if (mode === 'register') {
+            if (name.trim()) body.name = name.trim();
+            if (config?.inviteRequired) body.inviteCode = inviteCode;
         }
 
         try {
@@ -123,6 +125,20 @@ export default function Auth() {
                             placeholder="you@example.com"
                         />
                     </div>
+                    {mode === 'register' && (
+                    <div className="auth-field">
+                        <label htmlFor="auth-name">Name (optional)</label>
+                        <input
+                            id="auth-name"
+                            type="text"
+                            autoComplete="name"
+                            maxLength={80}
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder="Your display name"
+                        />
+                    </div>
+                    )}
                     <div className="auth-field">
                         <label htmlFor="auth-password">Password</label>
                         <input

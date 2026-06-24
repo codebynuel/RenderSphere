@@ -41,6 +41,7 @@ export function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
+    name: user.name || null,
     role: user.role || 'user',
     createdAt: user.createdAt,
     starterBalanceUsd: Number(user.starterBalanceUsd || 0),
@@ -243,8 +244,9 @@ export async function requireAdmin(req, res, next) {
   }
 }
 
-export async function registerUser({ email, password }) {
+export async function registerUser({ email, password, name }) {
   const normalizedEmail = normalizeEmail(email);
+  const displayName = String(name || '').trim().slice(0, 80) || null;
   const passwordHash = await hashPassword(password);
   const rawAccessKey = createRawAccessKey();
   const rawSession = createRawSessionToken();
@@ -253,6 +255,7 @@ export async function registerUser({ email, password }) {
     const createdUser = await tx.user.create({
       data: {
         email: normalizedEmail,
+        name: displayName,
         passwordHash: passwordHash.hash,
         passwordSalt: passwordHash.salt,
         starterBalanceUsd: 0,

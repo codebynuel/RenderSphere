@@ -1,0 +1,140 @@
+version: 2.1
+
+orbs:
+  docker: circleci/docker@2.4.0
+  node: circleci/node@5.0.0
+
+jobs:
+  backend-release-validation:
+    docker:
+      - image: cimg/node:22.0
+      - image: cimg/postgres:16.0
+        environment:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rendersphere_ci
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/rendersphere_ci?schema=ci_migrate_<< pipeline.number >>_<< pipeline.run_number >>
+      SMOKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/rendersphere_ci?schema=smoke_<< pipeline.number >>_<< pipeline.run_number >>
+      SMOKE_TEST_PORT: 3999
+    steps:
+      - checkout
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint:backend
+      - run: |
+          pnpm prisma:validate
+          pnpm db:generate
+      - run: pnpm db:check-isolated
+      - run: pnpm db:deploy
+      - run: pnpm db:status
+      - run: pnpm test
+
+  frontend-release-validation:
+    docker:
+      - image: cimg/node:22.0
+    steps:
+      - checkout
+      - run: corepack enable
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - run: pnpm --dir frontend lint
+      - run: pnpm --dir frontend build
+
+  dependency-audit:
+    docker:
+      - image: cimg/node:22.0
+    steps:
+      - checkout
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
+      - run: pnpm --config.ignore-workspace=true --dir frontend audit --prod --audit-level high
+
+  extension-artifact-validation:
+    docker:
+      - image: cimg/node:22.0
+    steps:
+      - checkout
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package:extension:verify
+        environment:
+          SOURCE_DATE_EPOCH: "1704067200"
+      - run: |
+          pnpm checksums:extension:verify
+          git diff --exit-code -- \
+            public/downloads/rendersphere-blender-addon.zip \
+            public/downloads/rendersphere-blender-addon.zip.sha256 \
+            frontend/public/downloads/rendersphere-blender-addon.zip \
+            frontend/public/downloads/rendersphere-blender-addon.zip.sha256
+      - persist_to_workspace:
+          root: .
+          paths:
+            - public/downloads/rendersphere-blender-addon.zip
+            - public/downloads/rendersphere-blender-addon.zip.sha256
+            - frontend/public/downloads/rendersphere-blender-addon.zip
+            - frontend/public/downloads/rendersphere-blender-addon.zip.sha256
+
+  web-image-validation:
+    docker:
+      - image: cimg/node:22.0
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: "20.10.24"
+      - run: |
+          docker build -t rendersphere-web:<< pipeline.number >> -f Dockerfile.web .
+
+  worker-image-validation:
+    docker:
+      - image: cimg/node:22.0
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: "20.10.24"
+      - run: |
+          docker build -t blender-runpod-worker:<< pipeline.number >> -f Dockerfile .
+
+  worker:
+    docker:
+      - image: cimg/node:22.0
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: "20.10.24"
+      - run: |
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+      - run: |
+          docker build -t $DOCKERHUB_USERNAME/blender-runpod-worker:latest -t $DOCKERHUB_USERNAME/blender-runpod-worker:<< pipeline.number >> -f Dockerfile .
+          docker push $DOCKERHUB_USERNAME/blender-runpod-worker:latest
+          docker push $DOCKERHUB_USERNAME/blender-runpod-worker:<< pipeline.number >>
+
+workflows:
+  build-and-push:
+    when:
+      or:
+        - matches:
+            pattern: "^main$"
+            value: << pipeline.git.branch >>
+        - matches:
+            pattern: "^refs/tags/.*"
+            value: << pipeline.git.tag >>
+    jobs:
+      - backend-release-validation
+      - frontend-release-validation
+      - dependency-audit
+      - extension-artifact-validation
+      - web-image-validation
+      - worker-image-validation
+      - worker:
+          requires:
+            - backend-release-validation
+            - frontend-release-validation
+            - dependency-audit
+            - extension-artifact-validation
+            - web-image-validation
+            - worker-image-validation
+          filters:
+            branches:
+              only: main

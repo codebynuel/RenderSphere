@@ -22,13 +22,8 @@ jobs:
 workflows:
   build-worker:
     when:
-      and:
-        - matches:
-            pattern: "^main$"
-            value: << pipeline.git.branch >>
-        - not:
-            matches:
-              pattern: ".*\\[skip ci\\].*"
-              value: << pipeline.git.commit.message >>
+      matches:
+        pattern: "^main$"
+        value: << pipeline.git.branch >>
     jobs:
       - build-runpod-worker

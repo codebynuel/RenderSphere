@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { CheckCircle2, Clock, Cpu, Gauge, HelpCircle, Users, WalletCards } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-const PRICE_PER_SECOND = 0.01;
+const PRICE_PER_SECOND = 0.00028;
 
 const fadeUp = {
     initial: { opacity: 0, y: 18 },
@@ -15,7 +15,7 @@ const packs = [
     {
         name: 'Starter',
         price: '$10',
-        seconds: 1000,
+        seconds: 36000,
         desc: 'A small credit pack to test the workflow and render a few test frames.',
         cta: 'Buy $10 pack',
         href: '/auth',
@@ -24,7 +24,7 @@ const packs = [
     {
         name: 'Creator',
         price: '$25',
-        seconds: 2500,
+        seconds: 90000,
         desc: 'The most popular pack for freelance artists and regular rendering work.',
         cta: 'Buy $25 pack',
         href: '/auth',
@@ -33,7 +33,7 @@ const packs = [
     {
         name: 'Studio',
         price: '$50',
-        seconds: 5000,
+        seconds: 180000,
         desc: 'For studios that need more capacity and longer render sessions.',
         cta: 'Buy $50 pack',
         href: '/auth',
@@ -44,16 +44,16 @@ const packs = [
 const highlights = [
     { icon: WalletCards, text: 'All features unlocked — no tier restrictions' },
     { icon: Clock, text: 'Pay only for GPU seconds your renders consume' },
-    { icon: Cpu, text: 'Flat $0.01/sec across all engines and frame types' },
+    { icon: Cpu, text: 'Flat $0.00028/sec ($1.00/hr) across all engines and frame types' },
     { icon: Gauge, text: 'No subscriptions, no recurring bills, no surprises' },
 ];
 
 const faqs = [
-    { q: 'What exactly do I pay for?', a: 'You only pay for GPU render time. Every second your job spends rendering on a worker deducts $0.01 from your prepaid balance. Uploads, storage, and downloads are free.' },
+    { q: 'What exactly do I pay for?', a: 'You only pay for GPU render time. Every second your job spends rendering on a worker deducts $0.00028 from your prepaid balance. Uploads, storage, and downloads are free.' },
     { q: 'Are there any feature restrictions?', a: 'No. Every account has full access to all features — unlimited projects, still frames and animations, team invites, custom output formats, everything. The only difference is how much render time you have in your balance.' },
     { q: 'What happens when my balance runs out?', a: 'Your renders will stop until you add more credits. You can purchase another prepaid pack or enter a custom top-up amount from the dashboard at any time. Unused credits never expire.' },
     { q: 'How long does a render take?', a: 'That depends on the scene complexity, engine, samples, and resolution. The dashboard shows an estimated cost before you submit, and you can track spend in real time as the job progresses.' },
-    { q: 'What render engines are supported?', a: 'We support Cycles and Eevee. Both are billed at the same flat rate of $0.01 per GPU-second.' },
+    { q: 'What render engines are supported?', a: 'We support Cycles and Eevee. Both are billed at the same flat rate of $0.00028 per GPU-second.' },
     { q: 'Can I top up with a custom amount?', a: 'Yes. The dashboard supports entering any custom top-up amount within configurable limits, so you can add exactly the credits you need.' },
     { q: 'Do you offer education or non-profit discounts?', a: 'Yes. Contact us at support@rendersphere.app with your details and we will get back to you.' },
 ];
@@ -81,7 +81,7 @@ export default function Pricing() {
                     <h1 className="page-title">One rate. Full access. No subscriptions.</h1>
                     <p className="lede">
                         Every account gets every feature — unlimited projects, animations, team access, the works.
-                        You only pay for the GPU seconds your renders actually use at a flat <strong>$0.01/second</strong>.
+                        You only pay for the GPU seconds your renders actually use at a flat <strong>$0.00028/second ($1.00/hr)</strong>.
                         Buy prepaid credit packs, add them to your balance, and render until they run out.
                     </p>
                 </motion.div>
@@ -138,8 +138,8 @@ export default function Pricing() {
                     <h2>RenderSphere vs. other render farms.</h2>
                     <p className="muted">
                         Most render farms use complex tiered pricing (GHz-hours, node-hours, Ob-hours) with
-                        different rates for different priorities. We keep it simple: one flat rate across all
-                        engines, all jobs, all priorities.
+                        different rates for different priorities. We keep it simple: one flat rate across a
+                        dedicated <strong>24 GB GPU</strong>, all engines, all jobs, all priorities — starting at <strong>$1.00/hr</strong>.
                     </p>
                 </motion.div>
                 <motion.div className="pricing-compare-wrap" {...fadeUp} transition={{ duration: 0.45, delay: 0.15 }}>
@@ -157,7 +157,7 @@ export default function Pricing() {
                         <tbody>
                             <tr>
                                 <td>Pricing model</td>
-                                <td className="col-rs">Flat $0.01 / GPU-sec</td>
+                                <td className="col-rs"><strong>$0.00028 / GPU-sec</strong><br /><small>$1.00 / hr · 24 GB GPU</small></td>
                                 <td>$0.024–$0.072 / GHz-hr<br />$1.12–$25.76 / node-hr</td>
                                 <td>1.41¢ / GHz-hr<br />0.53¢ / Ob-hr</td>
                                 <td>Varies by project</td>
@@ -165,17 +165,17 @@ export default function Pricing() {
                             </tr>
                             <tr>
                                 <td>$10 buys you</td>
-                                <td className="col-rs"><strong>~16m 40s</strong> GPU render</td>
-                                <td>~46 min (Low, CPU N5)</td>
-                                <td>~47 min (CPU, base rate)</td>
+                                <td className="col-rs"><strong>~10h</strong> GPU render</td>
+                                <td>~8.9 hrs (low, RTX 4000 Ada)<br />~6.7 hrs (med-low, A5000 24GB)</td>
+                                <td>~7 hrs (GPU, estimate)</td>
                                 <td>Varies</td>
                                 <td>Free</td>
                             </tr>
                             <tr>
                                 <td>$25 buys you</td>
-                                <td className="col-rs"><strong>~41m 40s</strong> GPU render</td>
-                                <td>~3.5 hrs (Low, CPU N5)</td>
-                                <td>~2 hrs (CPU, base rate)</td>
+                                <td className="col-rs"><strong>~25h</strong> GPU render</td>
+                                <td>~22 hrs (low, RTX 4000 Ada)<br />~16.8 hrs (med-low, A5000 24GB)</td>
+                                <td>~17.5 hrs (GPU, estimate)</td>
                                 <td>Varies</td>
                                 <td>Free</td>
                             </tr>

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Activity, ArrowRight, CheckCircle2, Clock, CloudUpload, Download, FolderKanban, KeyRound, ShieldCheck, Timer, Users, WalletCards } from 'lucide-react';
+import { Activity, ArrowRight, CheckCircle2, Clock, CloudUpload, Download, FolderKanban, KeyRound, ShieldCheck, Star, Timer, Users, WalletCards } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const fadeUp = {

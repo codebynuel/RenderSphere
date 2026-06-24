@@ -354,7 +354,7 @@ export default function Dashboard() {
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
     const [creatingTopUpPackageId, setCreatingTopUpPackageId] = useState(null);
     const [creatingCustomTopUp, setCreatingCustomTopUp] = useState(false);
-    const [creatingNpPackageId, setCreatingNpPackageId] = useState(null);
+    const [creatingNpPackageId] = useState(null);
     const [creatingCustomNp, setCreatingCustomNp] = useState(false);
     const [capturingOrderId, setCapturingOrderId] = useState(null);
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true });
@@ -970,31 +970,6 @@ export default function Dashboard() {
             setCapturingOrderId(null);
         }
     }, [capturingOrderId, loadRechargeHistory, refreshCurrentUser]);
-
-    const handleStartNowPaymentsTopUp = async (packageId, payCurrency) => {
-        if (!packageId || creatingNpPackageId || creatingCustomNp) return;
-        setCreatingNpPackageId(packageId);
-        try {
-            const data = await api('/api/billing/nowpayments/invoices', {
-                method: 'POST',
-                body: JSON.stringify({ packageId, payCurrency }),
-            });
-            if (data.order) {
-                setRecharges((current) => sortByCreatedDesc([data.order, ...current.filter((order) => order.id !== data.order.id)]));
-                setBillingPage(1);
-            }
-            if (data.order?.approvalUrl) {
-                toast.success('Opening NOWPayments checkout...');
-                window.open(data.order.approvalUrl, '_blank', 'noopener');
-                return;
-            }
-            toast.error('NOWPayments did not return an invoice URL.');
-        } catch (error) {
-            toast.error(error.message || 'Failed to start NOWPayments checkout');
-        } finally {
-            setCreatingNpPackageId(null);
-        }
-    };
 
     const handleStartNowPaymentsCustomTopUp = async (event) => {
         event.preventDefault();
@@ -2173,32 +2148,13 @@ export default function Dashboard() {
                             <h3>Crypto top-ups via NOWPayments</h3>
                             <p className="muted">Pay with Bitcoin, Ethereum, USDT, and other cryptocurrencies. The invoice opens in a new window.</p>
                         </div>
-                        <span className="count-chip">{nowpaymentsConfig.packages.length} presets</span>
                     </div>
-                    <div className="prepaid-package-grid">
-                        {nowpaymentsConfig.packages.map((item) => (
-                            <article className="prepaid-package-card" key={item.id}>
-                                <div>
-                                    <span className="package-eyebrow">Crypto preset</span>
-                                    <h4>{item.label}</h4>
-                                    <strong>{formatMoney(item.amountUsd, item.currency)}</strong>
-                                    <p className="muted">Pay {formatMoney(item.amountUsd, item.currency)} worth of crypto via NOWPayments invoice.</p>
-                                </div>
-                                <button
-                                    className="button primary"
-                                    type="button"
-                                    onClick={() => handleStartNowPaymentsTopUp(item.id, nowpaymentsConfig.defaultPayCurrency)}
-                                    disabled={Boolean(creatingNpPackageId) || creatingCustomNp}
-                                >
-                                    {creatingNpPackageId === item.id ? 'Opening...' : 'Pay with crypto'}
-                                </button>
-                            </article>
-                        ))}
-                        {nowpaymentsConfig.customTopUp ? (
+                    {nowpaymentsConfig.customTopUp ? (
+                        <div className="prepaid-package-grid" style={{ gridTemplateColumns: '1fr' }}>
                             <article className="prepaid-package-card custom-top-up-card">
                                 <div>
-                                    <span className="package-eyebrow">Custom crypto top-up</span>
-                                    <h4>Choose your amount</h4>
+                                    <span className="package-eyebrow">Crypto top-up</span>
+                                    <h4>Enter an amount</h4>
                                     <strong>{customNpAmount || formatMoney(nowpaymentsConfig.customTopUp.minAmountUsd, nowpaymentsConfig.customTopUp.currency)}</strong>
                                     <p className="muted">Enter a USD amount from {formatMoney(nowpaymentsConfig.customTopUp.minAmountUsd, nowpaymentsConfig.customTopUp.currency)} to {formatMoney(nowpaymentsConfig.customTopUp.maxAmountUsd, nowpaymentsConfig.customTopUp.currency)}. Paid in {nowpaymentsConfig.defaultPayCurrency?.toUpperCase() || 'crypto'}.</p>
                                 </div>
@@ -2216,6 +2172,19 @@ export default function Dashboard() {
                                             onChange={(event) => setCustomNpAmount(event.target.value)}
                                         />
                                     </label>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '8px 0 4px' }}>
+                                        {[10, 25, 50, 100, 250].map((preset) => (
+                                            <button
+                                                key={preset}
+                                                type="button"
+                                                className="button compact-button"
+                                                onClick={() => setCustomNpAmount(String(preset))}
+                                                style={customNpAmount === String(preset) ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}}
+                                            >
+                                                ${preset}
+                                            </button>
+                                        ))}
+                                    </div>
                                     <button
                                         className="button primary"
                                         type="submit"
@@ -2225,8 +2194,8 @@ export default function Dashboard() {
                                     </button>
                                 </form>
                             </article>
-                        ) : null}
-                    </div>
+                        </div>
+                    ) : null}
                 </section>
                 ) : null}
 

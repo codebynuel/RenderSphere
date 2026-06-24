@@ -2155,7 +2155,6 @@ export default function Dashboard() {
                                 <div>
                                     <span className="package-eyebrow">Crypto top-up</span>
                                     <h4>Enter an amount</h4>
-                                    <strong>{customNpAmount || formatMoney(nowpaymentsConfig.customTopUp.minAmountUsd, nowpaymentsConfig.customTopUp.currency)}</strong>
                                     <p className="muted">Enter a USD amount from {formatMoney(nowpaymentsConfig.customTopUp.minAmountUsd, nowpaymentsConfig.customTopUp.currency)} to {formatMoney(nowpaymentsConfig.customTopUp.maxAmountUsd, nowpaymentsConfig.customTopUp.currency)}. Paid in {nowpaymentsConfig.defaultPayCurrency?.toUpperCase() || 'crypto'}.</p>
                                 </div>
                                 <form className="custom-top-up-form" onSubmit={handleStartNowPaymentsCustomTopUp} noValidate>

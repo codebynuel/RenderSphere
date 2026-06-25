@@ -47,6 +47,11 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       if (!Number.isInteger(fileSizeBytes) || fileSizeBytes <= 0) return res.status(400).json({ error: 'A valid fileSizeBytes value is required' });
       if (fileSizeBytes > config.maxUploadBytes) return res.status(413).json({ error: 'Packed .blend file exceeds upload limit' });
 
+      // Enforce access key budget cap before upload
+      if (req.accessKey?.budgetCapUsd && req.accessKey.budgetSpentUsd >= req.accessKey.budgetCapUsd) {
+        return res.status(402).json({ error: 'Access key budget cap has been reached.' });
+      }
+
       const key = `renders/${req.user.id}/${Date.now()}-${fileName}`;
 
       try {
@@ -123,9 +128,21 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       if (activeJobs >= config.maxConcurrentJobsPerUser) return res.status(429).json({ error: 'Active job limit reached' });
       if (projectId && !project) return res.status(404).json({ error: 'Project not found' });
 
+      // Enforce access key budget cap
+      if (req.accessKey?.budgetCapUsd && req.accessKey.budgetSpentUsd >= req.accessKey.budgetCapUsd) {
+        return res.status(402).json({ error: 'Access key budget cap has been reached. Create a new key or increase the cap.' });
+      }
+
+      // Enforce access key project scoping
+      if (req.accessKey?.scopeType === 'PROJECT' && req.accessKey.scopeProjectId) {
+        if (!projectId || projectId !== req.accessKey.scopeProjectId) {
+          return res.status(403).json({ error: 'This access key is scoped to a specific project and cannot be used for this job.' });
+        }
+      }
+
       const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
       const costEstimate = estimateRenderCostUsd({ engine, outputFormat, denoiser, normalizedSettings });
-      const budget = resolveRenderBudget({ body: req.body, estimatedCostUsd: costEstimate.estimatedCostUsd });
+      const budget = resolveRenderBudget({ estimatedCostUsd: costEstimate.estimatedCostUsd });
       const localJobId = internalDispatchReference();
       const reservationReferenceId = localJobId;
 
@@ -160,6 +177,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               status: 'DISPATCHING',
               dispatchStatus: 'PENDING',
               idempotencyKey: scopedIdempotencyKey,
+              accessKeyId: req.accessKey?.id || null,
               settings: { ...runpodInput, dispatchReference: localJobId },
               frameCount: normalizedSettings.frameCount,
               estimatedCostUsd: costEstimate.estimatedCostUsd,

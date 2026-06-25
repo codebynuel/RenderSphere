@@ -137,6 +137,7 @@ model Job {
   status                String    @default("SUBMITTED")
   dispatchStatus        String    @default("PENDING")
   idempotencyKey        String?   @unique
+  accessKeyId           String?
   settings              Json?
   progress              Json?
   frameCount            Int       @default(1)

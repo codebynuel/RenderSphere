@@ -76,15 +76,13 @@ export function estimateRenderCostUsd({ engine, outputFormat, denoiser, normaliz
   };
 }
 
-export function resolveRenderBudget({ body = {}, estimatedCostUsd }) {
-  const requestedBudget = normalizeMoneyInput(body.maxBudgetUsd ?? body.maxBudget ?? body.maxRenderBudgetUsd, null);
-  const cappedFallbackBudget = Math.min(config.defaultRenderMaxBudgetUsd, config.maxRenderBudgetUsd);
-  const fallbackBudget = Math.max(estimatedCostUsd, cappedFallbackBudget, config.minRenderReservationUsd);
-  const maxBudgetUsd = Math.min(requestedBudget || fallbackBudget, config.maxRenderBudgetUsd);
+export function resolveRenderBudget({ estimatedCostUsd }) {
+  const budgetCap = config.maxRenderBudgetUsd;
+  const maxBudgetUsd = Math.min(budgetCap, config.maxRenderBudgetUsd);
   const reservationUsd = Math.max(config.minRenderReservationUsd, estimatedCostUsd, maxBudgetUsd);
 
   return {
-    requestedBudgetUsd: requestedBudget,
+    requestedBudgetUsd: null,
     maxBudgetUsd: roundMoney(maxBudgetUsd),
     reservationUsd: roundMoney(Math.min(reservationUsd, config.maxRenderBudgetUsd)),
   };
@@ -525,6 +523,14 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
             billableSeconds,
             pricePerSecondUsd: config.renderPricePerSecondUsd,
             metadata: { requestId, status, resultKey: updateData.resultKey, uncappedPriceUsd, maxBudgetUsd, reservationReleasedUsd: releaseAmount },
+          });
+        }
+
+        // Track spend against access key budget cap
+        if (priceUsd > 0 && job.accessKeyId) {
+          await tx.accessKey.update({
+            where: { id: job.accessKeyId },
+            data: { budgetSpentUsd: { increment: priceUsd } },
           });
         }
 

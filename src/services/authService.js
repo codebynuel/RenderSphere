@@ -205,6 +205,11 @@ export async function authenticateToken(token) {
   });
 
   if (accessKey) {
+    // Enforce expiry
+    if (accessKey.expiresAt && new Date(accessKey.expiresAt).getTime() < Date.now()) {
+      return null;
+    }
+
     const lastUsedAt = accessKey.lastUsedAt ? new Date(accessKey.lastUsedAt).getTime() : 0;
     if (!lastUsedAt || Date.now() - lastUsedAt > 5 * 60 * 1000) {
       await prisma.accessKey.update({
@@ -212,7 +217,17 @@ export async function authenticateToken(token) {
         data: { lastUsedAt: new Date() },
       });
     }
-    return { user: accessKey.user, authType: 'accessKey' };
+    return {
+      user: accessKey.user,
+      authType: 'accessKey',
+      accessKey: {
+        id: accessKey.id,
+        scopeType: accessKey.scopeType,
+        scopeProjectId: accessKey.scopeProjectId,
+        budgetCapUsd: accessKey.budgetCapUsd ? Number(accessKey.budgetCapUsd) : null,
+        budgetSpentUsd: accessKey.budgetSpentUsd ? Number(accessKey.budgetSpentUsd) : 0,
+      },
+    };
   }
 
   return null;
@@ -228,6 +243,7 @@ export async function requireAuth(req, res, next) {
     req.authType = auth.authType;
     req.authToken = requestToken.token;
     req.authSource = requestToken.source;
+    req.accessKey = auth.accessKey || null;
     return next();
   } catch (error) {
     logger.error('Authentication middleware failed', withRequest(req, { context: 'auth', error }));

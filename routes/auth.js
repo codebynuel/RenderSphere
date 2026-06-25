@@ -11,6 +11,10 @@ import {
   revokeSessionToken,
   setSessionCookie,
   clearSessionCookie,
+  verifyEmail,
+  requestPasswordReset,
+  resetPassword,
+  resendVerificationEmail,
   verifyPassword,
 } from '../src/services/authService.js';
 import { config } from '../helpers/config.js';
@@ -152,6 +156,54 @@ function createAuthRouter({
     } catch (error) {
       logger.error('Legacy API key create failed', withRequest(req, { context: 'auth', error }));
       return res.status(500).json({ error: 'Failed to create access key' });
+    }
+  });
+
+  // --- Email verification ---
+
+  router.get('/verify-email/:token', async (req, res) => {
+    try {
+      await verifyEmail(req.params.token);
+      return res.json({ success: true });
+    } catch (error) {
+      if (error.status) return res.status(error.status).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to verify email' });
+    }
+  });
+
+  router.post('/resend-verification', requireAuth, accountRateLimit, async (req, res) => {
+    try {
+      await resendVerificationEmail(req.user.id);
+      return res.json({ success: true });
+    } catch (error) {
+      if (error.status) return res.status(error.status).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to resend verification' });
+    }
+  });
+
+  // --- Password reset ---
+
+  router.post('/forgot-password', authRateLimit, async (req, res) => {
+    const email = normalizeEmail(req.body.email);
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
+
+    try {
+      await requestPasswordReset(email);
+      return res.json({ success: true, message: 'If an account exists, a reset link has been sent.' });
+    } catch (error) {
+      logger.error('Password reset request failed', withRequest(req, { context: 'auth', error }));
+      return res.status(500).json({ error: 'Failed to process request' });
+    }
+  });
+
+  router.post('/reset-password/:token', authRateLimit, async (req, res) => {
+    const { password } = req.body;
+    try {
+      const user = await resetPassword(req.params.token, password);
+      return res.json({ success: true });
+    } catch (error) {
+      if (error.status) return res.status(error.status).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to reset password' });
     }
   });
 

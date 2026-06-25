@@ -8,6 +8,9 @@ import Pricing from './pages/Pricing';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import JoinTeam from './pages/JoinTeam';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import VerifyEmail from './pages/VerifyEmail';
 
 function App() {
   return (
@@ -22,6 +25,9 @@ function App() {
         <Route path="/legal/privacy" element={<Privacy />} />
       </Route>
       <Route path="/join-team/:token" element={<JoinTeam />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password/:token" element={<ResetPassword />} />
+      <Route path="/verify-email/:token" element={<VerifyEmail />} />
     </Routes>
   );
 }

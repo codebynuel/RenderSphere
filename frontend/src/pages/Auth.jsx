@@ -175,6 +175,11 @@ export default function Auth() {
                             'Log in'
                         )}
                     </button>
+                    {mode === 'login' && (
+                        <div style={{ textAlign: 'center', marginTop: 8 }}>
+                            <a href="/forgot-password" className="auth-link-btn" style={{ fontSize: 13 }}>Forgot password?</a>
+                        </div>
+                    )}
                 </form>
 
                 <p className="auth-footer-text">

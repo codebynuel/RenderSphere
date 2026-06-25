@@ -1527,6 +1527,26 @@ input:focus {
     margin: 0;
 }
 
+/* Email verification banner */
+.verification-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: #9a3412;
+    grid-column: 1 / -1;
+}
+.verification-banner .button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
 .sidebar-kicker,
 .sidebar-section-head,
 .job-details span,

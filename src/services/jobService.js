@@ -560,6 +560,16 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
   });
 }
 
+// Import for render complete notifications (lazy)
+let _sendRenderCompleteEmail = null;
+async function ensureEmailModule() {
+  if (!_sendRenderCompleteEmail) {
+    const emailModule = await import('../../helpers/email.js');
+    _sendRenderCompleteEmail = emailModule.sendRenderCompleteEmail;
+  }
+  return _sendRenderCompleteEmail;
+}
+
 export async function syncActiveJobsForUser(userId, emitJobUpdate = null, { requestId = null } = {}) {
   const syncableJobs = await prisma.job.findMany({
     where: {

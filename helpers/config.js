@@ -337,6 +337,8 @@ const config = {
   runpodCancelMaxRetries: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES', 1),
   runpodRetryBackoffMs: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS', 300),
   secureCookies: process.env.RENDERSPHERE_SECURE_COOKIES === 'true' || process.env.NODE_ENV === 'production',
+  resendApiKey: process.env.RENDERSPHERE_RESEND_API_KEY || '',
+  emailFrom: process.env.RENDERSPHERE_EMAIL_FROM || 'RenderSphere <noreply@rendersphere.app>',
 };
 
 function environmentValidation({ production = config.isProduction } = {}) {

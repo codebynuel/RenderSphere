@@ -24,6 +24,7 @@ import { createProjectsRouter } from './routes/projects.js';
 import { createRenderRouter } from './routes/render.js';
 import { createSystemRouter } from './routes/system.js';
 import { createTeamsRouter } from './routes/teams.js';
+import { sendRenderCompleteEmail } from './helpers/email.js';
 
 validateRequiredEnv();
 
@@ -196,8 +197,20 @@ const activeJobPoller = setInterval(async () => {
       try {
         if (!jobIsProviderDispatched(job)) return;
         const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job));
+        const prevStatus = job.status;
         const updatedJob = await persistRunpodStatus(job.userId, job.jobId, rpData);
         emitJobUpdate(updatedJob || job, rpData);
+
+        // Send email notification on terminal status change
+        if (updatedJob && prevStatus !== updatedJob.status && !updatedJob.notificationSent) {
+          if (updatedJob.status === 'COMPLETED' || updatedJob.status === 'FAILED') {
+            const user = await prisma.user.findUnique({ where: { id: updatedJob.userId } });
+            if (user?.emailVerifiedAt) {
+              sendRenderCompleteEmail(user.email, user.name, updatedJob).catch(() => {});
+              prisma.job.updateMany({ where: { jobId: updatedJob.jobId }, data: { notificationSent: true } }).catch(() => {});
+            }
+          }
+        }
       } catch (error) {
         logger.warn('Could not poll RunPod job', {
           context: 'job_poller',

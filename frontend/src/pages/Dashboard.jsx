@@ -367,6 +367,7 @@ export default function Dashboard() {
     const [projectAddMemberEmail, setProjectAddMemberEmail] = useState('');
     const [projectAddMemberRole, setProjectAddMemberRole] = useState('VIEWER');
     const [projectAddMemberLoading, setProjectAddMemberLoading] = useState(false);
+    const [resendingVerification, setResendingVerification] = useState(false);
     const [creatingTopUpPackageId, setCreatingTopUpPackageId] = useState(null);
     const [creatingCustomTopUp, setCreatingCustomTopUp] = useState(false);
     const [creatingNpPackageId] = useState(null);
@@ -1266,6 +1267,18 @@ export default function Dashboard() {
         }
     }, [projectMembersProject]);
 
+    const handleResendVerification = useCallback(async () => {
+        setResendingVerification(true);
+        try {
+            await api('/api/auth/resend-verification', { method: 'POST', body: '{}' });
+            toast.success('Verification email sent. Check your inbox.');
+        } catch (error) {
+            toast.error(error.message || 'Failed to resend verification');
+        } finally {
+            setResendingVerification(false);
+        }
+    }, []);
+
     const handleCancelJob = async (jobId) => {
         if (!window.confirm(`Cancel job ${jobId}?`)) return;
         try {
@@ -1473,20 +1486,6 @@ export default function Dashboard() {
         }
     }, [selectedTeam]);
 
-    const viewTeamDetail = useCallback(async (teamId) => {
-        try {
-            const [detail, spend] = await Promise.all([
-                api(`/api/teams/${teamId}`),
-                api(`/api/teams/${teamId}/member-spend`),
-            ]);
-            setSelectedTeam({ ...detail.team, memberSpend: spend });
-            loadInviteLinks(teamId);
-            loadTeamActivity(teamId);
-        } catch (error) {
-            toast.error(error.message || 'Failed to load team');
-        }
-    }, [loadInviteLinks, loadTeamActivity]);
-
     const loadInviteLinks = useCallback(async (teamId) => {
         try {
             setTeamInviteLinksLoading(true);
@@ -1510,6 +1509,20 @@ export default function Dashboard() {
             setTeamActivityLoading(false);
         }
     }, []);
+
+    const viewTeamDetail = useCallback(async (teamId) => {
+        try {
+            const [detail, spend] = await Promise.all([
+                api(`/api/teams/${teamId}`),
+                api(`/api/teams/${teamId}/member-spend`),
+            ]);
+            setSelectedTeam({ ...detail.team, memberSpend: spend });
+            loadInviteLinks(teamId);
+            loadTeamActivity(teamId);
+        } catch (error) {
+            toast.error(error.message || 'Failed to load team');
+        }
+    }, [loadInviteLinks, loadTeamActivity]);
 
     const handleCreateInviteLink = useCallback(async (teamId) => {
         setTeamInviteLinkCreating(true);
@@ -3419,6 +3432,16 @@ export default function Dashboard() {
                         </button>
                     </div>
                 </div>
+
+                {/* Email verification banner */}
+                {user && !user.emailVerifiedAt && (
+                    <div className="verification-banner">
+                        <span>Please verify your email address to receive render notifications.</span>
+                        <button className="button compact-button" type="button" onClick={handleResendVerification} disabled={resendingVerification}>
+                            {resendingVerification ? 'Sending...' : 'Resend verification email'}
+                        </button>
+                    </div>
+                )}
 
                 <AnimatePresence mode="wait">
                     <motion.div

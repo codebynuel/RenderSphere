@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, config } from '../../helpers/config.js';
 import { logger, withRequest } from '../../helpers/logger.js';
 import { CREDIT_ACTOR_TYPES, grantCredits } from './creditService.js';
+import { sendPasswordResetEmail, sendVerificationEmail } from '../../helpers/email.js';
 
 export function nowIso() {
   return new Date().toISOString();
@@ -275,6 +276,7 @@ export async function registerUser({ email, password, name }) {
   const passwordHash = await hashPassword(password);
   const rawAccessKey = createRawAccessKey();
   const rawSession = createRawSessionToken();
+  const verificationToken = crypto.randomBytes(32).toString('hex');
 
   const user = await prisma.$transaction(async (tx) => {
     const createdUser = await tx.user.create({
@@ -284,6 +286,7 @@ export async function registerUser({ email, password, name }) {
         passwordHash: passwordHash.hash,
         passwordSalt: passwordHash.salt,
         starterBalanceUsd: 0,
+        emailVerificationToken: verificationToken,
         accessKeys: {
           create: {
             name: 'Blender workstation',
@@ -317,10 +320,119 @@ export async function registerUser({ email, password, name }) {
     return tx.user.findUnique({ where: { id: createdUser.id }, include: { accessKeys: true } });
   });
 
+  // Send verification email (non-blocking)
+  if (config.resendApiKey) {
+    sendVerificationEmail(user.email, user.name, verificationToken).catch(() => {});
+  }
+
   return {
     user,
     sessionToken: rawSession.token,
     accessKey: user.accessKeys[0],
     accessKeyToken: rawAccessKey.token,
   };
+}
+
+export async function verifyEmail(token) {
+  if (!token) {
+    const error = new Error('Verification token is required');
+    error.status = 400;
+    throw error;
+  }
+
+  const user = await prisma.user.findUnique({ where: { emailVerificationToken: token } });
+  if (!user) {
+    const error = new Error('Invalid or expired verification token');
+    error.status = 400;
+    throw error;
+  }
+  if (user.emailVerifiedAt) {
+    return user; // already verified
+  }
+
+  return prisma.user.update({
+    where: { id: user.id },
+    data: { emailVerifiedAt: new Date(), emailVerificationToken: null },
+  });
+}
+
+export async function requestPasswordReset(email) {
+  const normalizedEmail = normalizeEmail(email);
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+  if (!user) {
+    // Don't reveal if email exists
+    return { success: true };
+  }
+
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 3600000); // 1 hour
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordResetToken: resetToken, passwordResetExpiresAt: expiresAt },
+  });
+
+  if (config.resendApiKey) {
+    sendPasswordResetEmail(user.email, user.name, resetToken).catch(() => {});
+  }
+
+  return { success: true };
+}
+
+export async function resetPassword(token, newPassword) {
+  if (!token) {
+    const error = new Error('Reset token is required');
+    error.status = 400;
+    throw error;
+  }
+  if (!newPassword || newPassword.length < 10) {
+    const error = new Error('Password must be at least 10 characters');
+    error.status = 400;
+    throw error;
+  }
+
+  const user = await prisma.user.findUnique({ where: { passwordResetToken: token } });
+  if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt < new Date()) {
+    const error = new Error('Invalid or expired reset token');
+    error.status = 400;
+    throw error;
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  return prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: passwordHash.hash,
+      passwordSalt: passwordHash.salt,
+      passwordResetToken: null,
+      passwordResetExpiresAt: null,
+    },
+  });
+}
+
+export async function resendVerificationEmail(userId) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    const error = new Error('User not found');
+    error.status = 404;
+    throw error;
+  }
+  if (user.emailVerifiedAt) {
+    const error = new Error('Email is already verified');
+    error.status = 400;
+    throw error;
+  }
+
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { emailVerificationToken: verificationToken },
+  });
+
+  if (config.resendApiKey) {
+    sendVerificationEmail(user.email, user.name, verificationToken).catch(() => {});
+  }
+
+  return { success: true };
 }

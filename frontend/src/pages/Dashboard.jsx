@@ -343,6 +343,10 @@ export default function Dashboard() {
     const [recharges, setRecharges] = useState([]);
     const [expandedJobId, setExpandedJobId] = useState(null);
     const [newKeyName, setNewKeyName] = useState('');
+    const [newKeyScope, setNewKeyScope] = useState('GLOBAL');
+    const [newKeyProjectId, setNewKeyProjectId] = useState('');
+    const [newKeyBudgetCap, setNewKeyBudgetCap] = useState('');
+    const [newKeyExpiresAt, setNewKeyExpiresAt] = useState('');
     const [accessKeyDialogOpen, setAccessKeyDialogOpen] = useState(false);
     const [createdAccessKey, setCreatedAccessKey] = useState(null);
     const [pendingDeleteKey, setPendingDeleteKey] = useState(null);
@@ -535,6 +539,17 @@ export default function Dashboard() {
         if (data.user) setUser(data.user);
         return data.user;
     }, [setUser]);
+
+    const loadTeams = useCallback(async () => {
+        try {
+            const data = await api('/api/teams');
+            setTeams(data.teams || []);
+        } catch (error) {
+            toast.error('Failed to load teams');
+        } finally {
+            setLoading((prev) => ({ ...prev, teams: false }));
+        }
+    }, []);
 
     const loadAll = useCallback(async () => {
         await Promise.all([
@@ -845,6 +860,10 @@ export default function Dashboard() {
 
     const openCreateKeyDialog = () => {
         setNewKeyName('');
+        setNewKeyScope('GLOBAL');
+        setNewKeyProjectId('');
+        setNewKeyBudgetCap('');
+        setNewKeyExpiresAt('');
         setCreatedAccessKey(null);
         setAccessKeyDialogOpen(true);
     };
@@ -853,6 +872,10 @@ export default function Dashboard() {
         if (creatingKey) return;
         setAccessKeyDialogOpen(false);
         setNewKeyName('');
+        setNewKeyScope('GLOBAL');
+        setNewKeyProjectId('');
+        setNewKeyBudgetCap('');
+        setNewKeyExpiresAt('');
         setCreatedAccessKey(null);
     };
 
@@ -862,9 +885,13 @@ export default function Dashboard() {
         if (!trimmedName) return;
         setCreatingKey(true);
         try {
+            const body = { name: trimmedName, scopeType: newKeyScope };
+            if (newKeyScope === 'PROJECT' && newKeyProjectId) body.scopeProjectId = newKeyProjectId;
+            if (newKeyBudgetCap) body.budgetCapUsd = Number(newKeyBudgetCap);
+            if (newKeyExpiresAt) body.expiresAt = new Date(newKeyExpiresAt).toISOString();
             const data = await api('/api/auth/access-keys', {
                 method: 'POST',
-                body: JSON.stringify({ name: trimmedName }),
+                body: JSON.stringify(body),
             });
             loadAccessKeys({ page: 1 });
             const createdKey = data.accessKey;
@@ -1281,17 +1308,6 @@ export default function Dashboard() {
         }
     }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId]);
 
-    const loadTeams = useCallback(async () => {
-        try {
-            const data = await api('/api/teams');
-            setTeams(data.teams || []);
-        } catch (error) {
-            toast.error('Failed to load teams');
-        } finally {
-            setLoading((prev) => ({ ...prev, teams: false }));
-        }
-    }, []);
-
     const handleCreateTeam = useCallback(async () => {
         if (!teamCreateName.trim()) return;
         setTeamCreating(true);
@@ -1656,9 +1672,11 @@ export default function Dashboard() {
                                 <tr>
                                     <th scope="col">Key label</th>
                                     <th scope="col">Preview</th>
+                                    <th scope="col">Scope</th>
+                                    <th scope="col">Budget</th>
+                                    <th scope="col">Expires</th>
                                     <th scope="col">Created</th>
                                     <th scope="col">Last used</th>
-                                    <th scope="col">Status</th>
                                     <th scope="col">Actions</th>
                                 </tr>
                             </thead>
@@ -1672,9 +1690,11 @@ export default function Dashboard() {
                                                 <span>Full token hidden</span>
                                             </div>
                                         </td>
+                                        <td data-label="Scope">{key.scopeType === 'PROJECT' && key.scopeProjectId ? 'Project' : 'Global'}</td>
+                                        <td data-label="Budget">{key.budgetCapUsd ? `$${Number(key.budgetCapUsd).toFixed(2)} cap` : 'Unlimited'}</td>
+                                        <td data-label="Expires">{key.expiresAt ? formatDate(key.expiresAt) : 'Never'}</td>
                                         <td data-label="Created">{formatDate(key.createdAt)}</td>
                                         <td data-label="Last used">{key.lastUsedAt ? formatDate(key.lastUsedAt) : 'Never used'}</td>
-                                        <td data-label="Status"><span className="pill access-status active">Active</span></td>
                                         <td data-label="Actions">
                                             <div className="table-actions">
                                                 <button className="button danger compact-button" type="button" onClick={() => setPendingDeleteKey(key)}>
@@ -2041,6 +2061,47 @@ export default function Dashboard() {
                                     autoFocus
                                 />
                             </label>
+
+                            <label>
+                                <span>Scope</span>
+                                <select value={newKeyScope} onChange={(e) => setNewKeyScope(e.target.value)} disabled={creatingKey}>
+                                    <option value="GLOBAL">Global — all projects and actions</option>
+                                    <option value="PROJECT">Project-scoped — limited to one project</option>
+                                </select>
+                            </label>
+
+                            {newKeyScope === 'PROJECT' && (
+                                <label>
+                                    <span>Project</span>
+                                    <select value={newKeyProjectId} onChange={(e) => setNewKeyProjectId(e.target.value)} disabled={creatingKey}>
+                                        <option value="">Select a project...</option>
+                                        {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    </select>
+                                </label>
+                            )}
+
+                            <label>
+                                <span>Budget cap <span className="subtle">(optional)</span></span>
+                                <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="e.g. 10.00 — leave empty for unlimited"
+                                    value={newKeyBudgetCap}
+                                    onChange={(e) => setNewKeyBudgetCap(e.target.value)}
+                                    disabled={creatingKey}
+                                />
+                            </label>
+
+                            <label>
+                                <span>Expires at <span className="subtle">(optional)</span></span>
+                                <input
+                                    type="date"
+                                    value={newKeyExpiresAt}
+                                    onChange={(e) => setNewKeyExpiresAt(e.target.value)}
+                                    disabled={creatingKey}
+                                />
+                            </label>
+
                             <div className="access-modal-note warning-note">
                                 <strong>One-time secret</strong>
                                 <span>The full key will be shown once after creation. Existing keys only show a masked preview.</span>

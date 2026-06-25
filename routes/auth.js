@@ -115,7 +115,12 @@ function createAuthRouter({
   router.post('/access-keys', requireAuth, accountRateLimit, async (req, res) => {
     try {
       const requestedName = String(req.body.name || '').trim() || 'Access key';
-      const created = await createAccessKeyForUser(req.user.id, requestedName);
+      const created = await createAccessKeyForUser(req.user.id, requestedName, {
+        scopeType: req.body.scopeType || 'GLOBAL',
+        scopeProjectId: req.body.scopeProjectId || null,
+        budgetCapUsd: req.body.budgetCapUsd ? Number(req.body.budgetCapUsd) : null,
+        expiresAt: req.body.expiresAt || null,
+      });
       return res.status(201).json({ accessKey: publicAccessKey(created.accessKey, created.token) });
     } catch (error) {
       logger.error('Access key create failed', withRequest(req, { context: 'auth', error }));

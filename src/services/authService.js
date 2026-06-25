@@ -66,6 +66,11 @@ export function publicAccessKey(accessKey, token = null) {
     name: accessKey.name,
     preview: accessKey.tokenPreview,
     token,
+    scopeType: accessKey.scopeType,
+    scopeProjectId: accessKey.scopeProjectId,
+    budgetCapUsd: accessKey.budgetCapUsd ? Number(accessKey.budgetCapUsd) : null,
+    budgetSpentUsd: accessKey.budgetSpentUsd ? Number(accessKey.budgetSpentUsd) : null,
+    expiresAt: accessKey.expiresAt,
     lastUsedAt: accessKey.lastUsedAt,
     createdAt: accessKey.createdAt,
   };
@@ -80,7 +85,7 @@ export function createRawAccessKey() {
   };
 }
 
-export async function createAccessKeyForUser(userId, name = 'Access key') {
+export async function createAccessKeyForUser(userId, name = 'Access key', options = {}) {
   const rawAccessKey = createRawAccessKey();
   const accessKey = await prisma.accessKey.create({
     data: {
@@ -88,6 +93,10 @@ export async function createAccessKeyForUser(userId, name = 'Access key') {
       name: String(name || 'Access key').trim().slice(0, 80) || 'Access key',
       tokenHash: rawAccessKey.tokenHash,
       tokenPreview: rawAccessKey.tokenPreview,
+      scopeType: options.scopeType || 'GLOBAL',
+      scopeProjectId: options.scopeProjectId || null,
+      budgetCapUsd: options.budgetCapUsd || null,
+      expiresAt: options.expiresAt || null,
     },
   });
 

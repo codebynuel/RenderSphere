@@ -74,7 +74,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
     },
 
     async triggerRender(req, res) {
-      const { fileKey, engine, outputFormat = 'PNG', denoiser = 'NONE' } = req.body;
+      const { fileKey, engine, outputFormat = 'PNG', denoiser = 'NONE', teamId: requestedTeamId } = req.body;
       const projectId = String(req.body.projectId || '').trim() || null;
       const requestIdempotencyKey = normalizeIdempotencyKey(req);
       const scopedIdempotencyKey = requestIdempotencyKey ? `render:${req.user.id}:${requestIdempotencyKey}` : null;
@@ -140,17 +140,47 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         }
       }
 
+      // Team context: resolve billing user and enforce member budget
+      let billingUserId = req.user.id;
+      let teamMembership = null;
+      const teamId = String(requestedTeamId || '').trim() || null;
+      if (teamId) {
+        teamMembership = await prisma.teamMember.findUnique({
+          where: { teamId_userId: { teamId, userId: req.user.id } },
+          include: { team: { select: { ownerId: true } } },
+        });
+        if (!teamMembership) return res.status(403).json({ error: 'You are not a member of this team.' });
+        if (teamMembership.role === 'READ_ONLY') return res.status(403).json({ error: 'Read-only team members cannot submit renders.' });
+
+        // Check member budget cap
+        if (teamMembership.budgetCapUsd) {
+          const spentResult = await prisma.job.aggregate({
+            where: { userId: req.user.id, billedAt: { not: null } },
+            _sum: { priceUsd: true },
+          });
+          const memberSpent = Number(spentResult._sum.priceUsd || 0);
+          if (memberSpent >= Number(teamMembership.budgetCapUsd)) {
+            return res.status(402).json({ error: 'Your team budget cap has been reached. Contact the team owner to increase it.' });
+          }
+        }
+
+        billingUserId = teamMembership.team.ownerId;
+      }
+
       const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
       const costEstimate = estimateRenderCostUsd({ engine, outputFormat, denoiser, normalizedSettings });
       const budget = resolveRenderBudget({ estimatedCostUsd: costEstimate.estimatedCostUsd });
       const localJobId = internalDispatchReference();
       const reservationReferenceId = localJobId;
 
-      if (Number(user?.starterBalanceUsd || 0) < budget.reservationUsd) {
+      // Check balance of the billing user (either the member or team owner)
+      const billingUser = await prisma.user.findUnique({ where: { id: billingUserId } });
+      const availableBalance = Number(billingUser?.starterBalanceUsd || 0);
+      if (availableBalance < budget.reservationUsd) {
         return res.status(402).json({
-          error: `Insufficient prepaid credits. This render requires a $${budget.reservationUsd.toFixed(2)} reservation, but only $${Number(user?.starterBalanceUsd || 0).toFixed(2)} is available.`,
+          error: `Insufficient prepaid credits. This render requires a $${budget.reservationUsd.toFixed(2)} reservation, but only $${availableBalance.toFixed(2)} is available.`,
           requiredUsd: budget.reservationUsd,
-          availableUsd: Number(user?.starterBalanceUsd || 0),
+          availableUsd: availableBalance,
           estimatedCostUsd: costEstimate.estimatedCostUsd,
           maxBudgetUsd: budget.maxBudgetUsd,
         });
@@ -202,7 +232,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
 
           const reserved = await reserveRenderCredits({
             client: tx,
-            userId: req.user.id,
+            userId: billingUserId,
             referenceId: reservationReferenceId,
             jobId: createdJob.jobId,
             amountUsd: budget.reservationUsd,
@@ -221,6 +251,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
             ...(createdJob.billingMetadata && typeof createdJob.billingMetadata === 'object' ? createdJob.billingMetadata : {}),
             reservationTransactionId: reserved.transaction.id,
             reservationIdempotent: reserved.idempotent,
+            billedToUserId: billingUserId !== req.user.id ? billingUserId : undefined,
           };
 
           return tx.job.update({

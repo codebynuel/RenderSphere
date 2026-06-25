@@ -1,12 +1,18 @@
 import { logger, withRequest } from '../../helpers/logger.js';
 import {
   createTeam,
-  getTeamDetail,
+  createInviteLink,
+  getTeamActivity,
   getTeamBalance,
+  getTeamDetail,
+  getTeamMemberSpend,
   getTeamsForUser,
   inviteTeamMember,
+  joinViaInviteLink,
+  listInviteLinks,
   normalizeRole,
   removeTeamMember,
+  revokeInviteLink,
   updateTeamMember,
 } from '../services/teamService.js';
 
@@ -92,6 +98,79 @@ export function createTeamController() {
       } catch (error) {
         if (error.status === 403) return res.status(403).json({ error: error.message });
         return res.status(500).json({ error: 'Failed to get team balance' });
+      }
+    },
+
+    async memberSpend(req, res) {
+      try {
+        const data = await getTeamMemberSpend(req.params.teamId, req.user.id);
+        return res.json(data);
+      } catch (error) {
+        if (error.status === 403) return res.status(403).json({ error: error.message });
+        return res.status(500).json({ error: 'Failed to get member spend' });
+      }
+    },
+
+    // --- Invite links ---
+
+    async createInviteLink(req, res) {
+      const { role, maxUses, expiresInHours } = req.body;
+      try {
+        const link = await createInviteLink(req.params.teamId, req.user.id, { role, maxUses, expiresInHours });
+        logger.info('Team invite link created', { context: 'team', userId: req.user.id, teamId: req.params.teamId, linkId: link.id });
+        return res.status(201).json({ link });
+      } catch (error) {
+        if (error.status) return res.status(error.status).json({ error: error.message });
+        logger.error('Failed to create invite link', withRequest(req, { context: 'team', error }));
+        return res.status(500).json({ error: 'Failed to create invite link' });
+      }
+    },
+
+    async listInviteLinks(req, res) {
+      try {
+        const links = await listInviteLinks(req.params.teamId, req.user.id);
+        return res.json({ links });
+      } catch (error) {
+        if (error.status === 403) return res.status(403).json({ error: error.message });
+        logger.error('Failed to list invite links', withRequest(req, { context: 'team', error }));
+        return res.status(500).json({ error: 'Failed to list invite links' });
+      }
+    },
+
+    async revokeInviteLink(req, res) {
+      try {
+        await revokeInviteLink(req.params.linkId, req.params.teamId, req.user.id);
+        return res.json({ success: true });
+      } catch (error) {
+        if (error.status) return res.status(error.status).json({ error: error.message });
+        logger.error('Failed to revoke invite link', withRequest(req, { context: 'team', error }));
+        return res.status(500).json({ error: 'Failed to revoke invite link' });
+      }
+    },
+
+    async joinViaInviteLink(req, res) {
+      const { token } = req.params;
+      try {
+        const result = await joinViaInviteLink(token, req.user.id);
+        logger.info('User joined team via invite link', { context: 'team', userId: req.user.id, teamId: result.team.id });
+        return res.json({ team: result.team });
+      } catch (error) {
+        if (error.status) return res.status(error.status).json({ error: error.message });
+        logger.error('Failed to join via invite link', withRequest(req, { context: 'team', error }));
+        return res.status(500).json({ error: 'Failed to join team' });
+      }
+    },
+
+    // --- Activity log ---
+
+    async activity(req, res) {
+      try {
+        const activities = await getTeamActivity(req.params.teamId, req.user.id);
+        return res.json({ activities });
+      } catch (error) {
+        if (error.status === 403) return res.status(403).json({ error: error.message });
+        logger.error('Failed to get team activity', withRequest(req, { context: 'team', error }));
+        return res.status(500).json({ error: 'Failed to get activity' });
       }
     },
   };

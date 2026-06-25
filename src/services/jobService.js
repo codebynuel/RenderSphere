@@ -379,6 +379,7 @@ export async function releaseJobReservation({
   reason,
   status = job?.status,
   amountUsd = unreleasedReservationAmount(job),
+  billedToUserId = null,
   extraMetadata = {},
   requestId = extraMetadata?.requestId || null,
 }) {
@@ -389,7 +390,7 @@ export async function releaseJobReservation({
 
   await releaseRenderReservation({
     client,
-    userId: job.userId,
+    userId: billedToUserId || job.userId,
     referenceId: reservationReferenceId(job),
     jobId: persistedJobId,
     amountUsd: releaseAmount,
@@ -510,14 +511,17 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
             reason: 'completed',
             status,
             amountUsd: releaseAmount,
+            billedToUserId,
             extraMetadata: { requestId, chargedUsd: priceUsd, uncappedPriceUsd, maxBudgetUsd },
           });
         }
 
         if (priceUsd > 0) {
+          const jobBillingMeta = job.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {};
+          const billedToUserId = jobBillingMeta.billedToUserId || userId;
           await chargeRenderCredits({
             client: tx,
-            userId,
+            userId: billedToUserId,
             jobId,
             amountUsd: priceUsd,
             billableSeconds,
@@ -539,11 +543,13 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
     } else if ((status === 'FAILED' || status === 'CANCELLED') && !job.reservationReleasedAt) {
       logger.info('Releasing render reservation after terminal provider status', { context: 'billing', requestId, userId, jobId, status });
       await tx.job.updateMany({ where: { jobId, userId }, data: { ...updateData, billingState: 'RELEASING' } });
+      const failBillingMeta = job.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {};
       await releaseJobReservation({
         client: tx,
         job,
         reason: status.toLowerCase(),
         status,
+        billedToUserId: failBillingMeta.billedToUserId || userId,
         extraMetadata: { requestId, error: updateData.error || null },
       });
     } else {

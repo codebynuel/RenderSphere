@@ -7,6 +7,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Pricing from './pages/Pricing';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
+import JoinTeam from './pages/JoinTeam';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
         <Route path="/legal/terms" element={<Terms />} />
         <Route path="/legal/privacy" element={<Privacy />} />
       </Route>
+      <Route path="/join-team/:token" element={<JoinTeam />} />
     </Routes>
   );
 }

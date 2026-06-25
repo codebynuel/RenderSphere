@@ -35,9 +35,11 @@ model Team {
   ownerId   String
   createdAt DateTime     @default(now())
 
-  owner     User         @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner     User            @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members   TeamMember[]
   projects  Project[]
+  inviteLinks TeamInviteLink[]
+  activityLog TeamActivity[]
 
   @@index([ownerId])
 }
@@ -279,6 +281,40 @@ enum CreditActorType {
   USER
   ADMIN
   SYSTEM
+}
+
+model TeamInviteLink {
+  id        String   @id @default(uuid())
+  teamId    String
+  token     String   @unique
+  role      String   @default("MEMBER")
+  maxUses   Int?
+  useCount  Int      @default(0)
+  expiresAt DateTime?
+  createdBy String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+  @@index([token])
+}
+
+model TeamActivity {
+  id          String   @id @default(uuid())
+  teamId      String
+  actorId     String?
+  actorEmail  String?
+  action      String
+  targetId    String?
+  targetEmail String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, createdAt])
 }
 
 model SystemSetting {

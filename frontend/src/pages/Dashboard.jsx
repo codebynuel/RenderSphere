@@ -377,10 +377,12 @@ export default function Dashboard() {
     const [submitDenoiser, setSubmitDenoiser] = useState('NONE');
     const [submitFormat, setSubmitFormat] = useState('PNG');
     const [submitProjectId, setSubmitProjectId] = useState('');
+    const [submitTeamId, setSubmitTeamId] = useState('');
     const [submitGpuDevice, setSubmitGpuDevice] = useState('AUTO');
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
     const [teams, setTeams] = useState([]);
+    const [activeTeamId, setActiveTeamId] = useState('');
     const [selectedTeam, setSelectedTeam] = useState(null);
     const [teamCreateOpen, setTeamCreateOpen] = useState(false);
     const [teamCreateName, setTeamCreateName] = useState('');
@@ -390,6 +392,17 @@ export default function Dashboard() {
     const [teamInviteRole, setTeamInviteRole] = useState('MEMBER');
     const [teamInviteBudget, setTeamInviteBudget] = useState('');
     const [teamInviting, setTeamInviting] = useState(false);
+    const [teamInviteLinks, setTeamInviteLinks] = useState([]);
+    const [teamInviteLinksLoading, setTeamInviteLinksLoading] = useState(false);
+    const [teamInviteLinkRole, setTeamInviteLinkRole] = useState('MEMBER');
+    const [teamInviteLinkMaxUses, setTeamInviteLinkMaxUses] = useState('');
+    const [teamInviteLinkExpiry, setTeamInviteLinkExpiry] = useState('24');
+    const [teamInviteLinkCreating, setTeamInviteLinkCreating] = useState(false);
+    const [teamActivity, setTeamActivity] = useState([]);
+    const [teamActivityLoading, setTeamActivityLoading] = useState(false);
+    const [joinTeamToken, setJoinTeamToken] = useState('');
+    const [joinTeamOpen, setJoinTeamOpen] = useState(false);
+    const [joinTeamLoading, setJoinTeamLoading] = useState(false);
     const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true, teams: true });
     const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '', billingPackages: '', billingHistory: '' });
     const [paginationMeta, setPaginationMeta] = useState({ keys: null, files: null, jobs: null, projects: null, billingHistory: null });
@@ -624,6 +637,11 @@ export default function Dashboard() {
         };
     }, [user?.id, loadFiles, loadJobs]);
 
+    const visibleProjects = useMemo(() => {
+        if (!activeTeamId) return projects;
+        return projects.filter((p) => p.teamId === activeTeamId);
+    }, [projects, activeTeamId]);
+
     const stats = useMemo(() => {
         const jobsByProject = new Map();
         const filesByProject = new Map();
@@ -669,14 +687,28 @@ export default function Dashboard() {
         };
     }, [files, jobs]);
 
-    const visibleJobs = useMemo(() => jobs
-        .filter((job) => statusMatches(job, jobStatusFilter))
-        .filter((job) => matchesSearch(job, jobSearchQuery)), [jobSearchQuery, jobStatusFilter, jobs]);
+    const visibleJobs = useMemo(() => {
+        let filtered = jobs
+            .filter((job) => statusMatches(job, jobStatusFilter))
+            .filter((job) => matchesSearch(job, jobSearchQuery));
+        if (activeTeamId) {
+            const teamProjectIds = new Set(projects.filter((p) => p.teamId === activeTeamId).map((p) => p.id));
+            filtered = filtered.filter((job) => job.projectId && teamProjectIds.has(job.projectId));
+        }
+        return filtered;
+    }, [jobSearchQuery, jobStatusFilter, jobs, activeTeamId, projects]);
 
     const activeJobs = useMemo(() => visibleJobs.filter((job) => ACTIVE_STATUSES.has(job.status)), [visibleJobs]);
     const historyJobs = useMemo(() => visibleJobs.filter((job) => TERMINAL_STATUSES.has(job.status) || !ACTIVE_STATUSES.has(job.status)), [visibleJobs]);
 
-    const visibleFiles = useMemo(() => files.filter((file) => matchesSearch(file, fileSearchQuery)), [fileSearchQuery, files]);
+    const visibleFiles = useMemo(() => {
+        let filtered = files.filter((file) => matchesSearch(file, fileSearchQuery));
+        if (activeTeamId) {
+            const teamProjectIds = new Set(projects.filter((p) => p.teamId === activeTeamId).map((p) => p.id));
+            filtered = filtered.filter((file) => file.projectId && teamProjectIds.has(file.projectId));
+        }
+        return filtered;
+    }, [fileSearchQuery, files, activeTeamId, projects]);
     const sortedAccessKeys = useMemo(() => sortByCreatedDesc(accessKeys), [accessKeys]);
 
     const viewMeta = useMemo(() => {
@@ -1288,6 +1320,7 @@ export default function Dashboard() {
                 noiseThreshold: 0.01,
             };
             if (submitProjectId) payload.projectId = submitProjectId;
+            if (submitTeamId) payload.teamId = submitTeamId;
 
             const result = await api('/api/render/trigger-render', {
                 method: 'POST',
@@ -1306,7 +1339,7 @@ export default function Dashboard() {
             setSubmitUploading(false);
             setSubmitting(false);
         }
-    }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId]);
+    }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId, submitTeamId]);
 
     const handleCreateTeam = useCallback(async () => {
         if (!teamCreateName.trim()) return;
@@ -1364,12 +1397,91 @@ export default function Dashboard() {
 
     const viewTeamDetail = useCallback(async (teamId) => {
         try {
-            const data = await api(`/api/teams/${teamId}`);
-            setSelectedTeam(data.team);
+            const [detail, spend] = await Promise.all([
+                api(`/api/teams/${teamId}`),
+                api(`/api/teams/${teamId}/member-spend`),
+            ]);
+            setSelectedTeam({ ...detail.team, memberSpend: spend });
+            loadInviteLinks(teamId);
+            loadTeamActivity(teamId);
         } catch (error) {
             toast.error(error.message || 'Failed to load team');
         }
+    }, [loadInviteLinks, loadTeamActivity]);
+
+    const loadInviteLinks = useCallback(async (teamId) => {
+        try {
+            setTeamInviteLinksLoading(true);
+            const data = await api(`/api/teams/${teamId}/invite-links`);
+            setTeamInviteLinks(data.links || []);
+        } catch (error) {
+            // silently ignore
+        } finally {
+            setTeamInviteLinksLoading(false);
+        }
     }, []);
+
+    const loadTeamActivity = useCallback(async (teamId) => {
+        try {
+            setTeamActivityLoading(true);
+            const data = await api(`/api/teams/${teamId}/activity`);
+            setTeamActivity(data.activities || []);
+        } catch (error) {
+            // silently ignore
+        } finally {
+            setTeamActivityLoading(false);
+        }
+    }, []);
+
+    const handleCreateInviteLink = useCallback(async (teamId) => {
+        setTeamInviteLinkCreating(true);
+        try {
+            const body = { role: teamInviteLinkRole };
+            if (teamInviteLinkMaxUses) body.maxUses = Number(teamInviteLinkMaxUses);
+            if (teamInviteLinkExpiry) body.expiresInHours = Number(teamInviteLinkExpiry);
+            const data = await api(`/api/teams/${teamId}/invite-links`, {
+                method: 'POST',
+                body: JSON.stringify(body),
+            });
+            toast.success('Invite link created');
+            loadInviteLinks(teamId);
+            loadTeamActivity(teamId);
+            if (data.link?.token) {
+                copyToClipboard(`${window.location.origin}/join-team/${data.link.token}`, 'invite link');
+            }
+        } catch (error) {
+            toast.error(error.message || 'Failed to create invite link');
+        } finally {
+            setTeamInviteLinkCreating(false);
+        }
+    }, [teamInviteLinkRole, teamInviteLinkMaxUses, teamInviteLinkExpiry, loadInviteLinks, loadTeamActivity]);
+
+    const handleRevokeInviteLink = useCallback(async (teamId, linkId) => {
+        try {
+            await api(`/api/teams/${teamId}/invite-links/${linkId}`, { method: 'DELETE' });
+            toast.success('Invite link revoked');
+            loadInviteLinks(teamId);
+            loadTeamActivity(teamId);
+        } catch (error) {
+            toast.error(error.message || 'Failed to revoke invite link');
+        }
+    }, [loadInviteLinks, loadTeamActivity]);
+
+    const handleJoinTeam = useCallback(async () => {
+        if (!joinTeamToken.trim()) return;
+        setJoinTeamLoading(true);
+        try {
+            const data = await api(`/api/teams/join/${joinTeamToken.trim()}`, { method: 'POST' });
+            toast.success(`Joined team "${data.team.name}"`);
+            setJoinTeamOpen(false);
+            setJoinTeamToken('');
+            loadTeams();
+        } catch (error) {
+            toast.error(error.message || 'Failed to join team');
+        } finally {
+            setJoinTeamLoading(false);
+        }
+    }, [joinTeamToken, loadTeams]);
 
     const resetJobFilters = () => {
         setJobStatusFilter('all');
@@ -1859,9 +1971,20 @@ export default function Dashboard() {
                             <label htmlFor="submit-project">Project <span className="subtle">(optional)</span></label>
                             <select id="submit-project" value={submitProjectId} onChange={(e) => setSubmitProjectId(e.target.value)}>
                                 <option value="">No project</option>
-                                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                {visibleProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                         </div>
+
+                        {/* Team context selector */}
+                        {teams.length > 0 && (
+                        <div className="submit-field">
+                            <label htmlFor="submit-team">Submit on behalf of <span className="subtle">(optional)</span></label>
+                            <select id="submit-team" value={submitTeamId} onChange={(e) => setSubmitTeamId(e.target.value)}>
+                                <option value="">My personal account</option>
+                                {teams.map((t) => <option key={t.id} value={t.id}>{t.name} (as {t.role})</option>)}
+                            </select>
+                        </div>
+                        )}
 
                         {submitError && <div className="submit-error">{submitError}</div>}
 
@@ -1901,9 +2024,14 @@ export default function Dashboard() {
                         <h2>Teams</h2>
                         <p className="muted">Create teams, invite members, and manage budgets. Credits are deducted from your balance.</p>
                     </div>
-                    <button className="button primary" type="button" onClick={() => setTeamCreateOpen(true)}>
-                        <Users size={16} /> New team
-                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="button" type="button" onClick={() => setJoinTeamOpen(true)}>
+                            <Plus size={16} /> Join team
+                        </button>
+                        <button className="button primary" type="button" onClick={() => setTeamCreateOpen(true)}>
+                            <Users size={16} /> New team
+                        </button>
+                    </div>
                 </div>
 
                 {loading.teams ? <LoadingState label="Loading teams..." /> : null}
@@ -1962,6 +2090,38 @@ export default function Dashboard() {
                             </table>
                         </div>
 
+                        {/* Member spend overview */}
+                        {selectedTeam.memberSpend?.isOwner && selectedTeam.memberSpend?.members?.length > 0 && (
+                            <div style={{ marginTop: 20 }}>
+                                <h3 style={{ margin: '0 0 8px' }}>Member spend</h3>
+                                <p className="muted" style={{ margin: '0 0 10px', fontSize: 13 }}>Total spend per member. Budget caps are set on invite.</p>
+                                <div className="data-table-wrap">
+                                    <table className="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Member</th>
+                                                <th>Jobs</th>
+                                                <th>Spent</th>
+                                                <th>Budget cap</th>
+                                                <th>Remaining</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {selectedTeam.memberSpend.members.map((m) => (
+                                                <tr key={m.userId}>
+                                                    <td className="table-primary">{m.name}</td>
+                                                    <td>{m.jobCount}</td>
+                                                    <td>${m.spentUsd.toFixed(2)}</td>
+                                                    <td>{m.budgetCapUsd ? `$${m.budgetCapUsd.toFixed(2)}` : 'No cap'}</td>
+                                                    <td>{m.budgetCapUsd ? `$${Math.max(0, m.budgetCapUsd - m.spentUsd).toFixed(2)}` : '—'}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
                         <button className="button" type="button" onClick={() => setTeamInviteOpen(true)} style={{ marginTop: 12 }}>
                             <Users size={16} /> Invite member
                         </button>
@@ -1983,6 +2143,137 @@ export default function Dashboard() {
                                 </div>
                             </div>
                         )}
+
+                        {/* Invite links section */}
+                        {selectedTeam.myRole === 'OWNER' && (
+                            <div style={{ marginTop: 24 }}>
+                                <h3 style={{ margin: '0 0 4px' }}>Invite links</h3>
+                                <p className="muted" style={{ margin: '0 0 10px', fontSize: 13 }}>Generate shareable links that let anyone join with a single click.</p>
+
+                                {/* Create invite link form */}
+                                <div style={{ display: 'grid', gap: 8, padding: 14, border: '1px solid var(--line-soft)', borderRadius: 14, background: 'var(--panel-section)', marginBottom: 12 }}>
+                                    <label style={{ fontSize: 12 }}>Default role</label>
+                                    <select value={teamInviteLinkRole} onChange={(e) => setTeamInviteLinkRole(e.target.value)} style={{ minHeight: 34 }}>
+                                        <option value="MEMBER">Member</option>
+                                        <option value="READ_ONLY">Read-only</option>
+                                    </select>
+                                    <div style={{ display: 'flex', gap: 10 }}>
+                                        <div style={{ flex: 1 }}>
+                                            <label style={{ fontSize: 12 }}>Max uses <span className="subtle">(blank = unlimited)</span></label>
+                                            <input type="number" min="1" value={teamInviteLinkMaxUses} onChange={(e) => setTeamInviteLinkMaxUses(e.target.value)} placeholder="Unlimited" style={{ minHeight: 34, width: '100%' }} />
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <label style={{ fontSize: 12 }}>Expires after <span className="subtle">(hours)</span></label>
+                                            <input type="number" min="1" value={teamInviteLinkExpiry} onChange={(e) => setTeamInviteLinkExpiry(e.target.value)} placeholder="e.g. 24" style={{ minHeight: 34, width: '100%' }} />
+                                        </div>
+                                    </div>
+                                    <button className="button primary" type="button" onClick={() => handleCreateInviteLink(selectedTeam.id)} disabled={teamInviteLinkCreating} style={{ marginTop: 4 }}>
+                                        {teamInviteLinkCreating ? 'Creating...' : 'Generate invite link'}
+                                    </button>
+                                </div>
+
+                                {/* Existing invite links */}
+                                {teamInviteLinksLoading ? (
+                                    <p className="muted" style={{ fontSize: 12 }}>Loading invite links...</p>
+                                ) : teamInviteLinks.length > 0 ? (
+                                    <div className="data-table-wrap">
+                                        <table className="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Link</th>
+                                                    <th>Role</th>
+                                                    <th>Uses</th>
+                                                    <th>Expires</th>
+                                                    <th>Status</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {teamInviteLinks.map((link) => {
+                                                    const isExpired = link.expired || link.exhausted || !link.active;
+                                                    return (
+                                                        <tr key={link.id}>
+                                                            <td className="table-primary" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 12 }}>
+                                                                {link.active && !isExpired
+                                                                    ? `${window.location.origin}/join-team/${link.token}`
+                                                                    : '—'
+                                                                }
+                                                            </td>
+                                                            <td><span className="pill">{link.role}</span></td>
+                                                            <td>{link.useCount}{link.maxUses ? ` / ${link.maxUses}` : ''}</td>
+                                                            <td style={{ fontSize: 12 }}>{link.expiresAt ? new Date(link.expiresAt).toLocaleDateString() : 'Never'}</td>
+                                                            <td>
+                                                                {!link.active
+                                                                    ? <span className="muted">Revoked</span>
+                                                                    : isExpired
+                                                                        ? <span className="muted">Expired</span>
+                                                                        : <span style={{ color: 'var(--green)' }}>Active</span>
+                                                                }
+                                                            </td>
+                                                            <td>
+                                                                {link.active && !isExpired && (
+                                                                    <button className="button compact-button" type="button" onClick={() => copyToClipboard(`${window.location.origin}/join-team/${link.token}`, 'invite link')} style={{ marginRight: 6 }}>
+                                                                        <Copy size={13} /> Copy
+                                                                    </button>
+                                                                )}
+                                                                {link.active && (
+                                                                    <button className="button compact-button" type="button" onClick={() => handleRevokeInviteLink(selectedTeam.id, link.id)} style={{ color: 'var(--danger)' }}>
+                                                                        Revoke
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <p className="muted" style={{ fontSize: 12 }}>No invite links yet. Create one above.</p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Activity log */}
+                        <div style={{ marginTop: 24 }}>
+                            <h3 style={{ margin: '0 0 4px' }}>Activity log</h3>
+                            <p className="muted" style={{ margin: '0 0 10px', fontSize: 13 }}>Recent team events.</p>
+                            {teamActivityLoading ? (
+                                <p className="muted" style={{ fontSize: 12 }}>Loading activity...</p>
+                            ) : teamActivity.length > 0 ? (
+                                <div className="data-table-wrap">
+                                    <table className="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Action</th>
+                                                <th>Actor</th>
+                                                <th>Target</th>
+                                                <th>Date</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {teamActivity.map((a) => (
+                                                <tr key={a.id}>
+                                                    <td className="table-primary" style={{ fontSize: 13 }}>
+                                                        {a.action === 'member_invited' && 'Invited member'}
+                                                        {a.action === 'member_joined' && 'Member joined'}
+                                                        {a.action === 'member_removed' && 'Removed member'}
+                                                        {a.action === 'member_updated' && 'Updated member'}
+                                                        {a.action === 'invite_link_created' && 'Created invite link'}
+                                                        {!['member_invited', 'member_joined', 'member_removed', 'member_updated', 'invite_link_created'].includes(a.action) && a.action}
+                                                    </td>
+                                                    <td style={{ fontSize: 13 }}>{a.actorEmail || a.actorId || 'System'}</td>
+                                                    <td style={{ fontSize: 13 }}>{a.targetEmail || a.targetId || '—'}</td>
+                                                    <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{new Date(a.createdAt).toLocaleString()}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="muted" style={{ fontSize: 12 }}>No activity yet.</p>
+                            )}
+                        </div>
                     </motion.div>
                 )}
 
@@ -1996,6 +2287,21 @@ export default function Dashboard() {
                                 <button className="button primary" type="button" onClick={handleCreateTeam} disabled={teamCreating || !teamCreateName.trim()}>{teamCreating ? 'Creating...' : 'Create'}</button>
                             </div>
                             <button className="button" type="button" onClick={() => setTeamCreateOpen(false)} style={{ marginTop: 8 }}>Cancel</button>
+                        </div>
+                    </div>
+                )}
+
+                {joinTeamOpen && (
+                    <div className="confirm-overlay" onClick={() => { setJoinTeamOpen(false); setJoinTeamToken(''); }}>
+                        <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+                            <h3>Join a team</h3>
+                            <p className="muted">Paste an invite link token to join a team.</p>
+                            <div className="inline-form">
+                                <input type="text" value={joinTeamToken} onChange={(e) => setJoinTeamToken(e.target.value)} placeholder="Paste invite token here" autoFocus style={{ minWidth: 280 }} />
+                                <button className="button primary" type="button" onClick={handleJoinTeam} disabled={joinTeamLoading || !joinTeamToken.trim()}>{joinTeamLoading ? 'Joining...' : 'Join'}</button>
+                            </div>
+                            <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>The token is the part after <code>/join-team/</code> in the invite link.</p>
+                            <button className="button" type="button" onClick={() => { setJoinTeamOpen(false); setJoinTeamToken(''); }} style={{ marginTop: 4 }}>Cancel</button>
                         </div>
                     </div>
                 )}
@@ -2075,7 +2381,7 @@ export default function Dashboard() {
                                     <span>Project</span>
                                     <select value={newKeyProjectId} onChange={(e) => setNewKeyProjectId(e.target.value)} disabled={creatingKey}>
                                         <option value="">Select a project...</option>
-                                        {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                        {visibleProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                                     </select>
                                 </label>
                             )}
@@ -2911,6 +3217,16 @@ export default function Dashboard() {
                         <p className="muted">{viewMeta.description}</p>
                     </div>
                     <div className="titlebar-actions">
+                        {teams.length > 0 && (
+                            <select
+                                value={activeTeamId}
+                                onChange={(e) => { setActiveTeamId(e.target.value); setSelectedTeam(null); }}
+                                style={{ minHeight: 38, fontSize: 12, maxWidth: 200 }}
+                            >
+                                <option value="">Personal workspace</option>
+                                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                            </select>
+                        )}
                         <button className="button" type="button" onClick={loadAll}>
                             <RefreshCcw size={16} /> Refresh all
                         </button>

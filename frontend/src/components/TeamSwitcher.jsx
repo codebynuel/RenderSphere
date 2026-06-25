@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Users, Plus, ChevronDown, Check } from 'lucide-react';
+import { Users, Plus, ChevronDown, Check, LogIn, Settings } from 'lucide-react';
 import { api } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 
-export default function TeamSwitcher({ activeTeamId, onTeamChange }) {
-    const { user, reloadUser } = useAuth();
+export default function TeamSwitcher() {
+    const { user, activeTeamId, setActiveTeamId } = useAuth();
     const [teams, setTeams] = useState([]);
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [creating, setCreating] = useState(false);
-    const [createName, setCreateName] = useState('');
-    const [createError, setCreateError] = useState('');
     const ref = useRef(null);
     const buttonRef = useRef(null);
 
@@ -26,40 +23,14 @@ export default function TeamSwitcher({ activeTeamId, onTeamChange }) {
         }
     };
 
-    // Load teams on mount and when user changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (!user?.id) return;
         // eslint-disable-next-line react-hooks/set-state-in-effect
         loadTeams();
     }, [user?.id]);
 
-    const handleCreateTeam = async (e) => {
-        e.preventDefault();
-        if (!createName.trim() || creating) return;
-        setCreating(true);
-        setCreateError('');
-        try {
-            const data = await api('/api/teams', {
-                method: 'POST',
-                body: JSON.stringify({ name: createName.trim() }),
-            });
-            setCreateName('');
-            setCreating(false);
-            setOpen(false);
-            await loadTeams();
-            if (data.team?.id) {
-                onTeamChange(data.team.id);
-            }
-            await reloadUser();
-        } catch (error) {
-            setCreateError(error.message || 'Failed to create team');
-            setCreating(false);
-        }
-    };
-
     const handleSelectTeam = (teamId) => {
-        onTeamChange(teamId);
+        setActiveTeamId(teamId);
         setOpen(false);
     };
 
@@ -77,15 +48,29 @@ export default function TeamSwitcher({ activeTeamId, onTeamChange }) {
 
     const activeTeam = teams.find(t => t.id === activeTeamId);
 
+    const handleOpenCreate = () => {
+        setOpen(false);
+        window.dispatchEvent(new CustomEvent('open-create-team'));
+    };
+
+    const handleOpenJoin = () => {
+        setOpen(false);
+        window.dispatchEvent(new CustomEvent('open-join-team'));
+    };
+
+    const handleManageTeam = (teamId) => {
+        setOpen(false);
+        window.dispatchEvent(new CustomEvent('manage-team', { detail: { teamId } }));
+    };
+
     if (teams.length === 0 && !loading) {
         return (
             <button
                 ref={buttonRef}
                 className="team-switcher-trigger"
                 type="button"
-                onClick={() => setOpen(true)}
+                onClick={handleOpenCreate}
                 aria-label="Create team"
-                aria-expanded={open}
             >
                 <Users size={16} />
                 <span>Create team</span>
@@ -116,13 +101,6 @@ export default function TeamSwitcher({ activeTeamId, onTeamChange }) {
                 <div className="team-switcher-dropdown" role="listbox" aria-label="Select team">
                     <div className="team-switcher-header">
                         <span className="team-switcher-title">Team context</span>
-                        <button
-                            className="team-switcher-create-btn"
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
-                        >
-                            <Plus size={14} /> New team
-                        </button>
                     </div>
 
                     <div className="team-switcher-options">
@@ -164,25 +142,19 @@ export default function TeamSwitcher({ activeTeamId, onTeamChange }) {
                         )}
                     </div>
 
-                    {/* Create team inline form */}
-                    <form className="team-switcher-create-form" onSubmit={handleCreateTeam}>
-                        <input
-                            type="text"
-                            className="team-switcher-create-input"
-                            placeholder="Team name"
-                            value={createName}
-                            onChange={(e) => setCreateName(e.target.value)}
-                            autoFocus
-                            maxLength={80}
-                        />
-                        <div className="team-switcher-create-actions">
-                            <button type="button" className="button" onClick={() => { setCreateName(''); setCreateError(''); setOpen(false); }}>Cancel</button>
-                            <button type="submit" className="button primary" disabled={creating || !createName.trim()}>
-                                {creating ? 'Creating...' : 'Create team'}
+                    <div className="team-switcher-footer">
+                        <button className="team-switcher-action" type="button" onClick={handleOpenCreate}>
+                            <Plus size={14} /> New team
+                        </button>
+                        <button className="team-switcher-action" type="button" onClick={handleOpenJoin}>
+                            <LogIn size={14} /> Join team
+                        </button>
+                        {activeTeam && (
+                            <button className="team-switcher-action" type="button" onClick={() => handleManageTeam(activeTeam.id)}>
+                                <Settings size={14} /> Manage team
                             </button>
-                        </div>
-                        {createError && <p className="team-switcher-create-error">{createError}</p>}
-                    </form>
+                        )}
+                    </div>
                 </div>
             )}
         </div>

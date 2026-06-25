@@ -634,6 +634,45 @@ button {
     font-weight: 600;
 }
 
+/* ── Team Switcher footer actions ─────────────────────────── */
+
+.team-switcher-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px 4px;
+    border-top: 1px solid var(--line-soft);
+    margin-top: 4px;
+}
+
+.team-switcher-action {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 34px;
+    border: 0;
+    border-radius: 8px;
+    padding: 0 10px;
+    color: var(--muted);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.team-switcher-action:hover {
+    color: var(--text);
+    background: var(--button-bg);
+}
+
+.team-switcher-action svg {
+    flex: 0 0 auto;
+    color: var(--accent);
+}
+
 /* ── Buttons ──────────────────────────────────────────────────── */
 
 .button,

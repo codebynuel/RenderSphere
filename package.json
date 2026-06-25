@@ -22,6 +22,8 @@
     "docker:build:web": "docker build -f Dockerfile.web -t rendersphere-web:local .",
     "docker:build:worker": "docker build -f Dockerfile -t blender-runpod-worker:local .",
     "web:build": "npm run frontend:install && npm run frontend:build",
+    "web:rebuild": "node scripts/rebuild-frontend.mjs",
+    "web:fix-blank": "node scripts/rebuild-frontend.mjs",
     "release:prepare": "npm run db:generate && npm run web:build",
     "release:verify": "npm run lint:backend && npm run prisma:validate && npm run db:generate && npm run frontend:lint && npm run frontend:build && npm run package:extension:verify && npm run audit:release",
     "release:verify:db": "npm run db:check-isolated && npm run db:deploy && npm run db:status && npm run test",

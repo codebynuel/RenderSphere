@@ -317,7 +317,7 @@ function StatusPill({ status }) {
 }
 
 export default function Dashboard() {
-    const { user, loading: authLoading, setUser } = useAuth();
+    const { user, loading: authLoading, setUser, activeTeamId, setActiveTeamId } = useAuth();
     const navigate = useNavigate();
 
     const [activeView, setActiveView] = useState('overview');
@@ -352,7 +352,6 @@ export default function Dashboard() {
     const [pendingDeleteKey, setPendingDeleteKey] = useState(null);
     const [deletingKeyId, setDeletingKeyId] = useState(null);
     const [newProjectName, setNewProjectName] = useState('');
-    const [createProjectTeamId, setCreateProjectTeamId] = useState('');
     const [editingProjectId, setEditingProjectId] = useState(null);
     const [editingProjectName, setEditingProjectName] = useState('');
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
@@ -390,7 +389,6 @@ export default function Dashboard() {
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
     const [teams, setTeams] = useState([]);
-    const [activeTeamId, setActiveTeamId] = useState('');
     const [selectedTeam, setSelectedTeam] = useState(null);
     const [teamCreateOpen, setTeamCreateOpen] = useState(false);
     const [teamCreateName, setTeamCreateName] = useState('');
@@ -645,6 +643,36 @@ export default function Dashboard() {
         };
     }, [user?.id, loadFiles, loadJobs]);
 
+    // Listen for team events from TeamSwitcher (create/join/manage modals)
+    useEffect(() => {
+        const handleOpenCreate = () => setTeamCreateOpen(true);
+        const handleOpenJoin = () => { setJoinTeamOpen(true); setJoinTeamToken(''); };
+        const handleManageTeam = (e) => {
+            const teamId = e.detail?.teamId;
+            if (!teamId) return;
+            setActiveTeamId(teamId);
+            setActiveView('teams');
+            // eslint-disable-next-line react-hooks/immutability
+            viewTeamDetail(teamId);
+        };
+        window.addEventListener('open-create-team', handleOpenCreate);
+        window.addEventListener('open-join-team', handleOpenJoin);
+        window.addEventListener('manage-team', handleManageTeam);
+        return () => {
+            window.removeEventListener('open-create-team', handleOpenCreate);
+            window.removeEventListener('open-join-team', handleOpenJoin);
+            window.removeEventListener('manage-team', handleManageTeam);
+        };
+    }, [setActiveTeamId, setActiveView]);
+
+    // Reload all data when team context changes (separate workspace feel)
+    const prevTeamIdRef = useRef(activeTeamId);
+    useEffect(() => {
+        if (prevTeamIdRef.current === activeTeamId) return;
+        prevTeamIdRef.current = activeTeamId;
+        loadAll();
+    }, [activeTeamId, loadAll]);
+
     const visibleProjects = useMemo(() => {
         if (!activeTeamId) return projects;
         return projects.filter((p) => p.teamId === activeTeamId);
@@ -662,10 +690,17 @@ export default function Dashboard() {
         let totalSpend = 0;
         let billableSeconds = 0;
 
-        jobs.forEach((job) => {
+        const teamProjectIds = activeTeamId
+            ? new Set(projects.filter((p) => p.teamId === activeTeamId).map((p) => p.id))
+            : null;
+
+        const filteredJobs = teamProjectIds
+            ? jobs.filter((job) => job.projectId && teamProjectIds.has(job.projectId))
+            : jobs;
+
+        filteredJobs.forEach((job) => {
             if (job.projectId) jobsByProject.set(job.projectId, (jobsByProject.get(job.projectId) || 0) + 1);
             else unassignedJobs += 1;
-
             if (ACTIVE_STATUSES.has(job.status)) activeJobs += 1;
             if (job.status === 'COMPLETED') completedJobs += 1;
             if (job.status === 'FAILED') failedJobs += 1;
@@ -674,7 +709,11 @@ export default function Dashboard() {
             billableSeconds += Number(job.billableSeconds || 0);
         });
 
-        files.forEach((file) => {
+        const filteredFiles = teamProjectIds
+            ? files.filter((file) => file.projectId && teamProjectIds.has(file.projectId))
+            : files;
+
+        filteredFiles.forEach((file) => {
             if (file.projectId) filesByProject.set(file.projectId, (filesByProject.get(file.projectId) || 0) + 1);
             else unassignedFiles += 1;
         });
@@ -687,13 +726,13 @@ export default function Dashboard() {
             failedJobs,
             filesByProject,
             jobsByProject,
-            totalFiles: files.length,
-            totalJobs: jobs.length,
+            totalFiles: filteredFiles.length,
+            totalJobs: filteredJobs.length,
             totalSpend,
             unassignedFiles,
             unassignedJobs,
         };
-    }, [files, jobs]);
+    }, [files, jobs, activeTeamId, projects]);
 
     const visibleJobs = useMemo(() => {
         let filtered = jobs
@@ -969,7 +1008,7 @@ export default function Dashboard() {
         setCreatingProject(true);
         try {
             const body = { name: newProjectName.trim() };
-            if (createProjectTeamId) body.teamId = createProjectTeamId;
+            if (activeTeamId) body.teamId = activeTeamId;
             const data = await api('/api/projects', {
                 method: 'POST',
                 body: JSON.stringify(body),
@@ -978,7 +1017,6 @@ export default function Dashboard() {
             setProjects((current) => [data.project, ...current]);
             setProjectsPage(1);
             setNewProjectName('');
-            setCreateProjectTeamId('');
             setActiveView('projects');
             toast.success('Project created.');
         } catch (error) {
@@ -2542,7 +2580,7 @@ export default function Dashboard() {
     };
 
     const renderProjects = () => {
-        const projectPagination = paginateItems(projects, projectsPage);
+        const projectPagination = paginateItems(visibleProjects, projectsPage);
         return (
         <motion.div className="panel dashboard-panel full" data-tour="projects-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
             <div className="panel-head project-panel-head">
@@ -2551,7 +2589,7 @@ export default function Dashboard() {
                     <p className="muted">Manage production containers and jump into related renders or files from explicit actions.</p>
                 </div>
                 <div className="project-summary-strip">
-                    <span><strong>{projects.length}</strong> of {paginationMeta.projects?.totalItems ?? projects.length} projects loaded</span>
+                    <span><strong>{visibleProjects.length}</strong> of {paginationMeta.projects?.totalItems ?? projects.length} projects</span>
                     <span><strong>{stats.unassignedJobs}</strong> unassigned jobs</span>
                 </div>
             </div>
@@ -2566,12 +2604,7 @@ export default function Dashboard() {
                         disabled={creatingProject}
                         style={{ flex: 1 }}
                     />
-                    {teams.length > 0 && (
-                        <select value={createProjectTeamId} onChange={(e) => setCreateProjectTeamId(e.target.value)} style={{ minHeight: 38, maxWidth: 180, fontSize: 12 }}>
-                            <option value="">Personal project</option>
-                            {teams.map((t) => <option key={t.id} value={t.id}>{t.name} team</option>)}
-                        </select>
-                    )}
+
                     <button className="button primary" type="submit" disabled={creatingProject || !newProjectName.trim()}>
                         <FolderPlus size={16} /> Create project
                     </button>
@@ -2582,7 +2615,8 @@ export default function Dashboard() {
                 {loading.projects ? <LoadingState label="Loading projects..." /> : null}
                 {!loading.projects && errors.projects ? <ErrorState message={errors.projects} onRetry={loadProjects} /> : null}
                 {!loading.projects && !errors.projects && projects.length === 0 ? <EmptyState icon={FolderKanban} title="No projects yet" text="Create projects for client work, shot sequences, milestones, experiments, or internal tests." /> : null}
-                {!loading.projects && !errors.projects && projects.length > 0 ? (
+                {!loading.projects && !errors.projects && activeTeamId && projects.length > 0 && visibleProjects.length === 0 ? <EmptyState icon={FolderKanban} title="No projects for this team" text="Switch to a different team or create a new project under this team." /> : null}
+                {!loading.projects && !errors.projects && visibleProjects.length > 0 ? (
                     <>
                     <div className="data-table-wrap project-table-wrap">
                         <table className="data-table" aria-label="Projects">
@@ -3404,16 +3438,6 @@ export default function Dashboard() {
                         <p className="muted">{viewMeta.description}</p>
                     </div>
                     <div className="titlebar-actions">
-                        {teams.length > 0 && (
-                            <select
-                                value={activeTeamId}
-                                onChange={(e) => { setActiveTeamId(e.target.value); setSelectedTeam(null); }}
-                                style={{ minHeight: 38, fontSize: 12, maxWidth: 200 }}
-                            >
-                                <option value="">Personal workspace</option>
-                                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                            </select>
-                        )}
                         <button className="button" type="button" onClick={loadAll}>
                             <RefreshCcw size={16} /> Refresh all
                         </button>
@@ -3442,7 +3466,7 @@ export default function Dashboard() {
                 {activeView === 'submit' && <div className="dashboard-grid operations-grid">{renderSubmitForm()}</div>}
                 {activeView === 'overview' && (
                     <div className="dashboard-metrics-grid operations-metrics">
-                        <MetricCard icon={FolderKanban} label="Projects" value={projects.length} detail={`${stats.unassignedJobs} unassigned jobs`} />
+                        <MetricCard icon={FolderKanban} label="Projects" value={visibleProjects.length} detail={`${stats.unassignedJobs} unassigned jobs`} />
                         <MetricCard icon={Activity} label="Active jobs" value={stats.activeJobs} detail={`${stats.totalJobs} total jobs`} tone="active" />
                         <MetricCard icon={CheckCircle2} label="Completed" value={stats.completedJobs} detail={`${stats.totalFiles} downloadable files`} tone="good" />
                         <MetricCard icon={XCircle} label="Failed" value={stats.failedJobs} detail={`${stats.cancelledJobs} cancelled`} tone="danger" />

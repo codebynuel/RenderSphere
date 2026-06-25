@@ -8,6 +8,7 @@ import { reserveRenderCredits } from '../services/creditService.js';
 import { buildRunpodInput, estimateRenderCostUsd, normalizeRenderSettings, releaseJobReservation, resolveRenderBudget, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
 import { cancelRunpodJob, startRunpodRender } from '../services/runpodService.js';
 import { createUploadUrl, isSafeFileName, isSafeObjectKey } from '../services/storageService.js';
+import { userCanSubmitToProject } from '../services/projectService.js';
 
 function normalizeIdempotencyKey(req) {
   const rawValue = req.get('Idempotency-Key') || req.get('X-Idempotency-Key') || req.body?.idempotencyKey || req.body?.clientRequestId || '';
@@ -116,17 +117,21 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         }
       }
 
-      const [upload, activeJobs, user, project] = await Promise.all([
+      const [upload, activeJobs, user] = await Promise.all([
         prisma.upload.findFirst({ where: { key: fileKey, userId: req.user.id } }),
         prisma.job.count({ where: { userId: req.user.id, status: { in: Array.from(ACTIVE_JOB_STATUSES) } } }),
         prisma.user.findUnique({ where: { id: req.user.id } }),
-        projectId ? prisma.project.findFirst({ where: { id: projectId, userId: req.user.id } }) : Promise.resolve(null),
       ]);
 
       if (!upload) return res.status(403).json({ error: 'This upload does not belong to the authenticated account' });
       if (upload.used) return res.status(409).json({ error: 'This upload has already been used' });
       if (activeJobs >= config.maxConcurrentJobsPerUser) return res.status(429).json({ error: 'Active job limit reached' });
-      if (projectId && !project) return res.status(404).json({ error: 'Project not found' });
+
+      // Enforce project-level access (project owner or COLLABORATOR+)
+      if (projectId) {
+        const canSubmit = await userCanSubmitToProject(projectId, req.user.id);
+        if (!canSubmit) return res.status(403).json({ error: 'You do not have permission to submit renders to this project.' });
+      }
 
       // Enforce access key budget cap
       if (req.accessKey?.budgetCapUsd && req.accessKey.budgetSpentUsd >= req.accessKey.budgetCapUsd) {

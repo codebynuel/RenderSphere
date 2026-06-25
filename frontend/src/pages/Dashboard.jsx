@@ -352,6 +352,7 @@ export default function Dashboard() {
     const [pendingDeleteKey, setPendingDeleteKey] = useState(null);
     const [deletingKeyId, setDeletingKeyId] = useState(null);
     const [newProjectName, setNewProjectName] = useState('');
+    const [createProjectTeamId, setCreateProjectTeamId] = useState('');
     const [editingProjectId, setEditingProjectId] = useState(null);
     const [editingProjectName, setEditingProjectName] = useState('');
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
@@ -359,6 +360,13 @@ export default function Dashboard() {
     const [creatingKey, setCreatingKey] = useState(false);
     const [creatingProject, setCreatingProject] = useState(false);
     const [updatingProjectId, setUpdatingProjectId] = useState(null);
+    const [projectMembers, setProjectMembers] = useState([]);
+    const [projectMembersOpen, setProjectMembersOpen] = useState(false);
+    const [projectMembersProject, setProjectMembersProject] = useState(null);
+    const [projectMembersLoading, setProjectMembersLoading] = useState(false);
+    const [projectAddMemberEmail, setProjectAddMemberEmail] = useState('');
+    const [projectAddMemberRole, setProjectAddMemberRole] = useState('VIEWER');
+    const [projectAddMemberLoading, setProjectAddMemberLoading] = useState(false);
     const [creatingTopUpPackageId, setCreatingTopUpPackageId] = useState(null);
     const [creatingCustomTopUp, setCreatingCustomTopUp] = useState(false);
     const [creatingNpPackageId] = useState(null);
@@ -960,14 +968,17 @@ export default function Dashboard() {
         if (!newProjectName.trim()) return;
         setCreatingProject(true);
         try {
+            const body = { name: newProjectName.trim() };
+            if (createProjectTeamId) body.teamId = createProjectTeamId;
             const data = await api('/api/projects', {
                 method: 'POST',
-                body: JSON.stringify({ name: newProjectName.trim() }),
+                body: JSON.stringify(body),
             });
             loadProjects({ page: 1 });
             setProjects((current) => [data.project, ...current]);
             setProjectsPage(1);
             setNewProjectName('');
+            setCreateProjectTeamId('');
             setActiveView('projects');
             toast.success('Project created.');
         } catch (error) {
@@ -1187,6 +1198,73 @@ export default function Dashboard() {
             toast.error(error.message || 'Failed to delete project');
         }
     };
+
+    const openProjectMembers = useCallback(async (project) => {
+        setProjectMembersProject(project);
+        setProjectMembersOpen(true);
+        setProjectMembersLoading(true);
+        try {
+            const data = await api(`/api/projects/${project.id}/members`);
+            setProjectMembers(data.members || []);
+        } catch (error) {
+            toast.error(error.message || 'Failed to load project members');
+        } finally {
+            setProjectMembersLoading(false);
+        }
+    }, []);
+
+    const closeProjectMembers = useCallback(() => {
+        setProjectMembersOpen(false);
+        setProjectMembersProject(null);
+        setProjectMembers([]);
+        setProjectAddMemberEmail('');
+    }, []);
+
+    const handleAddProjectMember = useCallback(async () => {
+        if (!projectAddMemberEmail.trim() || !projectMembersProject) return;
+        setProjectAddMemberLoading(true);
+        try {
+            await api(`/api/projects/${projectMembersProject.id}/members`, {
+                method: 'POST',
+                body: JSON.stringify({ email: projectAddMemberEmail.trim(), role: projectAddMemberRole }),
+            });
+            toast.success('Member added to project');
+            setProjectAddMemberEmail('');
+            const data = await api(`/api/projects/${projectMembersProject.id}/members`);
+            setProjectMembers(data.members || []);
+        } catch (error) {
+            toast.error(error.message || 'Failed to add member');
+        } finally {
+            setProjectAddMemberLoading(false);
+        }
+    }, [projectAddMemberEmail, projectAddMemberRole, projectMembersProject]);
+
+    const handleRemoveProjectMember = useCallback(async (memberUserId) => {
+        if (!projectMembersProject) return;
+        try {
+            await api(`/api/projects/${projectMembersProject.id}/members/${memberUserId}`, { method: 'DELETE' });
+            toast.success('Member removed from project');
+            const data = await api(`/api/projects/${projectMembersProject.id}/members`);
+            setProjectMembers(data.members || []);
+        } catch (error) {
+            toast.error(error.message || 'Failed to remove member');
+        }
+    }, [projectMembersProject]);
+
+    const handleUpdateProjectMember = useCallback(async (memberUserId, role) => {
+        if (!projectMembersProject) return;
+        try {
+            await api(`/api/projects/${projectMembersProject.id}/members/${memberUserId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ role }),
+            });
+            toast.success('Member role updated');
+            const data = await api(`/api/projects/${projectMembersProject.id}/members`);
+            setProjectMembers(data.members || []);
+        } catch (error) {
+            toast.error(error.message || 'Failed to update member');
+        }
+    }, [projectMembersProject]);
 
     const handleCancelJob = async (jobId) => {
         if (!window.confirm(`Cancel job ${jobId}?`)) return;
@@ -2477,18 +2555,27 @@ export default function Dashboard() {
                     <span><strong>{stats.unassignedJobs}</strong> unassigned jobs</span>
                 </div>
             </div>
-            <form className="inline-form" onSubmit={handleCreateProject}>
-                <input
-                    type="text"
-                    maxLength={80}
-                    placeholder="Project name, for example Product launch shot 04"
-                    value={newProjectName}
-                    onChange={(event) => setNewProjectName(event.target.value)}
-                    disabled={creatingProject}
-                />
-                <button className="button primary" type="submit" disabled={creatingProject || !newProjectName.trim()}>
-                    <FolderPlus size={16} /> Create project
-                </button>
+            <form className="inline-form project-create-form" onSubmit={handleCreateProject}>
+                <div style={{ display: 'flex', gap: 8, flex: 1, alignItems: 'center' }}>
+                    <input
+                        type="text"
+                        maxLength={80}
+                        placeholder="Project name, for example Product launch shot 04"
+                        value={newProjectName}
+                        onChange={(event) => setNewProjectName(event.target.value)}
+                        disabled={creatingProject}
+                        style={{ flex: 1 }}
+                    />
+                    {teams.length > 0 && (
+                        <select value={createProjectTeamId} onChange={(e) => setCreateProjectTeamId(e.target.value)} style={{ minHeight: 38, maxWidth: 180, fontSize: 12 }}>
+                            <option value="">Personal project</option>
+                            {teams.map((t) => <option key={t.id} value={t.id}>{t.name} team</option>)}
+                        </select>
+                    )}
+                    <button className="button primary" type="submit" disabled={creatingProject || !newProjectName.trim()}>
+                        <FolderPlus size={16} /> Create project
+                    </button>
+                </div>
             </form>
 
             <div className="project-table-region" aria-live="polite">
@@ -2502,6 +2589,7 @@ export default function Dashboard() {
                             <thead>
                                 <tr>
                                     <th scope="col">Name</th>
+                                    <th scope="col">Type</th>
                                     <th scope="col">Jobs</th>
                                     <th scope="col">Updated</th>
                                     <th scope="col">Actions</th>
@@ -2513,6 +2601,7 @@ export default function Dashboard() {
                                     const fileCount = stats.filesByProject.get(project.id) || 0;
                                     const isEditing = editingProjectId === project.id;
                                     const editFormId = `project-edit-${project.id}`;
+                                    const isOwner = project.myRole === 'owner' || !project.myRole;
                                     const projectActionItems = isEditing ? [
                                         {
                                             disabled: updatingProjectId === project.id || !editingProjectName.trim(),
@@ -2542,6 +2631,15 @@ export default function Dashboard() {
                                             label: 'View files',
                                             onClick: () => viewProjectFiles(project),
                                         },
+                                        ...(isOwner ? [
+                                        {
+                                            icon: Users,
+                                            key: 'members',
+                                            label: 'Members',
+                                            onClick: () => openProjectMembers(project),
+                                        },
+                                        ] : []),
+                                        ...(isOwner ? [
                                         {
                                             icon: Edit3,
                                             key: 'rename',
@@ -2555,6 +2653,7 @@ export default function Dashboard() {
                                             label: 'Delete',
                                             onClick: () => handleDeleteProject(project),
                                         },
+                                        ] : []),
                                     ];
                                     return (
                                         <tr className="data-row" key={project.id}>
@@ -2575,6 +2674,15 @@ export default function Dashboard() {
                                                         <div className="table-primary">{project.name}</div>
                                                         <code className="inline-code">{project.id}</code>
                                                     </div>
+                                                )}
+                                            </td>
+                                            <td data-label="Type">
+                                                {project.visibility === 'TEAM_PROJECT'
+                                                    ? <span className="pill" style={{ fontSize: 11 }}>Team</span>
+                                                    : <span className="pill pending" style={{ fontSize: 11 }}>Personal</span>
+                                                }
+                                                {project.myRole && project.myRole !== 'owner' && (
+                                                    <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{project.myRole}</span>
                                                 )}
                                             </td>
                                             <td data-label="Jobs"><strong>{jobCount}</strong></td>
@@ -2605,6 +2713,85 @@ export default function Dashboard() {
                 ) : null}
             </div>
         </motion.div>
+        );
+    };
+
+    const renderProjectMembersDialog = () => {
+        if (!projectMembersOpen || !projectMembersProject) return null;
+        return (
+            <div className="confirm-overlay" onClick={closeProjectMembers}>
+                <motion.div className="confirm-box" onClick={(e) => e.stopPropagation()} initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} style={{ maxWidth: 520 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                        <h3 style={{ margin: 0 }}>Project members — {projectMembersProject.name}</h3>
+                        <button className="button compact-button ghost-button" type="button" onClick={closeProjectMembers}><X size={15} /></button>
+                    </div>
+
+                    {projectMembersLoading ? (
+                        <p className="muted">Loading members...</p>
+                    ) : (
+                        <>
+                            <div className="data-table-wrap" style={{ marginBottom: 14 }}>
+                                <table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Member</th>
+                                            <th>Role</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {projectMembers.map((m) => (
+                                            <tr key={m.userId}>
+                                                <td className="table-primary">{m.name}</td>
+                                                <td>
+                                                    {m.userId === projectMembersProject.userId ? (
+                                                        <span className="pill">Owner</span>
+                                                    ) : (
+                                                        <select
+                                                            value={m.role}
+                                                            onChange={(e) => handleUpdateProjectMember(m.userId, e.target.value)}
+                                                            style={{ minHeight: 28, fontSize: 12 }}
+                                                        >
+                                                            <option value="COLLABORATOR">Collaborator</option>
+                                                            <option value="VIEWER">Viewer</option>
+                                                        </select>
+                                                    )}
+                                                </td>
+                                                <td>
+                                                    {m.userId !== projectMembersProject.userId && (
+                                                        <button className="button compact-button" type="button" onClick={() => handleRemoveProjectMember(m.userId)} style={{ color: 'var(--danger)' }}>
+                                                            Remove
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Add member form */}
+                            <div style={{ display: 'grid', gap: 8, padding: 12, border: '1px solid var(--line-soft)', borderRadius: 12, background: 'var(--panel-section)' }}>
+                                <label style={{ fontSize: 12 }}>Add member by email</label>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <input type="email" value={projectAddMemberEmail} onChange={(e) => setProjectAddMemberEmail(e.target.value)} placeholder="colleague@studio.com" style={{ flex: 1, minHeight: 34 }} />
+                                    <select value={projectAddMemberRole} onChange={(e) => setProjectAddMemberRole(e.target.value)} style={{ minHeight: 34, maxWidth: 140, fontSize: 12 }}>
+                                        <option value="COLLABORATOR">Collaborator</option>
+                                        <option value="VIEWER">Viewer</option>
+                                    </select>
+                                    <button className="button primary" type="button" onClick={handleAddProjectMember} disabled={projectAddMemberLoading || !projectAddMemberEmail.trim()} style={{ whiteSpace: 'nowrap' }}>
+                                        {projectAddMemberLoading ? 'Adding...' : 'Add'}
+                                    </button>
+                                </div>
+                                <p className="muted" style={{ fontSize: 11, margin: 0 }}>
+                                    <strong>Collaborator</strong> — can submit renders to this project &bull;
+                                    <strong> Viewer</strong> — can view progress only
+                                </p>
+                            </div>
+                        </>
+                    )}
+                </motion.div>
+            </div>
         );
     };
 
@@ -3272,6 +3459,7 @@ export default function Dashboard() {
             </section>
             {renderCreateKeyDialog()}
             {renderDeleteKeyDialog()}
+            {renderProjectMembersDialog()}
             {renderProductTour()}
         </main>
     );

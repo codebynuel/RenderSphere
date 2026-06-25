@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { HelpCircle, LogOut, Moon, Shield, Sun, WalletCards } from 'lucide-react';
-import { formatUsd } from '../utils/api';
+import { formatUsd, api } from '../utils/api';
+import TeamSwitcher from './TeamSwitcher';
 
 function getUserDisplayName(user) {
     return user?.name || user?.displayName || user?.email || 'Account';
@@ -15,7 +16,7 @@ function getUserInitial(user) {
 
 export default function Navbar({ theme = 'dark', onToggleTheme }) {
     const location = useLocation();
-    const { user, logout } = useAuth();
+    const { user, logout, reloadUser } = useAuth();
     const [profileOpen, setProfileOpen] = useState(false);
     const profileRef = useRef(null);
 
@@ -61,6 +62,20 @@ export default function Navbar({ theme = 'dark', onToggleTheme }) {
                         <span className="account-balance" title="Current credit balance">
                             <WalletCards size={15} /> {formatUsd(user?.starterBalanceUsd)}
                         </span>
+                        <TeamSwitcher
+                            activeTeamId={user?.activeTeamId}
+                            onTeamChange={async (teamId) => {
+                                try {
+                                    await api('/api/auth/active-team', {
+                                        method: 'POST',
+                                        body: JSON.stringify({ teamId: teamId || null }),
+                                    });
+                                    reloadUser();
+                                } catch (error) {
+                                    console.error('Failed to switch team:', error);
+                                }
+                            }}
+                        />
                         <div className="profile-dropdown-wrap" ref={profileRef}>
                             <button
                                 className="profile-trigger"

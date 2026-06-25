@@ -386,7 +386,6 @@ export default function Dashboard() {
     const [submitDenoiser, setSubmitDenoiser] = useState('NONE');
     const [submitFormat, setSubmitFormat] = useState('PNG');
     const [submitProjectId, setSubmitProjectId] = useState('');
-    const [submitTeamId, setSubmitTeamId] = useState('');
     const [submitGpuDevice, setSubmitGpuDevice] = useState('AUTO');
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
@@ -1411,7 +1410,6 @@ export default function Dashboard() {
                 noiseThreshold: 0.01,
             };
             if (submitProjectId) payload.projectId = submitProjectId;
-            if (submitTeamId) payload.teamId = submitTeamId;
 
             const result = await api('/api/render/trigger-render', {
                 method: 'POST',
@@ -1430,7 +1428,7 @@ export default function Dashboard() {
             setSubmitUploading(false);
             setSubmitting(false);
         }
-    }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId, submitTeamId]);
+    }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId]);
 
     const handleCreateTeam = useCallback(async () => {
         if (!teamCreateName.trim()) return;
@@ -2065,17 +2063,6 @@ export default function Dashboard() {
                                 {visibleProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                         </div>
-
-                        {/* Team context selector */}
-                        {teams.length > 0 && (
-                        <div className="submit-field">
-                            <label htmlFor="submit-team">Submit on behalf of <span className="subtle">(optional)</span></label>
-                            <select id="submit-team" value={submitTeamId} onChange={(e) => setSubmitTeamId(e.target.value)}>
-                                <option value="">My personal account</option>
-                                {teams.map((t) => <option key={t.id} value={t.id}>{t.name} (as {t.role})</option>)}
-                            </select>
-                        </div>
-                        )}
 
                         {submitError && <div className="submit-error">{submitError}</div>}
 

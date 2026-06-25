@@ -11,6 +11,7 @@ import JoinTeam from './pages/JoinTeam';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import VerifyEmail from './pages/VerifyEmail';
+import NotFound from './pages/NotFound';
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/legal/terms" element={<Terms />} />
         <Route path="/legal/privacy" element={<Privacy />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="/join-team/:token" element={<JoinTeam />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />

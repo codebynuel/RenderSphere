@@ -4211,3 +4211,226 @@ input:focus-visible {
         grid-template-columns: 1fr;
     }
 }
+
+/* ── 404 Not Found ─────────────────────────────────────────────── */
+
+.not-found-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 640px;
+    padding: 56px 24px;
+    position: relative;
+    overflow: hidden;
+}
+
+.not-found-spot {
+    position: fixed;
+    width: 420px;
+    height: 420px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--accent-soft) 0%, transparent 60%);
+    opacity: 0.35;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    transition: left 0.3s ease-out, top 0.3s ease-out;
+}
+
+.not-found-content {
+    position: relative;
+    display: grid;
+    place-items: center;
+    gap: 32px;
+    text-align: center;
+    max-width: 560px;
+}
+
+/* ── 3D Sphere ─────────────────────────────────────────────────── */
+
+.not-found-sphere-wrap {
+    perspective: 800px;
+    margin-bottom: 4px;
+}
+
+.not-found-sphere {
+    position: relative;
+    width: 180px;
+    height: 180px;
+    display: grid;
+    place-items: center;
+    transform-style: preserve-3d;
+    cursor: default;
+}
+
+.not-found-sphere-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--accent);
+    opacity: 0.3;
+    animation: sphere-rotate 6s linear infinite;
+}
+
+.not-found-sphere-ring.ring-2 {
+    inset: 14px;
+    opacity: 0.18;
+    border-style: dashed;
+    animation-duration: 8s;
+    animation-direction: reverse;
+}
+
+.not-found-sphere-ring.ring-3 {
+    inset: 28px;
+    opacity: 0.1;
+    border-width: 1px;
+    animation-duration: 10s;
+}
+
+@keyframes sphere-rotate {
+    to { transform: rotate(360deg); }
+}
+
+.not-found-404 {
+    position: relative;
+    z-index: 1;
+    color: var(--accent);
+    font-size: 64px;
+    font-weight: 850;
+    letter-spacing: -0.05em;
+    line-height: 1;
+    text-shadow:
+        0 0 40px var(--accent-soft),
+        0 0 80px rgba(255, 107, 53, 0.08);
+}
+
+/* ── Text ──────────────────────────────────────────────────────── */
+
+.not-found-text {
+    display: grid;
+    gap: 12px;
+}
+
+.not-found-title {
+    margin: 0;
+    color: var(--text);
+    font-size: clamp(26px, 4vw, 36px);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+}
+
+.not-found-desc {
+    margin: 0;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+.not-found-path {
+    display: inline-block;
+    max-width: 100%;
+    padding: 2px 10px;
+    border-radius: 6px;
+    background: var(--panel-card);
+    color: var(--accent);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+/* ── Actions ───────────────────────────────────────────────────── */
+
+.not-found-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.not-found-btn {
+    min-height: 42px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 18px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.1s;
+    white-space: nowrap;
+}
+
+.not-found-btn:active {
+    transform: scale(0.97);
+}
+
+.not-found-btn-primary {
+    color: var(--button-primary-text);
+    background: var(--button-primary-bg);
+    border-color: var(--accent);
+}
+
+.not-found-btn-primary:hover {
+    opacity: 0.9;
+}
+
+.not-found-btn-secondary {
+    color: var(--text);
+    background: var(--button-bg);
+}
+
+.not-found-btn-secondary:hover {
+    background: var(--panel-card);
+    border-color: var(--line);
+}
+
+.not-found-btn-ghost {
+    color: var(--muted);
+    background: transparent;
+    border-color: transparent;
+}
+
+.not-found-btn-ghost:hover {
+    color: var(--text);
+    background: var(--button-bg);
+    border-color: var(--line-soft);
+}
+
+/* ── 404 Responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 560px) {
+    .not-found-sphere {
+        width: 140px;
+        height: 140px;
+    }
+
+    .not-found-sphere-ring.ring-2 {
+        inset: 10px;
+    }
+
+    .not-found-sphere-ring.ring-3 {
+        inset: 20px;
+    }
+
+    .not-found-404 {
+        font-size: 48px;
+    }
+
+    .not-found-actions {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .not-found-btn {
+        justify-content: center;
+        width: 100%;
+    }
+}

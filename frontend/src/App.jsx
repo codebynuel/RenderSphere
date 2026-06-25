@@ -11,7 +11,9 @@ import JoinTeam from './pages/JoinTeam';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import VerifyEmail from './pages/VerifyEmail';
+import VerifyEmailRequired from './pages/VerifyEmailRequired';
 import NotFound from './pages/NotFound';
+import { RequireEmailVerified } from './components/RequireEmailVerified';
 
 function App() {
   return (
@@ -19,8 +21,11 @@ function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Home />} />
         <Route path="/auth" element={<Auth />} />
-        <Route path="/app" element={<Dashboard />} />
-        <Route path="/admin" element={<AdminDashboard />} />
+        <Route path="/verify-email-required" element={<VerifyEmailRequired />} />
+        <Route element={<RequireEmailVerified />}>
+          <Route path="/app" element={<Dashboard />} />
+          <Route path="/admin" element={<AdminDashboard />} />
+        </Route>
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/legal/terms" element={<Terms />} />
         <Route path="/legal/privacy" element={<Privacy />} />

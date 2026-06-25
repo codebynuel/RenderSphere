@@ -4434,3 +4434,83 @@ input:focus-visible {
         width: 100%;
     }
 }
+
+/* ── Verify Email Required ─────────────────────────────────────── */
+
+.verify-email-content {
+    display: grid;
+    gap: 20px;
+    text-align: center;
+}
+
+.verify-email-icon {
+    display: grid;
+    place-items: center;
+    margin-top: 4px;
+}
+
+.verify-email-desc {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.verify-message {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.verify-message.success {
+    color: var(--good);
+    background: rgba(183, 255, 221, 0.12);
+    border: 1px solid rgba(183, 255, 221, 0.24);
+}
+
+.verify-message.error {
+    color: var(--danger);
+    background: rgba(255, 123, 141, 0.12);
+    border: 1px solid rgba(255, 123, 141, 0.24);
+}
+
+.verify-email-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.verify-email-note {
+    margin: 8px 0 0;
+    color: var(--subtle);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.verify-email-note code {
+    color: var(--muted);
+    background: var(--panel-card);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+}
+
+.verify-email-back {
+    display: inline-block;
+    margin-top: 16px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.verify-email-back:hover {
+    color: var(--accent);
+}

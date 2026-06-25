@@ -46,6 +46,7 @@ export function publicUser(user) {
     role: user.role || 'user',
     createdAt: user.createdAt,
     starterBalanceUsd: Number(user.starterBalanceUsd || 0),
+    emailVerifiedAt: user.emailVerifiedAt || null,
   };
 }
 

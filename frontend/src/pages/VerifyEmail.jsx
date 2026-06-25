@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { api } from '../utils/api';
+import { useAuth } from '../context/AuthContext';
 
 function BrandMark() {
     return (
@@ -16,6 +17,8 @@ function BrandMark() {
 
 export default function VerifyEmail() {
     const { token } = useParams();
+    const navigate = useNavigate();
+    const { reloadUser } = useAuth();
     const [status, setStatus] = useState('loading'); // loading, success, error
     const [errorMsg, setErrorMsg] = useState('');
 
@@ -30,7 +33,13 @@ export default function VerifyEmail() {
         (async () => {
             try {
                 await api(`/api/auth/verify-email/${token}`);
-                if (!cancelled) setStatus('success');
+                if (!cancelled) {
+                    setStatus('success');
+                    // Reload user to get updated emailVerifiedAt
+                    await reloadUser();
+                    // Redirect to app after a short delay
+                    setTimeout(() => navigate('/app'), 1500);
+                }
             } catch (error) {
                 if (!cancelled) {
                     setErrorMsg(error.message || 'Failed to verify email');
@@ -40,7 +49,7 @@ export default function VerifyEmail() {
         })();
 
         return () => { cancelled = true; };
-    }, [token]);
+    }, [token, navigate, reloadUser]);
 
     return (
         <main className="auth-page-v2">
@@ -61,12 +70,9 @@ export default function VerifyEmail() {
                     )}
                     {status === 'success' && (
                         <>
-                            <CheckCircle2 size={32} style={{ color: 'var(--green)' }} />
+                            <CheckCircle2 size={32} style={{ color: 'var(--good)' }} />
                             <h1>Email verified!</h1>
-                            <p className="muted">Your email has been verified. You can now receive notifications.</p>
-                            <Link to="/app" className="auth-submit" style={{ display: 'inline-block', textAlign: 'center', marginTop: 16, textDecoration: 'none' }}>
-                                Go to dashboard
-                            </Link>
+                            <p className="muted">Your email has been verified. Redirecting to dashboard...</p>
                         </>
                     )}
                     {status === 'error' && (
@@ -74,8 +80,8 @@ export default function VerifyEmail() {
                             <XCircle size={32} style={{ color: 'var(--danger)' }} />
                             <h1>Verification failed</h1>
                             <p className="muted">{errorMsg}</p>
-                            <Link to="/app" className="auth-submit" style={{ display: 'inline-block', textAlign: 'center', marginTop: 16, textDecoration: 'none' }}>
-                                Go to dashboard
+                            <Link to="/auth" className="auth-submit" style={{ display: 'inline-block', textAlign: 'center', marginTop: 16, textDecoration: 'none' }}>
+                                Back to login
                             </Link>
                         </>
                     )}

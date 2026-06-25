@@ -23,6 +23,7 @@ import { createJobsRouter } from './routes/jobs.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createRenderRouter } from './routes/render.js';
 import { createSystemRouter } from './routes/system.js';
+import { createTeamsRouter } from './routes/teams.js';
 
 validateRequiredEnv();
 
@@ -137,6 +138,7 @@ app.use('/api/billing', createBillingRouter({ accountRateLimit, requireAuth }));
 app.use('/api/projects', createProjectsRouter({ accountRateLimit, requireAuth }));
 app.use('/api', createJobsRouter({ emitJobUpdate, requireAuth }));
 app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth }));
+app.use('/api/teams', createTeamsRouter({ accountRateLimit, requireAuth }));
 
 app.use((req, res, next) => {
   const systemPaths = new Set(['/healthz', '/readyz', '/metrics']);

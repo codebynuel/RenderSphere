@@ -26,6 +26,7 @@ import {
     Search,
     Trash2,
     Upload,
+    Users,
     WalletCards,
     X,
     XCircle,
@@ -375,7 +376,17 @@ export default function Dashboard() {
     const [submitGpuDevice, setSubmitGpuDevice] = useState('AUTO');
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
-    const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true });
+    const [teams, setTeams] = useState([]);
+    const [selectedTeam, setSelectedTeam] = useState(null);
+    const [teamCreateOpen, setTeamCreateOpen] = useState(false);
+    const [teamCreateName, setTeamCreateName] = useState('');
+    const [teamCreating, setTeamCreating] = useState(false);
+    const [teamInviteOpen, setTeamInviteOpen] = useState(false);
+    const [teamInviteEmail, setTeamInviteEmail] = useState('');
+    const [teamInviteRole, setTeamInviteRole] = useState('MEMBER');
+    const [teamInviteBudget, setTeamInviteBudget] = useState('');
+    const [teamInviting, setTeamInviting] = useState(false);
+    const [loading, setLoading] = useState({ keys: true, files: true, jobs: true, projects: true, billingPackages: true, billingHistory: true, teams: true });
     const [errors, setErrors] = useState({ keys: '', files: '', jobs: '', projects: '', billingPackages: '', billingHistory: '' });
     const [paginationMeta, setPaginationMeta] = useState({ keys: null, files: null, jobs: null, projects: null, billingHistory: null });
     const [tourOpen, setTourOpen] = useState(false);
@@ -533,8 +544,9 @@ export default function Dashboard() {
             loadJobs({ page: 1 }),
             loadBillingPackages(),
             loadRechargeHistory({ page: 1 }),
+            loadTeams(),
         ]);
-    }, [loadAccessKeys, loadBillingPackages, loadFiles, loadJobs, loadProjects, loadRechargeHistory]);
+    }, [loadAccessKeys, loadBillingPackages, loadFiles, loadJobs, loadProjects, loadRechargeHistory, loadTeams]);
 
     useEffect(() => {
         if (!user?.id) return undefined;
@@ -1269,6 +1281,80 @@ export default function Dashboard() {
         }
     }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId]);
 
+    const loadTeams = useCallback(async () => {
+        try {
+            const data = await api('/api/teams');
+            setTeams(data.teams || []);
+        } catch (error) {
+            toast.error('Failed to load teams');
+        } finally {
+            setLoading((prev) => ({ ...prev, teams: false }));
+        }
+    }, []);
+
+    const handleCreateTeam = useCallback(async () => {
+        if (!teamCreateName.trim()) return;
+        setTeamCreating(true);
+        try {
+            await api('/api/teams', {
+                method: 'POST',
+                body: JSON.stringify({ name: teamCreateName.trim() }),
+            });
+            toast.success('Team created');
+            setTeamCreateOpen(false);
+            setTeamCreateName('');
+            loadTeams();
+        } catch (error) {
+            toast.error(error.message || 'Failed to create team');
+        } finally {
+            setTeamCreating(false);
+        }
+    }, [teamCreateName, loadTeams]);
+
+    const handleInviteMember = useCallback(async () => {
+        if (!teamInviteEmail.trim() || !selectedTeam) return;
+        setTeamInviting(true);
+        try {
+            const body = { email: teamInviteEmail.trim(), role: teamInviteRole };
+            if (teamInviteBudget) body.budgetCapUsd = Number(teamInviteBudget);
+            await api(`/api/teams/${selectedTeam.id}/invite`, {
+                method: 'POST',
+                body: JSON.stringify(body),
+            });
+            toast.success('Member invited');
+            setTeamInviteOpen(false);
+            setTeamInviteEmail('');
+            setTeamInviteBudget('');
+            const detail = await api(`/api/teams/${selectedTeam.id}`);
+            setSelectedTeam(detail.team);
+        } catch (error) {
+            toast.error(error.message || 'Failed to invite member');
+        } finally {
+            setTeamInviting(false);
+        }
+    }, [teamInviteEmail, teamInviteRole, teamInviteBudget, selectedTeam]);
+
+    const handleRemoveMember = useCallback(async (memberUserId) => {
+        if (!selectedTeam) return;
+        try {
+            await api(`/api/teams/${selectedTeam.id}/members/${memberUserId}`, { method: 'DELETE' });
+            toast.success('Member removed');
+            const detail = await api(`/api/teams/${selectedTeam.id}`);
+            setSelectedTeam(detail.team);
+        } catch (error) {
+            toast.error(error.message || 'Failed to remove member');
+        }
+    }, [selectedTeam]);
+
+    const viewTeamDetail = useCallback(async (teamId) => {
+        try {
+            const data = await api(`/api/teams/${teamId}`);
+            setSelectedTeam(data.team);
+        } catch (error) {
+            toast.error(error.message || 'Failed to load team');
+        }
+    }, []);
+
     const resetJobFilters = () => {
         setJobStatusFilter('all');
         setJobSearchQuery('');
@@ -1783,6 +1869,116 @@ export default function Dashboard() {
                         </div>
                     </div>
                 </div>
+            </motion.div>
+        );
+    };
+
+    const renderTeams = () => {
+        return (
+            <motion.div className="panel dashboard-panel" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+                <div className="panel-head">
+                    <div>
+                        <h2>Teams</h2>
+                        <p className="muted">Create teams, invite members, and manage budgets. Credits are deducted from your balance.</p>
+                    </div>
+                    <button className="button primary" type="button" onClick={() => setTeamCreateOpen(true)}>
+                        <Users size={16} /> New team
+                    </button>
+                </div>
+
+                {loading.teams ? <LoadingState label="Loading teams..." /> : null}
+                {!loading.teams && teams.length === 0 && !selectedTeam && (
+                    <EmptyState icon={Users} title="No teams yet" text="Create a team to invite members and collaborate on renders." action={<button className="button primary" type="button" onClick={() => setTeamCreateOpen(true)}><Users size={16} /> Create your first team</button>} />
+                )}
+
+                {!loading.teams && teams.length > 0 && !selectedTeam && (
+                    <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+                        {teams.map((team) => (
+                            <div className="stack-item" key={team.id} style={{ cursor: 'pointer' }} onClick={() => { viewTeamDetail(team.id); }} role="button" tabIndex={0}>
+                                <div className="stack-meta">
+                                    <strong>{team.name}</strong>
+                                    <div className="table-meta">
+                                        <span>Role: {team.role}</span>
+                                        <span>{team.memberCount} member{(team.memberCount || 0) !== 1 ? 's' : ''}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {selectedTeam && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0 12px' }}>
+                            <button className="button" type="button" onClick={() => setSelectedTeam(null)}>← Back to teams</button>
+                            <h3 style={{ margin: 0 }}>{selectedTeam.name}</h3>
+                            {selectedTeam.owner && <span className="muted" style={{ fontSize: 12 }}>Owned by {selectedTeam.owner.name || selectedTeam.owner.email}</span>}
+                        </div>
+
+                        <div className="data-table-wrap" style={{ marginTop: 8 }}>
+                            <table className="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Member</th>
+                                        <th>Role</th>
+                                        <th>Budget cap</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {selectedTeam.members?.map((m) => (
+                                        <tr key={m.user.id}>
+                                            <td className="table-primary">{m.user.name || m.user.email}</td>
+                                            <td><span className={`pill ${m.role === 'OWNER' ? '' : m.role === 'MEMBER' ? 'pending' : ''}`}>{m.role}</span></td>
+                                            <td>{m.budgetCapUsd ? `$${Number(m.budgetCapUsd).toFixed(2)}` : 'No cap'}</td>
+                                            <td>
+                                                {m.role !== 'OWNER' && (
+                                                    <button className="button compact-button" type="button" onClick={() => handleRemoveMember(m.user.id)} style={{ color: 'var(--danger)' }}>Remove</button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <button className="button" type="button" onClick={() => setTeamInviteOpen(true)} style={{ marginTop: 12 }}>
+                            <Users size={16} /> Invite member
+                        </button>
+
+                        {teamInviteOpen && (
+                            <div style={{ display: 'grid', gap: 10, marginTop: 14, padding: 16, border: '1px solid var(--line-soft)', borderRadius: 14, background: 'var(--panel-section)' }}>
+                                <label>Email address</label>
+                                <input type="email" value={teamInviteEmail} onChange={(e) => setTeamInviteEmail(e.target.value)} placeholder="colleague@studio.com" style={{ minHeight: 38 }} />
+                                <label>Role</label>
+                                <select value={teamInviteRole} onChange={(e) => setTeamInviteRole(e.target.value)}>
+                                    <option value="MEMBER">Member — can submit renders</option>
+                                    <option value="READ_ONLY">Read-only — can view progress</option>
+                                </select>
+                                <label>Budget cap <span className="subtle">(optional)</span></label>
+                                <input type="text" inputMode="decimal" value={teamInviteBudget} onChange={(e) => setTeamInviteBudget(e.target.value)} placeholder="e.g. 10.00" style={{ minHeight: 38 }} />
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button className="button primary" type="button" onClick={handleInviteMember} disabled={teamInviting || !teamInviteEmail.trim()}>{teamInviting ? 'Inviting...' : 'Send invite'}</button>
+                                    <button className="button" type="button" onClick={() => { setTeamInviteOpen(false); setTeamInviteEmail(''); setTeamInviteBudget(''); }}>Cancel</button>
+                                </div>
+                            </div>
+                        )}
+                    </motion.div>
+                )}
+
+                {teamCreateOpen && (
+                    <div className="confirm-overlay" onClick={() => setTeamCreateOpen(false)}>
+                        <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+                            <h3>Create a new team</h3>
+                            <p className="muted">You will be the owner. Team members render using credits from your balance.</p>
+                            <div className="inline-form">
+                                <input type="text" value={teamCreateName} onChange={(e) => setTeamCreateName(e.target.value)} placeholder="Team name" autoFocus />
+                                <button className="button primary" type="button" onClick={handleCreateTeam} disabled={teamCreating || !teamCreateName.trim()}>{teamCreating ? 'Creating...' : 'Create'}</button>
+                            </div>
+                            <button className="button" type="button" onClick={() => setTeamCreateOpen(false)} style={{ marginTop: 8 }}>Cancel</button>
+                        </div>
+                    </div>
+                )}
             </motion.div>
         );
     };
@@ -2690,6 +2886,7 @@ export default function Dashboard() {
                 {activeView === 'projects' && <div className="dashboard-grid operations-grid">{renderProjects()}</div>}
                 {activeView === 'renders' && <div className="dashboard-grid operations-grid">{renderJobs()}</div>}
                 {activeView === 'files' && <div className="dashboard-grid operations-grid">{renderFiles()}</div>}
+                {activeView === 'teams' && <div className="dashboard-grid operations-grid">{renderTeams()}</div>}
                 {activeView === 'usage' && <div className="dashboard-grid operations-grid">{renderUsage()}</div>}
                 {activeView === 'billing' && <div className="dashboard-grid operations-grid">{renderBilling()}</div>}
                 {activeView === 'access' && <div className="dashboard-grid operations-grid">{renderAccessKeys()}</div>}

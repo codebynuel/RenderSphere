@@ -80,10 +80,10 @@ export default function Auth() {
 
             <motion.div
                 className="auth-card-v2"
-                key={errorKey}
                 initial={{ opacity: 0, y: 24, scale: 0.97 }}
                 animate={errorKey > 0 ? { x: [0, -8, 8, -6, 6, -3, 3, 0] } : { opacity: 1, y: 0, scale: 1 }}
                 transition={errorKey > 0 ? { duration: 0.35 } : { duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                onAnimationComplete={() => { if (errorKey > 0) setErrorKey(0); }}
             >
                 <div className="auth-card-header">
                     <BrandMark />

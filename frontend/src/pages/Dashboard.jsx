@@ -475,7 +475,9 @@ export default function Dashboard() {
         setLoadingFlag('projects', true);
         setErrorFlag('projects', '');
         try {
-            const data = await api(`/api/projects?page=${page}&pageSize=${SERVER_PAGE_SIZE}`);
+            const params = new URLSearchParams({ page: String(page), pageSize: String(SERVER_PAGE_SIZE) });
+            if (activeTeamId) params.set('teamId', activeTeamId);
+            const data = await api(`/api/projects?${params.toString()}`);
             setProjects((current) => (append ? [...current, ...(data.projects || [])] : data.projects || []));
             setPaginationMeta((current) => ({ ...current, projects: data.pagination || null }));
         } catch (error) {
@@ -484,7 +486,7 @@ export default function Dashboard() {
         } finally {
             setLoadingFlag('projects', false);
         }
-    }, [setErrorFlag, setLoadingFlag]);
+    }, [activeTeamId, setErrorFlag, setLoadingFlag]);
 
     const loadFiles = useCallback(async ({ page = 1, append = false } = {}) => {
         setLoadingFlag('files', true);
@@ -492,6 +494,7 @@ export default function Dashboard() {
         try {
             const params = new URLSearchParams({ page: String(page), pageSize: String(SERVER_PAGE_SIZE) });
             if (fileSearchQuery.trim()) params.set('search', fileSearchQuery.trim());
+            if (activeTeamId) params.set('teamId', activeTeamId);
             const data = await api(`/api/rendered-files?${params.toString()}`);
             setFiles((current) => (append ? [...current, ...(data.files || [])] : data.files || []));
             setPaginationMeta((current) => ({ ...current, files: data.pagination || null }));
@@ -502,7 +505,7 @@ export default function Dashboard() {
         } finally {
             setLoadingFlag('files', false);
         }
-    }, [fileSearchQuery, setErrorFlag, setLoadingFlag, setUser]);
+    }, [activeTeamId, fileSearchQuery, setErrorFlag, setLoadingFlag, setUser]);
 
     const loadJobs = useCallback(async ({ page = 1, append = false } = {}) => {
         setLoadingFlag('jobs', true);
@@ -511,6 +514,7 @@ export default function Dashboard() {
             const params = new URLSearchParams({ page: String(page), pageSize: String(SERVER_PAGE_SIZE) });
             if (jobStatusFilter !== 'all') params.set('status', jobStatusFilter);
             if (jobSearchQuery.trim()) params.set('search', jobSearchQuery.trim());
+            if (activeTeamId) params.set('teamId', activeTeamId);
             const data = await api(`/api/jobs?${params.toString()}`);
             setJobs((current) => (append ? [...current, ...(data.jobs || [])] : data.jobs || []));
             setPaginationMeta((current) => ({ ...current, jobs: data.pagination || null }));
@@ -521,7 +525,7 @@ export default function Dashboard() {
         } finally {
             setLoadingFlag('jobs', false);
         }
-    }, [jobSearchQuery, jobStatusFilter, setErrorFlag, setLoadingFlag, setUser]);
+    }, [activeTeamId, jobSearchQuery, jobStatusFilter, setErrorFlag, setLoadingFlag, setUser]);
 
     const loadBillingPackages = useCallback(async () => {
         setLoadingFlag('billingPackages', true);

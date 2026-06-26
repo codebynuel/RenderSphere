@@ -16,7 +16,8 @@ export function createProjectController() {
     async listProjects(req, res) {
       const pagination = parsePaginationQuery(req.query);
       const search = parseSearchQuery(req.query);
-      const { projects, totalItems } = await listProjectsForUser(req.user.id, { ...pagination, search });
+      const teamId = req.query.teamId || '';
+      const { projects, totalItems } = await listProjectsForUser(req.user.id, { ...pagination, search, teamId });
       res.json({
         projects,
         pagination: buildPaginationMeta({ ...pagination, totalItems }),

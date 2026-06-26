@@ -26,7 +26,7 @@ export function serializeProject(project) {
   };
 }
 
-export async function listProjectsForUser(userId, { skip = 0, take = 25, search = '' } = {}) {
+export async function listProjectsForUser(userId, { skip = 0, take = 25, search = '', teamId = '' } = {}) {
   // Return projects where user is the owner OR a project member
   const userProjectIds = await prisma.projectMember.findMany({
     where: { userId },
@@ -39,6 +39,7 @@ export async function listProjectsForUser(userId, { skip = 0, take = 25, search 
       { userId },
       { id: { in: memberProjectIds } },
     ],
+    ...(teamId ? { teamId } : {}),
     ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
   };
 

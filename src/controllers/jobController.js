@@ -28,10 +28,12 @@ export function createJobController({ emitJobUpdate = null } = {}) {
       const pagination = parsePaginationQuery(req.query);
       const statusFilter = parseJobStatusFilter(req.query.status);
       const search = parseSearchQuery(req.query);
+      const teamId = req.query.teamId || '';
       const where = {
         userId: req.user.id,
         ...statusFilter.where,
         ...buildJobSearchWhere(search),
+        ...(teamId ? { project: { teamId } } : {}),
       };
 
       const [user, totalItems, jobs] = await Promise.all([
@@ -59,11 +61,13 @@ export function createJobController({ emitJobUpdate = null } = {}) {
 
       const pagination = parsePaginationQuery(req.query);
       const search = parseSearchQuery(req.query);
+      const teamId = req.query.teamId || '';
       const where = {
         userId: req.user.id,
         status: 'COMPLETED',
         resultKey: { not: null },
         ...buildJobSearchWhere(search),
+        ...(teamId ? { project: { teamId } } : {}),
       };
 
       const [user, totalItems, completedJobs] = await Promise.all([

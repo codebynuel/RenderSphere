@@ -29,6 +29,13 @@ export default function TeamSwitcher() {
         loadTeams();
     }, [user?.id]);
 
+    // Reload team list when teams change in the Dashboard (create/join/manage)
+    useEffect(() => {
+        const handleTeamsChanged = () => loadTeams();
+        window.addEventListener('teams-changed', handleTeamsChanged);
+        return () => window.removeEventListener('teams-changed', handleTeamsChanged);
+    }, []);
+
     const handleSelectTeam = (teamId) => {
         setActiveTeamId(teamId);
         setOpen(false);
@@ -63,22 +70,6 @@ export default function TeamSwitcher() {
         window.dispatchEvent(new CustomEvent('manage-team', { detail: { teamId } }));
     };
 
-    if (teams.length === 0 && !loading) {
-        return (
-            <button
-                ref={buttonRef}
-                className="team-switcher-trigger"
-                type="button"
-                onClick={handleOpenCreate}
-                aria-label="Create team"
-            >
-                <Users size={16} />
-                <span>Create team</span>
-                <ChevronDown size={14} />
-            </button>
-        );
-    }
-
     return (
         <div className="team-switcher-wrap" ref={ref}>
             <button
@@ -92,7 +83,7 @@ export default function TeamSwitcher() {
             >
                 <Users size={16} />
                 <span className="team-switcher-label">
-                    {activeTeam ? activeTeam.name : 'Personal'}
+                    {activeTeam ? activeTeam.name : activeTeamId ? 'Loading...' : 'Personal'}
                 </span>
                 <ChevronDown size={14} className={open ? 'rotated' : ''} />
             </button>

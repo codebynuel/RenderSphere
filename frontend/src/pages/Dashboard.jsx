@@ -423,6 +423,7 @@ export default function Dashboard() {
     const jobFilterLoadRef = useRef({ userId: null, status: jobStatusFilter, search: jobSearchQuery });
     const fileFilterLoadRef = useRef({ userId: null, search: fileSearchQuery });
     const paypalReturnHandledRef = useRef(null);
+    const viewTeamDetailRef = useRef(null);
 
     const getActionMenuPlacement = useCallback((menuId, buttonElement) => {
         if (!buttonElement || typeof window === 'undefined') return 'down';
@@ -652,8 +653,7 @@ export default function Dashboard() {
             if (!teamId) return;
             setActiveTeamId(teamId);
             setActiveView('teams');
-            // eslint-disable-next-line react-hooks/immutability
-            viewTeamDetail(teamId);
+            viewTeamDetailRef.current(teamId);
         };
         window.addEventListener('open-create-team', handleOpenCreate);
         window.addEventListener('open-join-team', handleOpenJoin);
@@ -1480,6 +1480,7 @@ export default function Dashboard() {
             setTeamCreateOpen(false);
             setTeamCreateName('');
             loadTeams();
+            window.dispatchEvent(new CustomEvent('teams-changed'));
         } catch (error) {
             toast.error(error.message || 'Failed to create team');
         } finally {
@@ -1559,6 +1560,7 @@ export default function Dashboard() {
             toast.error(error.message || 'Failed to load team');
         }
     }, [loadInviteLinks, loadTeamActivity]);
+    viewTeamDetailRef.current = viewTeamDetail;
 
     const handleCreateInviteLink = useCallback(async (teamId) => {
         setTeamInviteLinkCreating(true);
@@ -1603,6 +1605,7 @@ export default function Dashboard() {
             setJoinTeamOpen(false);
             setJoinTeamToken('');
             loadTeams();
+            window.dispatchEvent(new CustomEvent('teams-changed'));
         } catch (error) {
             toast.error(error.message || 'Failed to join team');
         } finally {
@@ -2158,7 +2161,7 @@ export default function Dashboard() {
                 {!loading.teams && teams.length > 0 && !selectedTeam && (
                     <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
                         {teams.map((team) => (
-                            <div className="stack-item" key={team.id} style={{ cursor: 'pointer' }} onClick={() => { viewTeamDetail(team.id); }} role="button" tabIndex={0}>
+                            <div className="stack-item" key={team.id} style={{ cursor: 'pointer' }} onClick={() => { setActiveTeamId(team.id); viewTeamDetail(team.id); }} role="button" tabIndex={0}>
                                 <div className="stack-meta">
                                     <strong>{team.name}</strong>
                                     <div className="table-meta">

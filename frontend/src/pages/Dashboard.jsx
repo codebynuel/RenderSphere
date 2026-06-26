@@ -388,6 +388,7 @@ export default function Dashboard() {
     const [submitGpuDevice, setSubmitGpuDevice] = useState('AUTO');
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
+    const [submitSpendAlert, setSubmitSpendAlert] = useState('');
     const [teams, setTeams] = useState([]);
     const [selectedTeam, setSelectedTeam] = useState(null);
     const [teamCreateOpen, setTeamCreateOpen] = useState(false);
@@ -1452,6 +1453,10 @@ export default function Dashboard() {
                 noiseThreshold: 0.01,
             };
             if (submitProjectId) payload.projectId = submitProjectId;
+            const spendAlert = submitSpendAlert.trim();
+            if (spendAlert && /^\d+(\.\d+)?$/.test(spendAlert) && Number(spendAlert) > 0) {
+                payload.spendAlertUsd = Number(spendAlert);
+            }
 
             const result = await api('/api/render/trigger-render', {
                 method: 'POST',
@@ -1470,7 +1475,7 @@ export default function Dashboard() {
             setSubmitUploading(false);
             setSubmitting(false);
         }
-    }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId]);
+    }, [submitFile, submitEngine, submitSamples, submitResolution, submitFormat, submitDenoiser, submitAnimation, submitStartFrame, submitEndFrame, submitGpuDevice, submitProjectId, submitSpendAlert]);
 
     const handleCreateTeam = useCallback(async () => {
         if (!teamCreateName.trim()) return;
@@ -2098,6 +2103,44 @@ export default function Dashboard() {
                                 <option value="OPTIX">OptiX</option>
                                 <option value="CUDA">CUDA</option>
                             </select>
+                        </div>
+
+                        {/* Estimated cost */}
+                        {submitFile && (
+                            <div className="submit-field submit-estimate">
+                                <label>Estimated cost</label>
+                                <div className="submit-estimate-value">
+                                    <strong>${(() => {
+                                        const frameCount = submitAnimation ? Math.max(1, submitEndFrame - submitStartFrame + 1) : 1;
+                                        const samplesFactor = Math.max(0.1, submitSamples / 256);
+                                        const resFactor = Math.max(0.01, (submitResolution / 100) ** 2);
+                                        const engineFactor = submitEngine === 'CYCLES' ? 1 : 0.45;
+                                        const denoiserFactor = submitDenoiser === 'NONE' ? 1 : 1.08;
+                                        const outputFactor = submitFormat.startsWith('OPEN_EXR') ? 1.15 : 1;
+                                        const estSecs = Math.max(1, Math.ceil(60 * frameCount * samplesFactor * resFactor * engineFactor * denoiserFactor * outputFactor));
+                                        return (estSecs * 0.00028).toFixed(4);
+                                    })()}</strong>
+                                    <span className="subtle">based on samples, resolution, engine &amp; frame count</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Spend alert */}
+                        <div className="submit-field">
+                            <label htmlFor="submit-spend-alert">Spend alert <span className="subtle">(optional)</span></label>
+                            <div className="submit-slider-wrap">
+                                <input
+                                    id="submit-spend-alert"
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={submitSpendAlert}
+                                    onChange={(e) => setSubmitSpendAlert(e.target.value)}
+                                    placeholder="e.g. 5.00"
+                                    className="submit-input"
+                                    style={{ maxWidth: 140 }}
+                                />
+                                <span className="subtle">We'll email you if the final cost exceeds this amount</span>
+                            </div>
                         </div>
 
                         {/* Project selector */}

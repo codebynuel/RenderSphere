@@ -170,6 +170,7 @@ model Job {
   priceUsd              Float?
   pricePerSecondUsd     Float?
   estimatedCostUsd      Decimal?  @db.Decimal(12, 6)
+  spendAlertUsd         Decimal?  @db.Decimal(12, 6)
   maxBudgetUsd          Decimal?  @db.Decimal(12, 6)
   reservedCreditsUsd    Decimal?  @db.Decimal(12, 6)
   reservationReleasedAt DateTime?

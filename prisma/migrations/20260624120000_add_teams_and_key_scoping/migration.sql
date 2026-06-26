@@ -19,9 +19,10 @@ ALTER TABLE "AccessKey" ADD COLUMN "expiresAt" TIMESTAMP(3);
 CREATE INDEX "AccessKey_scopeProjectId_idx" ON "AccessKey"("scopeProjectId");
 ALTER TABLE "AccessKey" ADD CONSTRAINT "AccessKey_scopeProjectId_fkey" FOREIGN KEY ("scopeProjectId") REFERENCES "Project"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
--- Job additions: accessKeyId
+-- Job additions: accessKeyId, notificationSent, spendAlertUsd
 ALTER TABLE "Job" ADD COLUMN "accessKeyId" TEXT;
 ALTER TABLE "Job" ADD COLUMN "notificationSent" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Job" ADD COLUMN "spendAlertUsd" DECIMAL(12,6);
 
 -- Create Team table (MUST be before Project FK references it)
 CREATE TABLE "Team" (

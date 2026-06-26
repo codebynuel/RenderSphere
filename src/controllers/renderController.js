@@ -172,6 +172,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         billingUserId = teamMembership.team.ownerId;
       }
 
+      const spendAlertUsd = normalizeMoneyInput(req.body.spendAlertUsd);
       const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
       const costEstimate = estimateRenderCostUsd({ engine, outputFormat, denoiser, normalizedSettings });
       const budget = resolveRenderBudget({ estimatedCostUsd: costEstimate.estimatedCostUsd });
@@ -187,7 +188,6 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
           requiredUsd: budget.reservationUsd,
           availableUsd: availableBalance,
           estimatedCostUsd: costEstimate.estimatedCostUsd,
-          maxBudgetUsd: budget.maxBudgetUsd,
         });
       }
 
@@ -216,7 +216,8 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               settings: { ...runpodInput, dispatchReference: localJobId },
               frameCount: normalizedSettings.frameCount,
               estimatedCostUsd: costEstimate.estimatedCostUsd,
-              maxBudgetUsd: budget.maxBudgetUsd,
+              spendAlertUsd: spendAlertUsd || null,
+              maxBudgetUsd: null,
               reservedCreditsUsd: budget.reservationUsd,
               billingState: 'RESERVING',
               billingMetadata: {
@@ -242,7 +243,8 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
             jobId: createdJob.jobId,
             amountUsd: budget.reservationUsd,
             estimatedCostUsd: costEstimate.estimatedCostUsd,
-            maxBudgetUsd: budget.maxBudgetUsd,
+            spendAlertUsd: spendAlertUsd || null,
+            maxBudgetUsd: null,
             metadata: {
               requestId: req.id || req.requestId || null,
               fileKey,

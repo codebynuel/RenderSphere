@@ -24,7 +24,7 @@ import { createProjectsRouter } from './routes/projects.js';
 import { createRenderRouter } from './routes/render.js';
 import { createSystemRouter } from './routes/system.js';
 import { createTeamsRouter } from './routes/teams.js';
-import { sendRenderCompleteEmail } from './helpers/email.js';
+import { sendRenderCompleteEmail, sendSpendAlertEmail } from './helpers/email.js';
 
 validateRequiredEnv();
 
@@ -208,6 +208,15 @@ const activeJobPoller = setInterval(async () => {
             if (user?.emailVerifiedAt) {
               sendRenderCompleteEmail(user.email, user.name, updatedJob).catch(() => {});
               prisma.job.updateMany({ where: { jobId: updatedJob.jobId }, data: { notificationSent: true } }).catch(() => {});
+
+              // Check spend alert threshold
+              if (updatedJob.status === 'COMPLETED' && updatedJob.spendAlertUsd && updatedJob.priceUsd > Number(updatedJob.spendAlertUsd)) {
+                sendSpendAlertEmail(user.email, user.name, {
+                  jobId: updatedJob.jobId,
+                  actualCostUsd: updatedJob.priceUsd,
+                  alertThresholdUsd: Number(updatedJob.spendAlertUsd),
+                }).catch(() => {});
+              }
             }
           }
         }

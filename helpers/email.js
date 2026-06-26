@@ -128,6 +128,28 @@ export async function sendRenderCompleteEmail(email, name, job) {
   return sendEmail({ to: email, subject, html, text });
 }
 
+export async function sendSpendAlertEmail(email, name, { jobId, actualCostUsd, alertThresholdUsd }) {
+  const displayName = name || email;
+  const subject = `Spend alert: $${actualCostUsd.toFixed(2)} for job ${jobId.slice(0, 8)} — RenderSphere`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:20px;color:#1a1a2e;background:#f5f5f7">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:16px;padding:32px">
+    <h2 style="margin:0 0 8px">Render cost alert</h2>
+    <p style="color:#666;line-height:1.6">Hi ${displayName}, your render job <strong>${jobId.slice(0, 8)}</strong> cost <strong>$${actualCostUsd.toFixed(2)}</strong>, which exceeded your alert threshold of $${alertThresholdUsd.toFixed(2)}.</p>
+    <a href="${config.publicUrl}/app" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;margin:16px 0;font-weight:600">View in dashboard</a>
+  </div>
+</body>
+</html>`;
+
+  const text = `Render cost alert\n\nHi ${displayName}, your render job ${jobId.slice(0, 8)} cost $${actualCostUsd.toFixed(2)}, which exceeded your alert threshold of $${alertThresholdUsd.toFixed(2)}.\n\nView in dashboard: ${config.publicUrl}/app`;
+
+  return sendEmail({ to: email, subject, html, text });
+}
+
 export async function sendTeamInviteEmail(email, inviterName, teamName, inviteLink) {
   const subject = `${inviterName} invited you to ${teamName} — RenderSphere`;
 

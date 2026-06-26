@@ -77,14 +77,13 @@ export function estimateRenderCostUsd({ engine, outputFormat, denoiser, normaliz
 }
 
 export function resolveRenderBudget({ estimatedCostUsd }) {
-  const budgetCap = config.maxRenderBudgetUsd;
-  const maxBudgetUsd = Math.min(budgetCap, config.maxRenderBudgetUsd);
-  const reservationUsd = Math.max(config.minRenderReservationUsd, estimatedCostUsd, maxBudgetUsd);
+  // Reserve based on estimate with a 2x buffer, floored to min reservation
+  const reservationUsd = Math.max(config.minRenderReservationUsd, estimatedCostUsd * 2);
 
   return {
     requestedBudgetUsd: null,
-    maxBudgetUsd: roundMoney(maxBudgetUsd),
-    reservationUsd: roundMoney(Math.min(reservationUsd, config.maxRenderBudgetUsd)),
+    maxBudgetUsd: null,
+    reservationUsd: roundMoney(reservationUsd),
   };
 }
 

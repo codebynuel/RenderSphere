@@ -16,7 +16,7 @@ import http.client
 import time
 from urllib.parse import urlparse
 
-DEFAULT_SERVER_URL = "http://localhost:3000"
+DEFAULT_SERVER_URL = "https://plain-vids-topics-guestbook.trycloudflare.com"
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 ADDON_VERSION = ".".join(str(part) for part in bl_info["version"])
 LOG_PREFIX = "[RenderSphere]"

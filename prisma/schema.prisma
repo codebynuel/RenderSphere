@@ -340,6 +340,22 @@ model TeamActivity {
   @@index([teamId, createdAt])
 }
 
+model ExtensionError {
+  id             String   @id @default(uuid())
+  email          String?
+  jobId          String?
+  level          String   @default("error")
+  message        String
+  details        Json?
+  addonVersion   String?
+  blenderVersion String?
+  os             String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level])
+}
+
 model SystemSetting {
   id        String   @id @default(uuid())
   key       String   @unique

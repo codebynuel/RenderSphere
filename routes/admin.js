@@ -5,6 +5,28 @@ import { prisma } from '../src/db.js';
 function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
   const router = express.Router();
 
+  // Extension error reporting — no auth required for POST (reported by add-on)
+  router.post('/extension-errors', async (req, res) => {
+    try {
+      const { message, level, jobId, details, addonVersion, blenderVersion, os, email } = req.body;
+      await prisma.extensionError.create({
+        data: {
+          message: String(message || '').slice(0, 2000),
+          level: level || 'error',
+          jobId: String(jobId || '').slice(0, 80) || null,
+          details: details || undefined,
+          addonVersion: String(addonVersion || '').slice(0, 30) || null,
+          blenderVersion: String(blenderVersion || '').slice(0, 30) || null,
+          os: String(os || '').slice(0, 30) || null,
+          email: String(email || '').slice(0, 255) || null,
+        },
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      return res.status(500).json({ error: 'Failed to store error report' });
+    }
+  });
+
   router.use(requireAdmin);
 
   router.get('/summary', async (req, res) => {
@@ -76,6 +98,12 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
     }));
 
     res.json({ users: mappedUsers });
+  });
+
+  // Extension error list — admin only (viewed on dashboard)
+  router.get('/extension-errors', async (req, res) => {
+    const errors = await prisma.extensionError.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
+    res.json({ errors });
   });
 
   router.get('/user/:id', async (req, res) => {

@@ -150,6 +150,7 @@ const adminNavItems = [
     { id: 'uploads', label: 'Uploads', icon: Upload },
     { id: 'credits', label: 'Billing', icon: DollarSign },
     { id: 'system', label: 'System', icon: BarChart3 },
+    { id: 'errors', label: 'Extension Errors', icon: XCircle },
 ];
 
 function AdminSidebar({ activeView, onChangeView }) {
@@ -664,6 +665,74 @@ export default function AdminDashboard() {
         </motion.div>
     );
 
+    const renderExtensionErrors = () => {
+        const [errors, setErrors] = useState([]);
+        const [loading, setLoading] = useState(true);
+        const [err, setErr] = useState('');
+
+        const loadErrors = useCallback(async () => {
+            setLoading(true);
+            setErr('');
+            try {
+                const data = await api('/api/admin/extension-errors');
+                setErrors(data.errors || []);
+            } catch (error) {
+                setErr(error.message || 'Failed to load');
+            } finally {
+                setLoading(false);
+            }
+        }, []);
+
+        useEffect(() => { loadErrors(); }, [loadErrors]);
+
+        return (
+            <div className="panel dashboard-panel full">
+                <div className="panel-head">
+                    <div>
+                        <h2>Extension Errors</h2>
+                        <p className="muted">Errors reported by Blender add-on instances.</p>
+                    </div>
+                    <button className="button" type="button" onClick={loadErrors} disabled={loading}>
+                        <RefreshCcw size={16} className={loading ? 'spin' : ''} /> Refresh
+                    </button>
+                </div>
+                {loading ? <LoadingState label="Loading errors..." /> : null}
+                {!loading && err ? <ErrorState message={err} onRetry={loadErrors} /> : null}
+                {!loading && !err && errors.length === 0 ? <EmptyState icon={XCircle} title="No errors reported" text="Extension errors will appear here when they occur." /> : null}
+                {!loading && !err && errors.length > 0 ? (
+                    <div className="data-table-wrap">
+                        <table className="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Level</th>
+                                    <th>Message</th>
+                                    <th>User</th>
+                                    <th>Add-on</th>
+                                    <th>Blender</th>
+                                    <th>OS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {errors.map((e) => (
+                                    <tr key={e.id}>
+                                        <td className="table-meta">{formatDate(e.createdAt)}</td>
+                                        <td><span className={`pill ${e.level === 'error' ? 'failed' : 'pending'}`}>{e.level}</span></td>
+                                        <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }} title={e.message}>{e.message}</td>
+                                        <td>{e.email || '-'}</td>
+                                        <td>{e.addonVersion || '-'}</td>
+                                        <td>{e.blenderVersion || '-'}</td>
+                                        <td>{e.os || '-'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : null}
+            </div>
+        );
+    };
+
     const renderSystem = () => (
         <>
             <motion.div className="panel dashboard-panel full" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
@@ -758,6 +827,7 @@ export default function AdminDashboard() {
                 {activeView === 'uploads' && <div className="dashboard-grid operations-grid">{renderUploadsList()}</div>}
                 {activeView === 'credits' && <div className="dashboard-grid operations-grid">{renderCreditsList()}</div>}
                 {activeView === 'system' && <div className="dashboard-grid operations-grid">{renderSystem()}</div>}
+                {activeView === 'errors' && <div className="dashboard-grid operations-grid">{renderExtensionErrors()}</div>}
                     </motion.div>
                 </AnimatePresence>
             </section>

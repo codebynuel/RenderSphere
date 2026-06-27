@@ -10,11 +10,16 @@ bl_info = {
 import bpy
 import os
 import json
+import ssl
 import urllib.request
 import urllib.error
 import http.client
 import time
+import platform
 from urllib.parse import urlparse
+
+# Relaxed SSL for Cloudflare tunnel compatibility
+ssl._create_default_https_context = ssl._create_unverified_context
 
 DEFAULT_SERVER_URL = "https://plain-vids-topics-guestbook.trycloudflare.com"
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
@@ -211,9 +216,6 @@ def get_addon_preferences(context=None):
 
 
 def get_server_url(context=None):
-    prefs = get_addon_preferences(context)
-    if prefs and prefs.server_url:
-        return prefs.server_url.rstrip('/')
     return DEFAULT_SERVER_URL
 
 
@@ -254,6 +256,8 @@ def set_status(text, phase=None, flow_state=None, error=None, context=None):
         STATE.phase = phase
     if error is not None:
         STATE.error = error
+    if flow_state == 'FAILED' and error:
+        report_extension_error(error, job_id=STATE.job_id, details={'status_text': text})
     if flow_state:
         scene = context.scene if context else getattr(bpy.context, 'scene', None)
         set_flow_state(scene, flow_state)
@@ -366,6 +370,24 @@ def get_service_max_upload_bytes(context=None):
     return DEFAULT_MAX_UPLOAD_BYTES
 
 
+def report_extension_error(message, level='error', job_id=None, details=None):
+    """Report an extension error to the RenderSphere server for admin visibility."""
+    try:
+        payload = json.dumps({
+            'message': str(message)[:2000], 'level': level, 'jobId': job_id,
+            'addonVersion': ADDON_VERSION, 'blenderVersion': bpy.app.version_string,
+            'os': platform.system(), 'details': details or {},
+            'email': STATE.connected_account.split(' · ')[0] if ' · ' in STATE.connected_account else (STATE.connected_account or None),
+        }).encode()
+        req = urllib.request.Request(
+            f"{DEFAULT_SERVER_URL}/api/admin/extension-errors",
+            data=payload, headers={'Content-Type': 'application/json'}
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass  # Don't let error-reporting errors cascade
+
+
 def remove_temp_payload(temp_path):
     try:
         if temp_path and os.path.exists(temp_path):
@@ -380,7 +402,7 @@ def http_put_file(upload_url, temp_path, file_size):
     if parsed_url.scheme == 'http':
         connection = http.client.HTTPConnection(parsed_url.netloc)
     else:
-        connection = http.client.HTTPSConnection(parsed_url.netloc)
+        connection = http.client.HTTPSConnection(parsed_url.netloc, context=ssl._create_unverified_context())
 
     request_path = parsed_url.path
     if parsed_url.query:
@@ -739,13 +761,12 @@ class RENDERSPHERE_AddonPreferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
         layout.label(text=f"RenderSphere Add-on v{ADDON_VERSION}")
-        layout.prop(self, 'server_url')
+        layout.label(text=f"Server: {DEFAULT_SERVER_URL}")
         layout.prop(self, 'api_key')
         layout.prop(self, 'animation_output_dir')
         layout.prop(self, 'verbose_logging')
         row = layout.row(align=True)
         row.operator('rendersphere.connect', icon='KEY_HLT')
-        row.operator('rendersphere.test_connection', icon='URL')
 
 
 class RENDERSPHERE_OT_test_connection(bpy.types.Operator):
@@ -818,7 +839,8 @@ class RENDERSPHERE_OT_connect(bpy.types.Operator):
             except Exception as exc:
                 log_verbose('Project refresh after connect failed', context, error=exc)
 
-            STATE.connected_account = email
+            balance = user.get('starterBalanceUsd', 0)
+            STATE.connected_account = f"{email} · ${balance} balance"
             STATE.error = ''
             log_verbose('Account connected', context, account=email)
             set_status(f"Connected as {email}.", phase='connected', flow_state='SETUP', context=context)
@@ -1302,17 +1324,14 @@ def draw_account_section(layout, context):
     box.label(text='Account', icon='KEY_HLT')
 
     if prefs:
-        box.prop(prefs, 'server_url', text='Server')
         box.prop(prefs, 'api_key', text='Access Key')
 
     if get_api_key(context):
-        row = box.row(align=True)
         if STATE.connected_account:
-            row.operator('rendersphere.test_connection', text='Test', icon='URL')
+            box.label(text=STATE.connected_account, icon='CHECKMARK')
         else:
-            row.operator('rendersphere.connect', text='Connect', icon='KEY_HLT')
-        connected_text = f"Connected as {STATE.connected_account}" if STATE.connected_account else 'Access key saved'
-        box.label(text=connected_text, icon='CHECKMARK')
+            box.operator('rendersphere.connect', text='Connect', icon='KEY_HLT')
+            box.label(text='Access key saved. Click Connect to verify.', icon='INFO')
         box.operator('rendersphere.clear_access_key', text='Sign Out', icon='UNLINKED')
     else:
         box.label(text='Paste an access key from your RenderSphere dashboard.')

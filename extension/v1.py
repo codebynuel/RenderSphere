@@ -1490,7 +1490,7 @@ def draw_review_section(layout, context):
     cost_box = layout.box()
     cost_box.label(text='Cost Estimate', icon='INFO')
     cost_box.label(text=f"~{est_secs} GPU seconds (${est_cost:.4f})")
-    cost_box.label(text=f"~${est_cost:.2f} total (reserves ${max(0.25, est_cost * 2):.2f})")
+    cost_box.label(text=f"~${est_cost:.2f} total (reserves ${max(0.10, est_cost * 2):.2f})")
 
     if missing_files:
         warning = layout.box()

@@ -270,7 +270,6 @@ export async function reserveRenderCredits({
   jobId = null,
   amountUsd,
   estimatedCostUsd = null,
-  maxBudgetUsd = null,
   actor = { actorType: CREDIT_ACTOR_TYPES.SYSTEM },
   metadata = {},
 }) {
@@ -282,7 +281,6 @@ export async function reserveRenderCredits({
     referenceId,
     amountUsd,
     estimatedCostUsd,
-    maxBudgetUsd,
   });
   return applyCreditTransaction({
     client,
@@ -297,7 +295,6 @@ export async function reserveRenderCredits({
     metadata: {
       ...metadata,
       estimatedCostUsd,
-      maxBudgetUsd,
     },
     auditEventType: 'credit.render_reservation_created',
   });

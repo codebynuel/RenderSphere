@@ -82,7 +82,6 @@ export function resolveRenderBudget({ estimatedCostUsd }) {
 
   return {
     requestedBudgetUsd: null,
-    maxBudgetUsd: null,
     reservationUsd: roundMoney(reservationUsd),
   };
 }
@@ -352,7 +351,6 @@ export function serializeRenderedFile(job) {
     billableSeconds: job.billableSeconds || 0,
     priceUsd: typeof job.priceUsd === 'number' ? job.priceUsd : 0,
     estimatedCostUsd: job.estimatedCostUsd ? Number(job.estimatedCostUsd) : null,
-    maxBudgetUsd: job.maxBudgetUsd ? Number(job.maxBudgetUsd) : null,
     billingState: job.billingState || 'UNBILLED',
     downloadUrl: renderedFileDownloadPath(job.jobId),
   };
@@ -472,7 +470,6 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
       const billingMetadata = {
         ...(job.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {}),
         uncappedPriceUsd,
-        maxBudgetUsd,
         reservationAmountUsd: reservationAmount,
         chargedUsd: priceUsd,
         releasedUsd: releaseAmount,
@@ -491,6 +488,9 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
       });
 
       if (billedJob.count > 0) {
+        const jobBillingMeta = job.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {};
+        const billedToUserId = jobBillingMeta.billedToUserId || userId;
+
         logger.info('Settling completed render billing', {
           context: 'billing',
           requestId,
@@ -499,7 +499,6 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
           billableSeconds,
           priceUsd,
           uncappedPriceUsd,
-          maxBudgetUsd,
           releaseAmount,
         });
         const currentJob = { ...job, billingMetadata };
@@ -511,13 +510,11 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
             status,
             amountUsd: releaseAmount,
             billedToUserId,
-            extraMetadata: { requestId, chargedUsd: priceUsd, uncappedPriceUsd, maxBudgetUsd },
+            extraMetadata: { requestId, chargedUsd: priceUsd, uncappedPriceUsd },
           });
         }
 
         if (priceUsd > 0) {
-          const jobBillingMeta = job.billingMetadata && typeof job.billingMetadata === 'object' ? job.billingMetadata : {};
-          const billedToUserId = jobBillingMeta.billedToUserId || userId;
           await chargeRenderCredits({
             client: tx,
             userId: billedToUserId,
@@ -525,7 +522,7 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
             amountUsd: priceUsd,
             billableSeconds,
             pricePerSecondUsd: config.renderPricePerSecondUsd,
-            metadata: { requestId, status, resultKey: updateData.resultKey, uncappedPriceUsd, maxBudgetUsd, reservationReleasedUsd: releaseAmount },
+            metadata: { requestId, status, resultKey: updateData.resultKey, uncappedPriceUsd, reservationReleasedUsd: releaseAmount },
           });
         }
 

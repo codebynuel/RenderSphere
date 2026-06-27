@@ -480,7 +480,6 @@ try {
       engine: 'CYCLES',
       outputFormat: 'PNG',
       denoiser: 'NONE',
-      maxBudgetUsd: 4.5,
     }),
   });
   if (underfundedRender.response.status !== 402) {
@@ -520,7 +519,6 @@ try {
       engine: 'CYCLES',
       outputFormat: 'PNG',
       denoiser: 'NONE',
-      maxBudgetUsd: 2,
     }),
   });
   if (!fundedRender.jobId || fundedRender.job?.billingState !== 'RESERVED' || fundedRender.job?.dispatchStatus !== 'DISPATCHED' || !fundedRender.providerJobId) {
@@ -543,7 +541,6 @@ try {
       engine: 'CYCLES',
       outputFormat: 'PNG',
       denoiser: 'NONE',
-      maxBudgetUsd: 2,
     }),
   });
   const jobsAfterDuplicateFundedRender = await prisma.job.count({ where: { userId: registered.user.id } });
@@ -581,7 +578,6 @@ try {
       engine: 'CYCLES',
       outputFormat: 'PNG',
       denoiser: 'NONE',
-      maxBudgetUsd: 2,
     }),
   });
   if (dispatchFailure.response.status !== 502 || !dispatchFailure.data.jobId || dispatchFailure.data.dispatchStatus !== 'FAILED') {
@@ -607,7 +603,6 @@ try {
       engine: 'CYCLES',
       outputFormat: 'PNG',
       denoiser: 'NONE',
-      maxBudgetUsd: 2,
     }),
   });
   if (duplicateDispatchFailure.response.status !== 409 || duplicateDispatchFailure.data.jobId !== failedDispatchJob.jobId) {
@@ -661,7 +656,6 @@ try {
       engine: 'CYCLES',
       outputFormat: 'PNG',
       denoiser: 'NONE',
-      maxBudgetUsd: 2,
     }),
   });
   const cancelled = await rawRequest('/api/cancel-job', {
@@ -847,7 +841,6 @@ try {
       fileKey: `smoke-failed/${registered.user.id}.blend`,
       status: 'SUBMITTED',
       frameCount: 1,
-      maxBudgetUsd: 1,
       reservedCreditsUsd: 1,
       billingState: 'RESERVED',
       billingMetadata: { reservationReferenceId: failedJobId },

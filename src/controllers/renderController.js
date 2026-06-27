@@ -231,7 +231,6 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               frameCount: normalizedSettings.frameCount,
               estimatedCostUsd: costEstimate.estimatedCostUsd,
               spendAlertUsd: spendAlertUsd || null,
-              maxBudgetUsd: null,
               reservedCreditsUsd: budget.reservationUsd,
               billingState: 'RESERVING',
               billingMetadata: {
@@ -258,7 +257,6 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
             amountUsd: budget.reservationUsd,
             estimatedCostUsd: costEstimate.estimatedCostUsd,
             spendAlertUsd: spendAlertUsd || null,
-            maxBudgetUsd: null,
             metadata: {
               requestId: req.id || req.requestId || null,
               fileKey,

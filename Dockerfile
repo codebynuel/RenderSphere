@@ -28,12 +28,12 @@ RUN apt-get update && apt-get install -y \
     libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Download and install Blender 4.0
-RUN wget https://download.blender.org/release/Blender4.0/blender-4.0.2-linux-x64.tar.xz \
-    && tar -xvf blender-4.0.2-linux-x64.tar.xz -C /opt/ \
-    && mv /opt/blender-4.0.2-linux-x64 /opt/blender \
+# 3. Download and install Blender 4.3 (supports RTX PRO 6000 Blackwell)
+RUN wget https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz \
+    && tar -xvf blender-4.3.2-linux-x64.tar.xz -C /opt/ \
+    && mv /opt/blender-4.3.2-linux-x64 /opt/blender \
     && ln -s /opt/blender/blender /usr/local/bin/blender \
-    && rm blender-4.0.2-linux-x64.tar.xz
+    && rm blender-4.3.2-linux-x64.tar.xz
 
 # 4. Keep CUDA kernel caches in writable /tmp for RunPod workers and default to GPU rendering
 ENV CUDA_CACHE_PATH=/tmp/cuda-cache \

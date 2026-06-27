@@ -5,7 +5,7 @@ import { logger, withRequest } from '../../helpers/logger.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
 import { reserveRenderCredits } from '../services/creditService.js';
-import { buildRunpodInput, estimateRenderCostUsd, normalizeRenderSettings, releaseJobReservation, resolveRenderBudget, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
+import { buildRunpodInput, estimateRenderCostUsd, normalizeMoneyInput, normalizeRenderSettings, releaseJobReservation, resolveRenderBudget, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
 import { cancelRunpodJob, startRunpodRender } from '../services/runpodService.js';
 import { createUploadUrl, isSafeFileName, isSafeObjectKey } from '../services/storageService.js';
 import { userCanSubmitToProject } from '../services/projectService.js';

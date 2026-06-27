@@ -44,7 +44,7 @@ export function roundMoney(value) {
   return Number(Number(value || 0).toFixed(6));
 }
 
-function normalizeMoneyInput(value, fallback = null) {
+export function normalizeMoneyInput(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue) || numberValue <= 0) return fallback;

@@ -53,6 +53,17 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         return res.status(402).json({ error: 'Access key budget cap has been reached.' });
       }
 
+      // Check user has minimum balance before uploading (prevents wasted uploads)
+      const balanceCheck = await prisma.user.findUnique({ where: { id: req.user.id }, select: { starterBalanceUsd: true } });
+      const userBalance = Number(balanceCheck?.starterBalanceUsd || 0);
+      if (userBalance < config.minRenderReservationUsd) {
+        return res.status(402).json({
+          error: `Insufficient prepaid credits. At least $${config.minRenderReservationUsd.toFixed(2)} is required to start a render, but your balance is $${userBalance.toFixed(2)}.`,
+          requiredUsd: config.minRenderReservationUsd,
+          availableUsd: userBalance,
+        });
+      }
+
       const key = `renders/${req.user.id}/${Date.now()}-${fileName}`;
 
       try {

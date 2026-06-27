@@ -365,11 +365,14 @@ def stream_blender_process(process, job, start_frame, end_frame, frame_step, sam
 
                 now = time.time()
                 if changed and (now - last_update_time > 2.0):
-                    runpod.serverless.progress_update(job, {
-                        "current_frame": current_frame_val,
-                        "current_sample": current_sample_val,
-                        "percent": progress_percent(),
-                    })
+                    try:
+                        runpod.serverless.progress_update(job, {
+                            "current_frame": current_frame_val,
+                            "current_sample": current_sample_val,
+                            "percent": progress_percent(),
+                        })
+                    except Exception:
+                        pass
                     last_update_time = now
 
         if process.poll() is not None:
@@ -401,11 +404,14 @@ def stream_blender_process(process, job, start_frame, end_frame, frame_step, sam
     if is_animation:
         completed_frame = start_frame + ((end_frame - start_frame) // max(frame_step, 1)) * max(frame_step, 1)
 
-    runpod.serverless.progress_update(job, {
-        "current_frame": completed_frame,
-        "current_sample": samples,
-        "percent": 100,
-    })
+    try:
+        runpod.serverless.progress_update(job, {
+            "current_frame": completed_frame,
+            "current_sample": samples,
+            "percent": 100,
+        })
+    except Exception:
+        pass
 
 
 def render_job(job):
@@ -604,4 +610,24 @@ def render_job(job):
             os.remove(gpu_script_path)
 
 
-runpod.serverless.start({"handler": render_job})
+if __name__ == '__main__' and '--input' in __import__('sys').argv:
+    # CLI mode: python3 /handler.py --input '{"fileKey":"..."}'
+    import sys
+    import json
+    idx = sys.argv.index('--input')
+    if idx + 1 < len(sys.argv):
+        try:
+            job_input = json.loads(sys.argv[idx + 1])
+            render_job({'input': job_input, 'id': job_input.get('dispatchReference', 'cli-run')})
+            print(json.dumps({'status': 'COMPLETED', 'result_key': None}))
+        except Exception as exc:
+            print(json.dumps({'status': 'FAILED', 'error': str(exc)}))
+            sys.exit(1)
+    else:
+        print(json.dumps({'status': 'FAILED', 'error': '--input requires a JSON argument'}))
+        sys.exit(1)
+elif __name__ != '__main__':
+    # Imported as module — used by runpod.serverless.start
+    pass
+else:
+    runpod.serverless.start({"handler": render_job})

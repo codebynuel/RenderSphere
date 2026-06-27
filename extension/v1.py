@@ -301,7 +301,7 @@ def describe_url_error(error):
             message = data.get('error') or data.get('message') or body
         except Exception:
             message = error.reason
-        return f"{error.code}: {message}"
+        return message
     return str(error)
 
 
@@ -1314,7 +1314,7 @@ def draw_flow_banner(layout, context):
         meter_blocks = 12
         filled_blocks = int((pct / 100) * meter_blocks)
         box.label(text='[' + '#' * filled_blocks + '-' * (meter_blocks - filled_blocks) + ']')
-    if STATE.error and flow == 'FAILED':
+    if STATE.error and flow == 'FAILED' and STATE.error not in STATE.status:
         box.label(text=STATE.error, icon='ERROR')
 
 

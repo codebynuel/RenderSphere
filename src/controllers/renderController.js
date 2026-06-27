@@ -172,6 +172,9 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         billingUserId = teamMembership.team.ownerId;
       }
 
+      // Resolve project for job creation
+      const project = projectId ? await prisma.project.findUnique({ where: { id: projectId } }) : null;
+
       const spendAlertUsd = normalizeMoneyInput(req.body.spendAlertUsd);
       const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
       const costEstimate = estimateRenderCostUsd({ engine, outputFormat, denoiser, normalizedSettings });

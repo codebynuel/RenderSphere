@@ -9,7 +9,7 @@ import {
     CheckCircle2,
     Clock3,
     Copy,
-    Download,
+    Download as DownloadIcon,
     Edit3,
     ExternalLink,
     Eye,
@@ -1976,6 +1976,9 @@ export default function Dashboard() {
                         <h2>Submit a new render</h2>
                         <p className="muted">Upload a .blend file and configure render settings. Estimate shown before submission.</p>
                     </div>
+                    <a className="button" href="/downloads/rendersphere-blender-addon.zip" download style={{ textDecoration: 'none', whiteSpace: 'nowrap', fontSize: 12 }}>
+                        <DownloadIcon size={15} /> Get Blender add-on
+                    </a>
                 </div>
 
                 <div className="submit-form-layout">

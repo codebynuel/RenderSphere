@@ -57,6 +57,25 @@ RENDER_TYPE_ITEMS = [
 
 ACTIVE_PHASES = {'packaging', 'uploading', 'submitted', 'rendering', 'downloading', 'cancelling'}
 TERMINAL_PHASES = {'idle', 'connected', 'complete', 'failed', 'cancelled'}
+
+# Shared state for background upload thread
+_bg_upload = {
+    'running': False,
+    'done': False,
+    'success': False,
+    'phase': 'idle',
+    'status': '',
+    'error': '',
+    'progress_pct': 0,
+    'job_id': None,
+    'file_key': None,
+    'temp_path': None,
+    'upload_url': None,
+    'file_size': 0,
+}
+
+# Prevent multiple concurrent background uploads
+_bg_upload_lock = False
 INTERNAL_RENDER_ERROR_MARKERS = (
     "runpod",
     "traceback",
@@ -924,6 +943,105 @@ class RENDERSPHERE_OT_open_last_output(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+def _make_auth_headers(api_key, content_type=None):
+    """Build auth headers without touching bpy.context (not thread-safe)."""
+    headers = {}
+    if api_key:
+        headers['Authorization'] = f"Bearer {api_key}"
+    if content_type:
+        headers['Content-Type'] = content_type
+    return headers
+
+
+def _run_upload_bg(server_url, api_key, temp_path, file_size, trigger_payload):
+    """Run upload + trigger in a background thread so Blender stays responsive."""
+    global _bg_upload
+    auth = lambda ct=None: _make_auth_headers(api_key, ct)
+    try:
+        _bg_upload['status'] = 'Requesting upload link...'
+        api_endpoint = f"{server_url}/api/get-upload-url"
+        upload_payload = json.dumps({
+            'fileName': 'rendersphere_payload.blend',
+            'fileSizeBytes': file_size,
+        }).encode('utf-8')
+
+        req = urllib.request.Request(api_endpoint, data=upload_payload, headers=auth('application/json'))
+        with urllib.request.urlopen(req) as response:
+            res_data = json.loads(response.read().decode())
+            _bg_upload['upload_url'] = res_data.get('uploadUrl')
+            _bg_upload['file_key'] = res_data.get('key')
+        if not _bg_upload['upload_url'] or not _bg_upload['file_key']:
+            raise RuntimeError('Upload URL response was missing uploadUrl or key.')
+
+        _bg_upload['status'] = 'Uploading to cloud storage...'
+        upload_res = http_put_file(_bg_upload['upload_url'], temp_path, file_size)
+        upload_status = upload_res.status
+        upload_res.read()
+        if upload_status not in (200, 201):
+            raise RuntimeError(f"Upload failed with status {upload_status}.")
+
+        _bg_upload['status'] = 'Triggering render...'
+        _bg_upload['progress_pct'] = 100
+        trigger_payload['fileKey'] = _bg_upload['file_key']
+        trigger_bytes = json.dumps(trigger_payload).encode('utf-8')
+        trigger_req = urllib.request.Request(
+            f"{server_url}/api/trigger-render",
+            data=trigger_bytes,
+            headers=auth('application/json')
+        )
+        with urllib.request.urlopen(trigger_req) as tr:
+            job_data = json.loads(tr.read().decode())
+            _bg_upload['job_id'] = job_data.get('jobId')
+        if not _bg_upload['job_id']:
+            raise RuntimeError('Render trigger did not return a jobId.')
+
+        _bg_upload['success'] = True
+        _bg_upload['phase'] = 'submitted'
+        _bg_upload['status'] = 'Render submitted! Waiting for worker...'
+    except Exception as exc:
+        _bg_upload['error'] = describe_url_error(exc)
+        _bg_upload['phase'] = 'failed'
+        _bg_upload['status'] = f"Failed: {_bg_upload['error']}"
+        _bg_upload['success'] = False
+        log_verbose('Background upload failed', None, error=_bg_upload['error'])
+    finally:
+        _bg_upload['done'] = True
+        _bg_upload['running'] = False
+
+
+def _poll_upload():
+    """Timer callback: updates Blender UI from background thread progress."""
+    global _bg_upload
+    if _bg_upload['running']:
+        STATE.status = _bg_upload['status']
+        STATE.phase = _bg_upload['phase']
+        force_ui_redraw()
+        return 0.5
+
+    if _bg_upload['done']:
+        # Clean up temp file
+        if _bg_upload.get('temp_path'):
+            remove_temp_payload(_bg_upload['temp_path'])
+            _bg_upload['temp_path'] = None
+
+        if _bg_upload['success'] and _bg_upload['job_id']:
+            STATE.job_id = _bg_upload['job_id']
+            STATE.job_start_time = time.time()
+            STATE.last_api_check = time.time() - 5.0
+            set_status('Render submitted! Waiting for worker...', phase='submitted', flow_state='RENDERING')
+            bpy.app.timers.register(check_job_status, first_interval=1.0)
+        else:
+            STATE.error = _bg_upload['error']
+            STATE.phase = 'failed'
+            set_status(f"Failed: {_bg_upload['error']}", phase='failed', flow_state='FAILED')
+        _bg_upload['done'] = False
+        global _bg_upload_lock
+        _bg_upload_lock = False
+        return None
+
+    return None
+
+
 class RENDER_OT_cloud_upload(bpy.types.Operator):
     bl_idname = 'render.cloud_upload'
     bl_label = 'Submit Render'
@@ -931,6 +1049,11 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
 
     ignore_missing: bpy.props.BoolProperty(default=False, options={'HIDDEN'})
     missing_summary: bpy.props.StringProperty(default='', options={'HIDDEN'})
+    spend_alert: bpy.props.StringProperty(
+        name='Spend Alert',
+        description='Email me if the final cost exceeds this amount (optional)',
+        default='',
+    )
 
     def invoke(self, context, event):
         missing_files = get_missing_external_files()
@@ -961,6 +1084,11 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
         layout.label(text=f"Resolution: {summary['resolution_pct']}%")
         layout.label(text=f"Format: {summary['format']}")
         layout.separator()
+        # Show cost estimate in the dialog
+        est_secs, est_cost = estimate_cost_usd(context.scene)
+        layout.label(text=f"Estimated cost: ${est_cost:.4f} (~{est_secs} GPU sec)", icon='INFO')
+        layout.separator()
+        layout.prop(self, 'spend_alert', text='Spend alert ($)')
         layout.label(text='This will package, upload, and use render credits once started.')
 
     def execute(self, context):
@@ -1031,53 +1159,13 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                 set_status('Failed: packed file is too large.', phase='failed', flow_state='FAILED', context=context)
                 return {'CANCELLED'}
 
-            set_status('Uploading: requesting a secure upload link...', phase='uploading', flow_state='SUBMITTING', context=context)
-            api_endpoint = f"{server_url}/api/get-upload-url"
-            upload_payload = json.dumps({
-                'fileName': 'rendersphere_payload.blend',
-                'fileSizeBytes': file_size,
-            }).encode('utf-8')
-
-            try:
-                log_verbose('Requesting secure upload link', context, endpoint=api_endpoint, file_size=file_size)
-                req = urllib.request.Request(api_endpoint, data=upload_payload, headers=auth_headers(context, 'application/json'))
-                with urllib.request.urlopen(req) as response:
-                    res_data = json.loads(response.read().decode())
-                    upload_url = res_data.get('uploadUrl')
-                    file_key = res_data.get('key')
-                if not upload_url or not file_key:
-                    raise RuntimeError('Upload URL response was missing uploadUrl or key.')
-                log_verbose('Secure upload link received', context, has_upload_url=bool(upload_url), has_file_key=bool(file_key))
-            except Exception as exc:
-                STATE.error = describe_url_error(exc)
-                log_verbose('Upload link request failed', context, error=STATE.error)
-                set_status('Failed: could not secure an upload link.', phase='failed', flow_state='FAILED', context=context)
-                return {'CANCELLED'}
-
-            set_status('Uploading: sending packed .blend to cloud storage...', phase='uploading', flow_state='SUBMITTING', context=context)
-            try:
-                upload_res = http_put_file(upload_url, temp_path, file_size)
-                upload_status = upload_res.status
-                upload_res.read()
-            except Exception as exc:
-                STATE.error = describe_url_error(exc)
-                log_verbose('Payload upload failed', context, error=STATE.error)
-                set_status('Failed: upload did not complete.', phase='failed', flow_state='FAILED', context=context)
-                return {'CANCELLED'}
-
-            if upload_status not in [200, 201]:
-                STATE.error = f"Upload failed with status {upload_status}."
-                log_verbose('Payload upload failed', context, status=upload_status)
-                set_status('Failed: upload was rejected.', phase='failed', flow_state='FAILED', context=context)
-                return {'CANCELLED'}
-
-            log_verbose('Payload upload completed', context, status=upload_status)
-            set_status('Submitted: starting render worker...', phase='submitted', flow_state='SUBMITTING', context=context)
-
             project_id = get_selected_project_id(scene)
-            trigger_endpoint = f"{server_url}/api/trigger-render"
+
+            # Check for spend alert from dialog
+            spend_alert_val = getattr(self, 'spend_alert', '')
+
             trigger_payload = {
-                'fileKey': file_key,
+                'fileKey': '',  # filled by background thread after upload
                 'engine': scene.runpod_engine,
                 'samples': scene.runpod_samples,
                 'isAnimation': scene.runpod_is_animation,
@@ -1091,6 +1179,7 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                 'camera': target_camera.name if target_camera else '',
                 'projectId': project_id,
                 'advancedMode': scene.runpod_advanced_mode,
+                'spendAlertUsd': spend_alert_val,
             }
 
             if scene.runpod_advanced_mode:
@@ -1116,31 +1205,39 @@ class RENDER_OT_cloud_upload(bpy.types.Operator):
                     'simplifyTextureLimit': scene.runpod_simplify_texture_limit,
                 })
 
-            trigger_payload_bytes = json.dumps(trigger_payload).encode('utf-8')
-            trigger_req = urllib.request.Request(trigger_endpoint, data=trigger_payload_bytes, headers=auth_headers(context, 'application/json'))
-
-            try:
-                log_verbose('Triggering render job', context, endpoint=trigger_endpoint, is_animation=STATE.is_animation, start_frame=start_frame, end_frame=end_frame)
-                with urllib.request.urlopen(trigger_req) as trigger_response:
-                    job_data = json.loads(trigger_response.read().decode())
-                    STATE.job_id = job_data.get('jobId')
-                if not STATE.job_id:
-                    raise RuntimeError('Render trigger response did not include a jobId.')
-            except Exception as exc:
-                STATE.error = describe_url_error(exc)
-                log_verbose('Render trigger failed', context, error=STATE.error)
-                set_status('Failed: render worker did not start.', phase='failed', flow_state='FAILED', context=context)
+            # Start background upload + trigger so Blender stays responsive
+            global _bg_upload, _bg_upload_lock
+            if _bg_upload_lock:
+                STATE.error = 'An upload is already in progress.'
+                set_status('Failed: upload already in progress.', phase='failed', flow_state='FAILED', context=context)
                 return {'CANCELLED'}
+            _bg_upload_lock = True
 
-            STATE.job_start_time = time.time()
-            STATE.last_api_check = time.time() - 5.0
-            log_verbose('Render job created', context, job_id=STATE.job_id)
-            set_status('Submitted: waiting for a render worker...', phase='submitted', flow_state='RENDERING', context=context)
-            bpy.app.timers.register(check_job_status, first_interval=1.0)
+            _bg_upload['running'] = True
+            _bg_upload['done'] = False
+            _bg_upload['success'] = False
+            _bg_upload['phase'] = 'uploading'
+            _bg_upload['progress_pct'] = 0
+            _bg_upload['status'] = 'Starting upload...'
+            _bg_upload['temp_path'] = temp_path
+            _bg_upload['file_size'] = file_size
+
+            import threading
+            thread = threading.Thread(
+                target=_run_upload_bg,
+                args=(server_url, get_api_key(context), temp_path, file_size, trigger_payload),
+                daemon=True
+            )
+            thread.start()
+            bpy.app.timers.register(_poll_upload, first_interval=0.5)
+
+            set_status('Uploading to cloud storage...', phase='uploading', flow_state='SUBMITTING', context=context)
+
+            # Don't block — the background thread + timer handle the rest
+            return {'FINISHED'}
 
         finally:
             self.ignore_missing = False
-            remove_temp_payload(temp_path)
 
         return {'FINISHED'}
 
@@ -1207,16 +1304,19 @@ def draw_account_section(layout, context):
     if prefs:
         box.prop(prefs, 'server_url', text='Server')
         box.prop(prefs, 'api_key', text='Access Key')
-        row = box.row(align=True)
-        row.operator('rendersphere.connect', text='Connect', icon='KEY_HLT')
-        row.operator('rendersphere.test_connection', text='Test', icon='URL')
 
     if get_api_key(context):
+        row = box.row(align=True)
+        if STATE.connected_account:
+            row.operator('rendersphere.test_connection', text='Test', icon='URL')
+        else:
+            row.operator('rendersphere.connect', text='Connect', icon='KEY_HLT')
         connected_text = f"Connected as {STATE.connected_account}" if STATE.connected_account else 'Access key saved'
         box.label(text=connected_text, icon='CHECKMARK')
         box.operator('rendersphere.clear_access_key', text='Sign Out', icon='UNLINKED')
     else:
         box.label(text='Paste an access key from your RenderSphere dashboard.')
+        box.operator('rendersphere.connect', text='Connect', icon='KEY_HLT')
 
 
 def draw_project_section(layout, context):
@@ -1319,10 +1419,40 @@ def draw_advanced_section(layout, context):
         perf_box.prop(scene, 'runpod_simplify_texture_limit', text='Texture Limit')
 
 
+RENDER_PRICE_PER_SECOND_USD = 0.00028
+BASE_SECONDS_PER_FRAME = 60
+
+def estimate_cost_usd(scene):
+    """Replicate the backend cost estimate locally so the user sees it before submitting."""
+    frame_count = 1
+    if scene.runpod_is_animation:
+        start = scene.runpod_frame_start if not scene.runpod_use_scene_frames else scene.frame_start
+        end = scene.runpod_frame_end if not scene.runpod_use_scene_frames else scene.frame_end
+        frame_count = max(1, end - start + 1)
+    samples = scene.runpod_samples
+    res_pct = scene.runpod_resolution_pct
+    engine = scene.runpod_engine
+    denoiser = scene.runpod_denoiser
+    fmt = scene.runpod_output_format
+    advanced = scene.runpod_advanced_mode
+
+    samples_factor = max(0.1, samples / 256)
+    res_factor = max(0.01, (res_pct / 100) ** 2)
+    engine_factor = 1.0 if engine == 'CYCLES' else 0.45
+    denoiser_factor = 1.08 if denoiser != 'NONE' else 1.0
+    output_factor = 1.15 if fmt.startswith('OPEN_EXR') else 1.0
+    complexity = 1.1 if advanced else 1.0
+
+    est_secs = max(1, int(BASE_SECONDS_PER_FRAME * frame_count * samples_factor * res_factor * engine_factor * denoiser_factor * output_factor * complexity))
+    est_cost = est_secs * RENDER_PRICE_PER_SECOND_USD
+    return est_secs, est_cost
+
+
 def draw_review_section(layout, context):
     scene = context.scene
     summary = describe_render_job(scene)
     missing_files = get_missing_external_files()
+    est_secs, est_cost = estimate_cost_usd(scene)
 
     box = layout.box()
     box.label(text='Review', icon='RENDER_STILL')
@@ -1336,6 +1466,12 @@ def draw_review_section(layout, context):
     box.label(text=f"Format: {summary['format']}")
     if scene.runpod_advanced_mode:
         box.label(text=f"Advanced: On · GPU {scene.runpod_gpu_device_type} · frame step {summary['frame_step']}")
+
+    # Cost estimate
+    cost_box = layout.box()
+    cost_box.label(text='Cost Estimate', icon='INFO')
+    cost_box.label(text=f"~{est_secs} GPU seconds (${est_cost:.4f})")
+    cost_box.label(text=f"~${est_cost:.2f} total (reserves ${max(0.25, est_cost * 2):.2f})")
 
     if missing_files:
         warning = layout.box()
@@ -1365,6 +1501,16 @@ def draw_progress_section(layout, context):
 
     box = layout.box()
     box.label(text='Render Status', icon='TIME')
+
+    # Upload progress (background thread)
+    if _bg_upload['running'] or _bg_upload['phase'] == 'uploading':
+        box.label(text=_bg_upload['status'] or 'Uploading...', icon='NETWORK_DRIVE')
+        pct = _bg_upload['progress_pct']
+        if pct > 0:
+            row = box.row()
+            row.progress(factor=pct / 100.0, type='BAR')
+            row.label(text=f"{pct}%")
+
     if STATE.job_id:
         box.label(text=f"Job: {STATE.job_id[:8]}")
         box.label(text=f"Elapsed: {STATE.elapsed}")
@@ -1412,6 +1558,11 @@ class RENDER_PT_main_panel(bpy.types.Panel):
             draw_scene_section(layout, context)
             draw_output_quality_section(layout, context)
             draw_advanced_section(layout, context)
+            layout.separator()
+            # Live cost estimate
+            est_secs, est_cost = estimate_cost_usd(context.scene)
+            cost_box = layout.box()
+            cost_box.label(text=f"Est. cost: ${est_cost:.4f} (~{est_secs}s GPU)", icon='INFO')
             layout.separator()
             row = layout.row()
             row.enabled = not is_busy()

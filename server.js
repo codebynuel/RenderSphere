@@ -13,7 +13,7 @@ import { buildOperationalSnapshot, requestIdMiddleware, requestLoggingMiddleware
 import { accountRateLimitKey, authAttemptRateLimitKey, createRateLimiter, createRateLimitStore, requireSameOriginForBrowserWrites, securityHeaders } from './helpers/security.js';
 import { prisma } from './src/db.js';
 import { authenticateToken, parseCookieHeader, requireAdmin, requireAuth } from './src/services/authService.js';
-import { fetchRunpodJobStatus } from './src/services/runpodService.js';
+import { fetchRunpodJobStatus, getRunpodExecutionSeconds } from './src/services/runpodService.js';
 import { jobIsProviderDispatched, persistRunpodStatus, providerJobIdForJob, serializeJob } from './src/services/jobService.js';
 
 import { createAdminRouter } from './routes/admin.js';
@@ -208,13 +208,28 @@ const activeJobPoller = setInterval(async () => {
             if (user?.emailVerifiedAt) {
               sendRenderCompleteEmail(user.email, user.name, updatedJob).catch(() => {});
               prisma.job.updateMany({ where: { jobId: updatedJob.jobId }, data: { notificationSent: true } }).catch(() => {});
+            }
+          }
+        }
 
-              // Check spend alert threshold
-              if (updatedJob.status === 'COMPLETED' && updatedJob.spendAlertUsd && updatedJob.priceUsd > Number(updatedJob.spendAlertUsd)) {
+        // Live spend alert — fires during rendering when running cost exceeds threshold, once per job
+        if (updatedJob && updatedJob.spendAlertUsd && !updatedJob.notificationSent) {
+          const billingMeta = (updatedJob.billingMetadata && typeof updatedJob.billingMetadata === 'object') ? updatedJob.billingMetadata : {};
+          if (!billingMeta.spendAlertSent && rpData) {
+            const executionSeconds = getRunpodExecutionSeconds(rpData, updatedJob);
+            const runningCost = Math.max(0, executionSeconds * config.renderPricePerSecondUsd);
+            if (runningCost > Number(updatedJob.spendAlertUsd)) {
+              const user = await prisma.user.findUnique({ where: { id: updatedJob.userId } });
+              if (user?.emailVerifiedAt) {
                 sendSpendAlertEmail(user.email, user.name, {
                   jobId: updatedJob.jobId,
-                  actualCostUsd: updatedJob.priceUsd,
+                  actualCostUsd: runningCost,
                   alertThresholdUsd: Number(updatedJob.spendAlertUsd),
+                }).catch(() => {});
+                // Mark as sent in billingMetadata to prevent repeat alerts every 5s
+                prisma.job.updateMany({
+                  where: { jobId: updatedJob.jobId },
+                  data: { billingMetadata: { ...billingMeta, spendAlertSent: true, spendAlertTriggeredAtUsd: runningCost } },
                 }).catch(() => {});
               }
             }

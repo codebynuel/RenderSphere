@@ -647,6 +647,7 @@ def check_job_status():
                 set_status('Rendering animation...' if STATE.is_animation else 'Rendering frame...', phase='rendering', flow_state='RENDERING')
 
             stream_data = data.get('stream', [])
+            found_data = False
             if stream_data and isinstance(stream_data, list):
                 for item in reversed(stream_data):
                     payload = item
@@ -661,15 +662,25 @@ def check_job_status():
                         except Exception:
                             pass
                     if isinstance(payload, dict):
-                        found_data = False
+                        found_data_local = False
                         if 'current_frame' in payload:
                             STATE.frame_current = payload['current_frame']
-                            found_data = True
+                            found_data_local = True
                         if 'current_sample' in payload:
                             STATE.sample_current = payload['current_sample']
-                            found_data = True
-                        if found_data:
+                            found_data_local = True
+                        if found_data_local:
                             break
+
+            # Always read progress from job.progress (set by backend progress endpoint)
+            job_data = data.get('job', {})
+            if isinstance(job_data, dict):
+                job_progress = job_data.get('progress', {})
+                if isinstance(job_progress, dict):
+                    if 'currentFrame' in job_progress:
+                        STATE.frame_current = job_progress['currentFrame']
+                    if 'currentSample' in job_progress:
+                        STATE.sample_current = job_progress['currentSample']
 
         elif status == 'COMPLETED':
             set_status('Complete: downloading output...', phase='downloading', flow_state='RENDERING')

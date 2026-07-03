@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     libfreetype6 \
     libdbus-1-3 \
-    nvidia-smi \
     && rm -rf /var/lib/apt/lists/*
 
 # 3. Download and install Blender 4.4 (adds full Blackwell / RTX 50-series GPU support)

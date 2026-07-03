@@ -21,11 +21,11 @@ jobs:
       - setup_remote_docker:
           version: "20.10.24"
       - run: |
-          docker build -t $DOCKERHUB_USERNAME/blender-runpod-worker:v6 -t $DOCKERHUB_USERNAME/blender-runpod-worker:<< pipeline.number >> -f Dockerfile .
+          docker build -t $DOCKERHUB_USERNAME/blender-runpod-worker:v6.1 -t $DOCKERHUB_USERNAME/blender-runpod-worker:<< pipeline.number >> -f Dockerfile .
       - run: |
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
       - run: |
-          docker push $DOCKERHUB_USERNAME/blender-runpod-worker:v6
+          docker push $DOCKERHUB_USERNAME/blender-runpod-worker:v6.1
           docker push $DOCKERHUB_USERNAME/blender-runpod-worker:<< pipeline.number >>
 
 workflows:

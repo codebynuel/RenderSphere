@@ -42,7 +42,8 @@ ENV CUDA_CACHE_PATH=/tmp/cuda-cache \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
     RENDER_GPU_DEVICE_TYPE=AUTO \
     RENDER_ALLOW_CPU_FALLBACK=false \
-    RENDER_FORCE_CPU=false
+    RENDER_FORCE_CPU=false \
+    RENDERSPHERE_BACKEND_URL="https://skxv9gnc-5309.uks1.devtunnels.ms"
 
 # 5. Install the Python packages
 RUN pip3 install --no-cache-dir runpod boto3

@@ -141,6 +141,49 @@ app.use('/api', createJobsRouter({ emitJobUpdate, requireAuth }));
 app.use('/api', createRenderRouter({ emitJobUpdate, renderRateLimit, requireAuth }));
 app.use('/api/teams', createTeamsRouter({ accountRateLimit, requireAuth }));
 
+// Progress reporting from RenderSphere worker (no auth — jobId is the key)
+const progressRateLimit = createRateLimiter({
+  windowMs: 2000,
+  max: 10,
+  message: 'Too many progress updates.',
+  store: rateLimitStore,
+  keyGenerator: (req) => req.params.jobId || req.ip,
+  scope: 'progress',
+});
+app.post('/api/progress/:jobId', progressRateLimit, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { currentFrame, currentSample, percent } = req.body || {};
+
+    const job = await prisma.job.findUnique({ where: { jobId }, select: { jobId: true, progress: true, status: true } });
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+
+    if (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED') {
+      return res.json({ ok: true, ignored: true });
+    }
+
+    const newProgress = { updatedAt: new Date().toISOString() };
+    if (Number.isFinite(currentFrame)) newProgress.currentFrame = currentFrame;
+    if (Number.isFinite(currentSample)) newProgress.currentSample = currentSample;
+    if (Number.isFinite(percent)) newProgress.percent = Math.min(100, Math.max(0, Math.round(percent)));
+
+    await prisma.job.update({
+      where: { jobId },
+      data: {
+        progress: {
+          ...(job.progress && typeof job.progress === 'object' ? job.progress : {}),
+          ...newProgress,
+        },
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    logger.warn('Progress update failed', { context: 'progress', jobId: req.params.jobId, error });
+    return res.status(500).json({ error: 'Failed to update progress' });
+  }
+});
+
 app.use((req, res, next) => {
   const systemPaths = new Set(['/healthz', '/readyz', '/metrics']);
   const isAssetRequest = req.method === 'GET'

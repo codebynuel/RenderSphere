@@ -7,6 +7,8 @@ import re
 import time
 import glob
 import select
+import json
+import urllib.request
 
 REQUIRED_ENV_VARS = [
     'R2_ENDPOINT',
@@ -34,6 +36,9 @@ def positive_int_env(name, default):
 
 RENDER_TIMEOUT_SECONDS = positive_int_env('RENDER_TIMEOUT_SECONDS', 21600)
 MIN_TMP_FREE_MB = positive_int_env('RENDER_MIN_TMP_FREE_MB', 1024)
+
+BACKEND_URL = os.environ.get('RENDERSPHERE_BACKEND_URL', '').rstrip('/')
+RENDERSPHERE_JOB_ID_KEY = os.environ.get('RENDERSPHERE_JOB_ID_KEY', 'dispatchReference')
 
 
 def validate_required_env():
@@ -383,6 +388,7 @@ def stream_blender_process(process, job, start_frame, end_frame, frame_step, sam
                         "current_sample": current_sample_val,
                         "percent": progress_percent(),
                     })
+                    report_backend_progress(job, current_frame_val, current_sample_val, progress_percent())
                     last_update_time = now
 
         if process.poll() is not None:
@@ -419,6 +425,31 @@ def stream_blender_process(process, job, start_frame, end_frame, frame_step, sam
         "current_sample": samples,
         "percent": 100,
     })
+    report_backend_progress(job, completed_frame, samples, 100)
+
+
+def report_backend_progress(job, current_frame, current_sample, percent):
+    """POST progress data to the RenderSphere backend for dashboard/extension updates."""
+    if not BACKEND_URL:
+        return
+    rendersphere_job_id = job.get('input', {}).get(RENDERSPHERE_JOB_ID_KEY)
+    if not rendersphere_job_id:
+        return
+    try:
+        payload = json.dumps({
+            "currentFrame": current_frame,
+            "currentSample": current_sample,
+            "percent": percent,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            f"{BACKEND_URL}/api/progress/{rendersphere_job_id}",
+            data=payload,
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass  # Progress reporting is non-critical
 
 
 def render_job(job):
@@ -640,3 +671,4 @@ def render_job(job):
 
 
 runpod.serverless.start({"handler": render_job})
+

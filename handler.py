@@ -304,11 +304,11 @@ if engine == 'CYCLES':
             # Verify GPU is actually active after setup
             try:
                 actual_device = scene.cycles.device
-                print(f"Cycles render device after setup: {actual_device}")
+                print(f"Cycles render device after setup: {{actual_device}}")
                 if actual_device != 'GPU' and not force_cpu:
-                    print(f"WARNING: Cycles device is '{actual_device}' but GPU was requested")
+                    print(f"WARNING: Cycles device is '{{actual_device}}' but GPU was requested")
             except Exception as exc:
-                print(f"Could not verify Cycles device: {exc}")
+                print(f"Could not verify Cycles device: {{exc}}")
         except Exception as exc:
             use_cpu(f'GPU setup failed: {{exc}}')
 else:

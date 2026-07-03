@@ -1,5 +1,5 @@
-# 1. Start with an official Nvidia Linux image
-FROM nvidia/cuda:12.1.1-base-ubuntu22.04
+# 1. Start with an official Nvidia Linux image (CUDA 12.4 matches Blender's bundled toolkit)
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04
 
 # 2. Install Python, pip, and the Linux display/runtime libraries Blender needs
 RUN apt-get update && apt-get install -y \
@@ -26,14 +26,15 @@ RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     libfreetype6 \
     libdbus-1-3 \
+    nvidia-smi \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Download and install Blender 4.3 (supports RTX PRO 6000 Blackwell)
-RUN wget https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz \
-    && tar -xvf blender-4.3.2-linux-x64.tar.xz -C /opt/ \
-    && mv /opt/blender-4.3.2-linux-x64 /opt/blender \
+# 3. Download and install Blender 4.4 (adds full Blackwell / RTX 50-series GPU support)
+RUN wget https://download.blender.org/release/Blender4.4/blender-4.4.3-linux-x64.tar.xz \
+    && tar -xvf blender-4.4.3-linux-x64.tar.xz -C /opt/ \
+    && mv /opt/blender-4.4.3-linux-x64 /opt/blender \
     && ln -s /opt/blender/blender /usr/local/bin/blender \
-    && rm blender-4.3.2-linux-x64.tar.xz
+    && rm blender-4.4.3-linux-x64.tar.xz
 
 # 4. Keep CUDA kernel caches in writable /tmp for RunPod workers and default to GPU rendering
 ENV CUDA_CACHE_PATH=/tmp/cuda-cache \

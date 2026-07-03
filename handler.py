@@ -215,7 +215,11 @@ if engine == 'CYCLES':
             scene.cycles.denoiser = denoiser
         except Exception as exc:
             print(f"Could not set Cycles denoiser {{denoiser}}: {{exc}}")
-
+    # Large tiles for modern GPUs (reduces kernel launch overhead)
+    try:
+        scene.cycles.tile_size = 2048
+    except Exception as exc:
+        print(f"Could not set Cycles tile size: {exc}")
     if hasattr(scene.cycles, 'use_adaptive_sampling'):
         scene.cycles.use_adaptive_sampling = noise_threshold > 0.0
     if hasattr(scene.cycles, 'adaptive_threshold'):
@@ -296,6 +300,15 @@ if engine == 'CYCLES':
 
             if not enabled:
                 use_cpu('no compatible NVIDIA Cycles device was found')
+
+            # Verify GPU is actually active after setup
+            try:
+                actual_device = scene.cycles.device
+                print(f"Cycles render device after setup: {actual_device}")
+                if actual_device != 'GPU' and not force_cpu:
+                    print(f"WARNING: Cycles device is '{actual_device}' but GPU was requested")
+            except Exception as exc:
+                print(f"Could not verify Cycles device: {exc}")
         except Exception as exc:
             use_cpu(f'GPU setup failed: {{exc}}')
 else:
@@ -564,6 +577,28 @@ def render_job(job):
         render_env = os.environ.copy()
         render_env.setdefault('CUDA_CACHE_PATH', cuda_cache_path)
         render_env.setdefault('CUDA_MODULE_LOADING', 'LAZY')
+
+        # Log GPU free memory before rendering (non-fatal — informational only)
+        if not force_cpu:
+            try:
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=memory.free,memory.total,name',
+                     '--format=csv,noheader,nounits'],
+                    capture_output=True, text=True, timeout=10,
+                )
+                gpu_lines = result.stdout.strip().split('\n')
+                for i, line in enumerate(gpu_lines):
+                    parts = line.split(', ')
+                    if len(parts) >= 3:
+                        free_mb, total_mb, gpu_name = parts[0], parts[1], ', '.join(parts[2:])
+                        print(f"GPU {i}: {gpu_name} — {free_mb} MB free / {total_mb} MB total")
+                        if int(free_mb) < 512:
+                            print(f"WARNING: GPU {i} only has {free_mb} MB free — render may OOM")
+            except FileNotFoundError:
+                print("nvidia-smi not found — skipping GPU memory check (non-NVIDIA environment?)")
+            except Exception as exc:
+                print(f"GPU memory check failed: {exc}")
+
         process = subprocess.Popen(render_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=render_env)
         stream_blender_process(process, job, start_frame, end_frame, frame_step, samples, is_animation)
 

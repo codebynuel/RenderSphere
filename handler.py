@@ -349,8 +349,8 @@ def stream_blender_process(process, job, start_frame, end_frame, frame_step, sam
         sample_ratio = min(1.0, max(0.0, current_sample_val / max(1, samples)))
         if is_animation:
             frame_index = min(frame_count - 1, max(0, (current_frame_val - start_frame) // max(frame_step, 1)))
-            return min(99, int(((frame_index + sample_ratio) / frame_count) * 100))
-        return min(99, int(sample_ratio * 100))
+            return min(100, int(((frame_index + sample_ratio) / frame_count) * 100))
+        return min(100, int(sample_ratio * 100))
 
     while True:
         if time.time() > deadline:

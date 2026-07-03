@@ -601,27 +601,19 @@ def describe_render_job(scene):
 def calculate_progress_percent(scene):
     if STATE.phase == 'complete':
         return 100
-    if STATE.phase == 'packaging':
-        return 5
-    if STATE.phase == 'uploading':
-        return 12
-    if STATE.phase == 'submitted':
-        return 20
-    if STATE.phase not in {'rendering', 'downloading'}:
+
+    if STATE.phase not in {'rendering'}:
         return 0
-    if STATE.phase == 'downloading':
-        return 95
 
     target_samples = max(scene.runpod_samples, 1)
     if STATE.is_animation:
         total_frames = ((STATE.end_frame - STATE.start_frame) // max(STATE.frame_step, 1)) + 1
         completed_frame_index = max(0, (STATE.frame_current - STATE.start_frame) // max(STATE.frame_step, 1))
-        sample_pct = STATE.sample_current / target_samples
-        pct = int(((completed_frame_index + sample_pct) / max(total_frames, 1)) * 100) if STATE.sample_current else int((completed_frame_index / max(total_frames, 1)) * 100)
+        sample_pct = min(1.0, max(0.0, STATE.sample_current / target_samples))
+        return min(100, int(((completed_frame_index + sample_pct) / max(total_frames, 1)) * 100))
     else:
-        pct = int((STATE.sample_current / target_samples) * 100) if STATE.sample_current else 25
-
-    return min(94, max(20, pct))
+        pct = int((STATE.sample_current / target_samples) * 100) if STATE.sample_current > 0 else 0
+        return min(100, pct)
 
 
 def check_job_status():

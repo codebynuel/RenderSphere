@@ -306,12 +306,13 @@ export function calculateProgressPercent(job, progressInput = job?.progress) {
   const samples = Math.max(1, Number(settings.samples || 1));
   const startFrame = Number(settings.startFrame ?? settings.start_frame ?? 1);
   const endFrame = Number(settings.endFrame ?? settings.end_frame ?? startFrame);
-  const frameCount = Math.max(1, Number(job?.frameCount || endFrame - startFrame + 1 || 1));
+  const frameStep = Math.max(1, Number(settings.frameStep ?? settings.frame_step ?? 1));
+  const frameCount = Math.max(1, Number(job?.frameCount || Math.floor((endFrame - startFrame) / frameStep) + 1 || 1));
   const currentFrame = Number(progress.currentFrame ?? startFrame);
   const currentSample = Number(progress.currentSample ?? 0);
 
   if (settings.isAnimation || settings.is_animation) {
-    const frameIndex = Math.min(frameCount - 1, Math.max(0, currentFrame - startFrame));
+    const frameIndex = Math.min(frameCount - 1, Math.max(0, Math.floor((currentFrame - startFrame) / frameStep)));
     const sampleRatio = Math.min(1, Math.max(0, currentSample / samples));
     return Math.round(((frameIndex + sampleRatio) / frameCount) * 100);
   }

@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -124,12 +127,14 @@ function createZip(entries) {
 
 let addonSourceText = await readFile(sourcePath, 'utf8');
 const publicUrl = process.env.RENDERSPHERE_PUBLIC_URL?.replace(/\/+$/, '');
-if (publicUrl) {
-  addonSourceText = addonSourceText.replace(
-    /DEFAULT_SERVER_URL = ".*?"/,
-    `DEFAULT_SERVER_URL = ${JSON.stringify(publicUrl)}`
-  );
+if (!publicUrl) {
+  console.error('ERROR: RENDERSPHERE_PUBLIC_URL environment variable is required.');
+  process.exit(1);
 }
+addonSourceText = addonSourceText.replace(
+  /DEFAULT_SERVER_URL = ".*?"/,
+  `DEFAULT_SERVER_URL = ${JSON.stringify(publicUrl)}`
+);
 
 const addonSource = Buffer.from(addonSourceText);
 const readme = Buffer.from(

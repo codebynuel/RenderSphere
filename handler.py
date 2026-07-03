@@ -219,7 +219,7 @@ if engine == 'CYCLES':
     try:
         scene.cycles.tile_size = 2048
     except Exception as exc:
-        print(f"Could not set Cycles tile size: {exc}")
+        print(f"Could not set Cycles tile size: {{exc}}")
     if hasattr(scene.cycles, 'use_adaptive_sampling'):
         scene.cycles.use_adaptive_sampling = noise_threshold > 0.0
     if hasattr(scene.cycles, 'adaptive_threshold'):

@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 # Relaxed SSL for Cloudflare tunnel compatibility
 ssl._create_default_https_context = ssl._create_unverified_context
 
-DEFAULT_SERVER_URL = "https://plain-vids-topics-guestbook.trycloudflare.com"
+DEFAULT_SERVER_URL = ""  # MUST be set via RENDERSPHERE_PUBLIC_URL at package time
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 ADDON_VERSION = ".".join(str(part) for part in bl_info["version"])
 LOG_PREFIX = "[RenderSphere]"
@@ -216,6 +216,11 @@ def get_addon_preferences(context=None):
 
 
 def get_server_url(context=None):
+    if not DEFAULT_SERVER_URL:
+        raise RuntimeError(
+            "RenderSphere server URL is not configured. "
+            "Reinstall the add-on from a package built with RENDERSPHERE_PUBLIC_URL set."
+        )
     return DEFAULT_SERVER_URL
 
 
@@ -372,6 +377,8 @@ def get_service_max_upload_bytes(context=None):
 
 def report_extension_error(message, level='error', job_id=None, details=None):
     """Report an extension error to the RenderSphere server for admin visibility."""
+    if not DEFAULT_SERVER_URL:
+        return  # No server URL configured, skip error reporting
     try:
         payload = json.dumps({
             'message': str(message)[:2000], 'level': level, 'jobId': job_id,
@@ -735,11 +742,6 @@ def check_job_status():
 class RENDERSPHERE_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__ if __package__ else __name__
 
-    server_url: bpy.props.StringProperty(
-        name='Server URL',
-        description='RenderSphere service URL',
-        default=DEFAULT_SERVER_URL,
-    )
     api_key: bpy.props.StringProperty(
         name='Access Key',
         description='RenderSphere access key from your dashboard',
@@ -761,7 +763,6 @@ class RENDERSPHERE_AddonPreferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
         layout.label(text=f"RenderSphere Add-on v{ADDON_VERSION}")
-        layout.label(text=f"Server: {DEFAULT_SERVER_URL}")
         layout.prop(self, 'api_key')
         layout.prop(self, 'animation_output_dir')
         layout.prop(self, 'verbose_logging')

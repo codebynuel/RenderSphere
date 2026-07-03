@@ -318,6 +318,19 @@ export function calculateProgressPercent(job, progressInput = job?.progress) {
   }
 
   if (currentSample > 0) return Math.round(Math.min(1, currentSample / samples) * 100);
+
+  // Time-based progress fallback (when RunPod stream data is unavailable)
+  const billingMeta = (job?.billingMetadata && typeof job.billingMetadata === 'object') ? job.billingMetadata : {};
+  const estimatedSeconds = Number(billingMeta.estimatedSeconds);
+  const startedAt = job?.dispatchedAt || job?.createdAt;
+  if (Number.isFinite(estimatedSeconds) && estimatedSeconds > 0 && startedAt) {
+    const elapsedMs = Date.now() - new Date(startedAt).getTime();
+    const elapsedSeconds = elapsedMs / 1000;
+    if (elapsedSeconds > 3) {
+      return Math.min(95, Math.max(2, Math.round((elapsedSeconds / estimatedSeconds) * 100)));
+    }
+  }
+
   if (status === 'RUNNING' || status === 'IN_PROGRESS') return 10;
   if (status === 'IN_QUEUE') return 4;
   return 2;

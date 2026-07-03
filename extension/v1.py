@@ -613,7 +613,18 @@ def calculate_progress_percent(scene):
         return min(100, int(((completed_frame_index + sample_pct) / max(total_frames, 1)) * 100))
     else:
         pct = int((STATE.sample_current / target_samples) * 100) if STATE.sample_current > 0 else 0
-        return min(100, pct)
+        if pct > 0:
+            return min(100, pct)
+
+    # Time-based fallback when no sample data yet
+    if STATE.job_start_time > 0:
+        elapsed = time.time() - STATE.job_start_time
+        if elapsed > 5:
+            est_secs, _ = estimate_cost_usd(scene)
+            if est_secs > 0:
+                return min(95, max(2, int((elapsed / est_secs) * 100)))
+
+    return 0
 
 
 def check_job_status():

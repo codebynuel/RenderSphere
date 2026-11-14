@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -46,8 +46,10 @@ const STATUS_OPTIONS = [
 ];
 
 const DASHBOARD_TOUR_STORAGE_KEY = 'rendersphere.dashboardProductTour.v1';
+const dashboardTourStorageKey = (userId) => `${DASHBOARD_TOUR_STORAGE_KEY}:${userId}`;
 const TABLE_PAGE_SIZE = 10;
 const SERVER_PAGE_SIZE = 50;
+const ArchiveExplorer = lazy(() => import('../components/ArchiveExplorer'));
 const ACTION_MENU_GAP = 8;
 const ACTION_MENU_DEFAULT_HEIGHT = 160;
 const PROJECT_ACTION_MENU_HEIGHT = {
@@ -319,6 +321,7 @@ function StatusPill({ status }) {
 export default function Dashboard() {
     const { user, loading: authLoading, setUser, activeTeamId, setActiveTeamId } = useAuth();
     const navigate = useNavigate();
+    const userId = user?.id;
 
     const [activeView, setActiveView] = useState('overview');
     const [jobStatusFilter, setJobStatusFilter] = useState('all');
@@ -333,6 +336,7 @@ export default function Dashboard() {
     const [billingPage, setBillingPage] = useState(1);
     const [accessKeys, setAccessKeys] = useState([]);
     const [files, setFiles] = useState([]);
+    const [archiveExplorer, setArchiveExplorer] = useState(null);
     const [jobs, setJobs] = useState([]);
     const [projects, setProjects] = useState([]);
     const [prepaidPackages, setPrepaidPackages] = useState([]);
@@ -829,12 +833,14 @@ export default function Dashboard() {
 
     const markTourDismissed = useCallback(() => {
         try {
-            window.localStorage.setItem(DASHBOARD_TOUR_STORAGE_KEY, 'done');
+            if (userId) {
+                window.localStorage.setItem(dashboardTourStorageKey(userId), 'done');
+            }
         } catch {
             // Storage may be unavailable in private contexts; still dismiss for this session.
         }
         setTourOpen(false);
-    }, []);
+    }, [userId]);
 
     const restartTour = useCallback(() => {
         setTourStepIndex(0);
@@ -861,9 +867,9 @@ export default function Dashboard() {
     }, []);
 
     useEffect(() => {
-        if (authLoading || !user?.id) return undefined;
+        if (authLoading || !userId) return undefined;
         try {
-            if (window.localStorage.getItem(DASHBOARD_TOUR_STORAGE_KEY) === 'done') return undefined;
+            if (window.localStorage.getItem(dashboardTourStorageKey(userId)) === 'done') return undefined;
         } catch {
             // If storage cannot be read, show the tour for the current session.
         }
@@ -872,7 +878,7 @@ export default function Dashboard() {
             setTourOpen(true);
         }, 0);
         return () => window.clearTimeout(openTimer);
-    }, [authLoading, user?.id]);
+    }, [authLoading, userId]);
 
     useEffect(() => {
         if (!tourOpen || !currentTourStep?.view || activeView === currentTourStep.view) return undefined;
@@ -3004,7 +3010,11 @@ export default function Dashboard() {
                             </thead>
                             <tbody>
                                 {tableFiles.map((file) => {
-                                    const absoluteUrl = file.downloadUrl ? new URL(file.downloadUrl, window.location.origin).href : '';
+                                    const fileUrl = file.downloadUrl ? new URL(file.downloadUrl, window.location.origin) : null;
+                                    const absoluteUrl = fileUrl?.href || '';
+                                    const openUrl = fileUrl ? new URL(fileUrl.href) : null;
+                                    if (openUrl) openUrl.pathname = openUrl.pathname.replace(/\/download$/, '/open');
+                                    const isZipFile = /\.zip$/i.test(file.fileName || file.resultKey || '');
                                     return (
                                         <tr className="data-row" key={file.id || file.jobId || file.resultKey}>
                                             {overview ? (
@@ -3038,8 +3048,16 @@ export default function Dashboard() {
                                                             menuId={`file-actions-${file.id || file.jobId || file.resultKey}`}
                                                             label={`Actions for file ${file.fileName || file.resultKey || file.jobId}`}
                                                             items={[
-                                                                {
-                                                                    href: file.downloadUrl,
+                                                                isZipFile ? {
+                                                                    icon: FileArchive,
+                                                                    key: 'open',
+                                                                    label: 'Explore archive',
+                                                                    onClick: () => setArchiveExplorer({
+                                                                        name: file.fileName || file.resultKey || 'rendered-archive.zip',
+                                                                        url: file.downloadUrl,
+                                                                    }),
+                                                                } : {
+                                                                    href: openUrl?.href,
                                                                     icon: ExternalLink,
                                                                     key: 'open',
                                                                     label: 'Open file',
@@ -3548,6 +3566,14 @@ export default function Dashboard() {
             {renderDeleteKeyDialog()}
             {renderProjectMembersDialog()}
             {renderProductTour()}
+            {archiveExplorer && (
+                <Suspense fallback={<div className="archive-explorer-overlay" role="status">Loading archive explorer…</div>}>
+                    <ArchiveExplorer
+                        archive={archiveExplorer}
+                        onClose={() => setArchiveExplorer(null)}
+                    />
+                </Suspense>
+            )}
         </main>
     );
 }

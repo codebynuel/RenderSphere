@@ -8,6 +8,7 @@ function createJobsRouter({ emitJobUpdate, requireAuth }) {
 
   router.get('/jobs', requireAuth, asyncHandler(controller.listJobs));
   router.get('/rendered-files', requireAuth, asyncHandler(controller.listRenderedFiles));
+  router.get('/rendered-files/:jobId/open', requireAuth, asyncHandler(controller.openRenderedFile));
   router.get('/rendered-files/:jobId/download', requireAuth, asyncHandler(controller.downloadRenderedFile));
   router.get('/job-status/:jobId', requireAuth, asyncHandler(controller.getJobStatus));
 

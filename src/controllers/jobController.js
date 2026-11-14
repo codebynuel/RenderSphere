@@ -20,6 +20,41 @@ function buildJobSearchWhere(search) {
   };
 }
 
+async function serveRenderedFile(req, res, inline) {
+  const { jobId } = req.params;
+  const job = await prisma.job.findFirst({ where: { jobId, userId: req.user.id } });
+
+  if (!job || job.status !== 'COMPLETED' || !job.resultKey) {
+    return res.status(404).json({ error: 'Rendered file not found' });
+  }
+
+  const inferredContentType = contentTypeForKey(job.resultKey);
+  try {
+    const object = await getRenderedObject(job.resultKey);
+    const fileName = attachmentFileName(job.resultKey);
+    const contentType = inferredContentType === 'application/octet-stream'
+      ? object.ContentType || inferredContentType
+      : inferredContentType;
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `${inline && inferredContentType.startsWith('image/') ? 'inline' : 'attachment'}; filename="${fileName}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (object.ContentLength) res.setHeader('Content-Length', String(object.ContentLength));
+
+    if (object.Body && typeof object.Body.pipe === 'function') {
+      object.Body.pipe(res);
+      return undefined;
+    }
+
+    const body = object.Body?.transformToByteArray ? Buffer.from(await object.Body.transformToByteArray()) : Buffer.alloc(0);
+    res.end(body);
+    return undefined;
+  } catch (error) {
+    logger.error('Could not proxy rendered file', withRequest(req, { context: 'storage', jobId, resultKey: job.resultKey, error }));
+    return res.status(502).json({ error: 'Rendered file is temporarily unavailable' });
+  }
+}
+
 export function createJobController({ emitJobUpdate = null } = {}) {
   return {
     async listJobs(req, res) {
@@ -91,34 +126,11 @@ export function createJobController({ emitJobUpdate = null } = {}) {
     },
 
     async downloadRenderedFile(req, res) {
-      const { jobId } = req.params;
-      const job = await prisma.job.findFirst({ where: { jobId, userId: req.user.id } });
+      return serveRenderedFile(req, res, false);
+    },
 
-      if (!job || job.status !== 'COMPLETED' || !job.resultKey) {
-        return res.status(404).json({ error: 'Rendered file not found' });
-      }
-
-      try {
-        const object = await getRenderedObject(job.resultKey);
-        const fileName = attachmentFileName(job.resultKey);
-
-        res.setHeader('Content-Type', object.ContentType || contentTypeForKey(job.resultKey));
-        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-        res.setHeader('Cache-Control', 'private, no-store');
-        if (object.ContentLength) res.setHeader('Content-Length', String(object.ContentLength));
-
-        if (object.Body && typeof object.Body.pipe === 'function') {
-          object.Body.pipe(res);
-          return undefined;
-        }
-
-        const body = object.Body?.transformToByteArray ? Buffer.from(await object.Body.transformToByteArray()) : Buffer.alloc(0);
-        res.end(body);
-        return undefined;
-      } catch (error) {
-        logger.error('Could not proxy rendered file', withRequest(req, { context: 'storage', jobId, resultKey: job.resultKey, error }));
-        return res.status(502).json({ error: 'Rendered file is temporarily unavailable' });
-      }
+    async openRenderedFile(req, res) {
+      return serveRenderedFile(req, res, true);
     },
 
     async getJobStatus(req, res) {

@@ -358,6 +358,7 @@ export default function Dashboard() {
     const [pendingDeleteKey, setPendingDeleteKey] = useState(null);
     const [deletingKeyId, setDeletingKeyId] = useState(null);
     const [newProjectName, setNewProjectName] = useState('');
+    const [projectCreateOpen, setProjectCreateOpen] = useState(false);
     const [editingProjectId, setEditingProjectId] = useState(null);
     const [editingProjectName, setEditingProjectName] = useState('');
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
@@ -431,6 +432,30 @@ export default function Dashboard() {
     const fileFilterLoadRef = useRef({ userId: null, search: fileSearchQuery });
     const paypalReturnHandledRef = useRef(null);
     const viewTeamDetailRef = useRef(null);
+    const projectCreateTriggerRef = useRef(null);
+    const projectCreateWasOpenRef = useRef(false);
+
+    const closeProjectCreateDialog = useCallback(() => {
+        if (creatingProject) return;
+        setProjectCreateOpen(false);
+        setNewProjectName('');
+    }, [creatingProject]);
+
+    useEffect(() => {
+        if (!projectCreateOpen) return undefined;
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape') closeProjectCreateDialog();
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [closeProjectCreateDialog, projectCreateOpen]);
+
+    useEffect(() => {
+        if (projectCreateWasOpenRef.current && !projectCreateOpen) {
+            projectCreateTriggerRef.current?.focus();
+        }
+        projectCreateWasOpenRef.current = projectCreateOpen;
+    }, [projectCreateOpen]);
 
     const getActionMenuPlacement = useCallback((menuId, buttonElement) => {
         if (!buttonElement || typeof window === 'undefined') return 'down';
@@ -1030,6 +1055,7 @@ export default function Dashboard() {
             setProjects((current) => [data.project, ...current]);
             setProjectsPage(1);
             setNewProjectName('');
+            setProjectCreateOpen(false);
             setActiveView('projects');
             toast.success('Project created.');
         } catch (error) {
@@ -2689,25 +2715,16 @@ export default function Dashboard() {
                 <div className="project-summary-strip">
                     <span><strong>{visibleProjects.length}</strong> of {paginationMeta.projects?.totalItems ?? projects.length} projects</span>
                     <span><strong>{stats.unassignedJobs}</strong> unassigned jobs</span>
-                </div>
-            </div>
-            <form className="inline-form project-create-form" onSubmit={handleCreateProject}>
-                <div style={{ display: 'flex', gap: 8, flex: 1, alignItems: 'center' }}>
-                    <input
-                        type="text"
-                        maxLength={80}
-                        placeholder="Project name, for example Product launch shot 04"
-                        value={newProjectName}
-                        onChange={(event) => setNewProjectName(event.target.value)}
-                        disabled={creatingProject}
-                        style={{ flex: 1 }}
-                    />
-
-                    <button className="button primary" type="submit" disabled={creatingProject || !newProjectName.trim()}>
-                        <FolderPlus size={16} /> Create project
+                    <button
+                        ref={projectCreateTriggerRef}
+                        className="button primary"
+                        type="button"
+                        onClick={() => setProjectCreateOpen(true)}
+                    >
+                        <FolderPlus size={16} /> New project
                     </button>
                 </div>
-            </form>
+            </div>
 
             <div className="project-table-region" aria-live="polite">
                 {loading.projects ? <LoadingState label="Loading projects..." /> : null}
@@ -2845,6 +2862,74 @@ export default function Dashboard() {
                 ) : null}
             </div>
         </motion.div>
+        );
+    };
+
+    const renderProjectCreateDialog = () => {
+        if (!projectCreateOpen) return null;
+        return (
+            <div
+                className="confirm-overlay project-create-dialog-overlay"
+                role="presentation"
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) closeProjectCreateDialog();
+                }}
+            >
+                <motion.section
+                    className="confirm-box project-create-dialog"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="project-create-title"
+                    aria-describedby="project-create-description"
+                    initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                >
+                    <div className="project-create-dialog-head">
+                        <div>
+                            <p className="eyebrow">Project setup</p>
+                            <h2 id="project-create-title">Create a project</h2>
+                            <p id="project-create-description">Give this group of renders and files a clear name.</p>
+                        </div>
+                        <button
+                            className="button compact-button ghost-button"
+                            type="button"
+                            onClick={closeProjectCreateDialog}
+                            disabled={creatingProject}
+                            aria-label="Close create project dialog"
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                    <form className="project-create-dialog-form" onSubmit={handleCreateProject} aria-busy={creatingProject}>
+                        <div className="project-create-dialog-field">
+                            <label htmlFor="project-name">Project name</label>
+                            <input
+                                id="project-name"
+                                type="text"
+                                maxLength={80}
+                                placeholder="e.g. Product launch shot 04"
+                                value={newProjectName}
+                                onChange={(event) => setNewProjectName(event.target.value)}
+                                disabled={creatingProject}
+                                aria-describedby="project-name-help"
+                                autoFocus
+                            />
+                            <p id="project-name-help">Choose a client, campaign, or shot-sequence name. You can rename it later.</p>
+                        </div>
+                        <div className="project-create-dialog-context">
+                            <FolderKanban size={16} aria-hidden="true" />
+                            <span>{activeTeamId ? 'This project will be added to the selected team.' : 'This project will be created in your personal workspace.'}</span>
+                        </div>
+                        <div className="project-create-dialog-actions">
+                            <button className="button" type="button" onClick={closeProjectCreateDialog} disabled={creatingProject}>Cancel</button>
+                            <button className="button primary" type="submit" disabled={creatingProject || !newProjectName.trim()}>
+                                {creatingProject ? <RefreshCcw size={16} className="spin" /> : <FolderPlus size={16} />}
+                                {creatingProject ? 'Creating project…' : 'Create project'}
+                            </button>
+                        </div>
+                    </form>
+                </motion.section>
+            </div>
         );
     };
 
@@ -3604,7 +3689,6 @@ export default function Dashboard() {
                                     <div className="dashboard-grid operations-grid">
                                         {renderJobs({ overview: true })}
                                         {renderFiles({ overview: true })}
-                                        {renderProjects()}
                                     </div>
                                 )}
                                 {activeView === 'projects' && <div className="dashboard-grid operations-grid">{renderProjects()}</div>}
@@ -3621,6 +3705,7 @@ export default function Dashboard() {
             </section>
             {renderCreateKeyDialog()}
             {renderDeleteKeyDialog()}
+            {renderProjectCreateDialog()}
             {renderProjectMembersDialog()}
             {renderProductTour()}
             {archiveExplorer && (

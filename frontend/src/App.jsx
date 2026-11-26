@@ -24,6 +24,7 @@ function App() {
         <Route path="/verify-email-required" element={<VerifyEmailRequired />} />
         <Route element={<RequireEmailVerified />}>
           <Route path="/app" element={<Dashboard />} />
+          <Route path="/app/jobs/:jobId" element={<Dashboard />} />
           <Route path="/admin" element={<AdminDashboard />} />
         </Route>
         <Route path="/pricing" element={<Pricing />} />

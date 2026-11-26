@@ -1871,7 +1871,7 @@ input:focus {
     align-content: start;
     gap: 14px;
     overflow-y: auto;
-    overflow-x: auto;
+    overflow-x: hidden;
     padding: 80px var(--dashboard-page-pad) 28px;
     background:
         linear-gradient(180deg, color-mix(in srgb, var(--panel-card) 58%, transparent), transparent 280px),
@@ -2090,9 +2090,60 @@ input:focus {
 }
 
 .project-table-wrap,
-.queue-table,
 .file-library {
     overflow: visible;
+}
+
+.queue-table {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+}
+
+.queue-job-table:not(.queue-job-table-compact):not(.queue-job-table-overview) {
+    min-width: 780px;
+}
+
+.queue-job-table-compact {
+    min-width: 700px;
+    table-layout: fixed;
+}
+
+.queue-job-table-compact th:nth-child(1),
+.queue-job-table-compact td:nth-child(1) {
+    width: 38%;
+}
+
+.queue-job-table-compact th:nth-child(2),
+.queue-job-table-compact td:nth-child(2) {
+    width: 14%;
+}
+
+.queue-job-table-compact th:nth-child(3),
+.queue-job-table-compact td:nth-child(3) {
+    width: 19%;
+}
+
+.queue-job-table-compact th:nth-child(4),
+.queue-job-table-compact td:nth-child(4) {
+    width: 15%;
+}
+
+.queue-job-table-compact th:nth-child(5),
+.queue-job-table-compact td:nth-child(5) {
+    width: 14%;
+}
+
+.history-job-primary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.queue-job-table-compact .table-actions {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
 }
 
 .project-actions-menu {
@@ -2571,7 +2622,8 @@ input:focus {
     .marketing-hero,
     .auth-layout,
     .dashboard-metrics-grid,
-    .job-details {
+    .job-details,
+    .job-detail-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
@@ -2620,7 +2672,8 @@ input:focus {
     .assurance-grid,
     .dashboard-metrics-grid,
     .dashboard-grid,
-    .job-details {
+    .job-details,
+    .job-detail-grid {
         grid-template-columns: 1fr;
     }
 
@@ -2841,6 +2894,7 @@ input:focus-visible {
 .queue-section {
     display: grid;
     gap: 12px;
+    min-width: 0;
 }
 
 .queue-section {
@@ -2880,6 +2934,127 @@ input:focus-visible {
     background: var(--panel-section);
     border-radius: 14px;
     padding: 14px;
+}
+
+.job-detail-page {
+    display: grid;
+    gap: 12px;
+    width: 100%;
+    max-width: 1180px;
+    min-width: 0;
+    margin: 0 auto;
+}
+
+.job-detail-toolbar,
+.job-detail-toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.job-detail-card {
+    display: grid;
+    gap: 22px;
+    min-width: 0;
+}
+
+.job-detail-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    min-width: 0;
+}
+
+.job-detail-heading h2 {
+    margin: 4px 0 8px;
+    overflow-wrap: anywhere;
+    font-size: clamp(20px, 2.4vw, 28px);
+}
+
+.job-detail-id {
+    color: var(--muted);
+    overflow-wrap: anywhere;
+    font-size: 12px;
+}
+
+.job-detail-progress {
+    display: grid;
+    gap: 8px;
+}
+
+.job-detail-progress-label {
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.job-detail-progress .muted {
+    margin: 0;
+    font-size: 12px;
+}
+
+.job-detail-section {
+    display: grid;
+    gap: 12px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line-soft);
+}
+
+.job-detail-section h3 {
+    margin: 0;
+    font-size: 15px;
+}
+
+.job-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.job-detail-item {
+    display: grid;
+    align-content: start;
+    gap: 5px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    background: var(--panel-section);
+}
+
+.job-detail-item span {
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.job-detail-item strong {
+    overflow-wrap: anywhere;
+    font-size: 13px;
+}
+
+.job-detail-message {
+    padding: 14px;
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    background: var(--panel-section);
+}
+
+.job-detail-message p {
+    margin: 6px 0 0;
+    overflow-wrap: anywhere;
+}
+
+.job-detail-error {
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.job-detail-refresh-error {
+    margin: 0;
+    color: var(--danger);
 }
 
 .status-pill.active {

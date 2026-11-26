@@ -1,5 +1,5 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { io } from 'socket.io-client';
@@ -32,6 +32,7 @@ import {
     XCircle,
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
+import JobDetails from './JobDetails';
 import { api, formatDate, formatDuration, formatUsd } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -321,6 +322,7 @@ function StatusPill({ status }) {
 export default function Dashboard() {
     const { user, loading: authLoading, setUser, activeTeamId, setActiveTeamId } = useAuth();
     const navigate = useNavigate();
+    const { jobId } = useParams();
     const userId = user?.id;
 
     const [activeView, setActiveView] = useState('overview');
@@ -805,8 +807,8 @@ export default function Dashboard() {
                 description: 'Create secure keys for Blender workstations and automation clients before submitting jobs.',
             },
         };
-        return copy[activeView] || copy.overview;
-    }, [activeView]);
+        return copy[jobId ? 'renders' : activeView] || copy.overview;
+    }, [activeView, jobId]);
 
     const customTopUpValidation = useMemo(() => {
         if (!customTopUpAmount.trim()) return '';
@@ -1727,14 +1729,18 @@ export default function Dashboard() {
         );
     };
 
-    const renderJobRow = (job, overview = false) => {
+    const renderJobRow = (job, overview = false, compact = false) => {
         const expanded = expandedJobId === job.jobId;
+        const openDetails = () => {
+            if (compact) navigate(`/app/jobs/${encodeURIComponent(job.jobId)}`);
+            else setExpandedJobId(expanded ? null : job.jobId);
+        };
         const jobActionItems = [
             {
                 icon: Eye,
                 key: 'details',
                 label: expanded ? 'Hide details' : 'View details',
-                onClick: () => setExpandedJobId(expanded ? null : job.jobId),
+                onClick: openDetails,
             },
             ...(ACTIVE_STATUSES.has(job.status) ? [{
                 danger: true,
@@ -1769,6 +1775,31 @@ export default function Dashboard() {
                                 </div>
                             </td>
                         </>
+                    ) : compact ? (
+                        <>
+                            <td data-label="Job / file">
+                                <div className="table-primary history-job-primary" title={job.fileName || job.jobId}>{job.fileName || job.jobId}</div>
+                                <div className="table-meta">
+                                    <span>{renderTypeLabel(job)}</span>
+                                    {job.project?.name && <span>{job.project.name}</span>}
+                                </div>
+                            </td>
+                            <td data-label="Status"><StatusPill status={job.status} /></td>
+                            <td data-label="Submitted">{formatDate(job.createdAt)}</td>
+                            <td data-label="Duration / cost">
+                                <div className="table-money">
+                                    <span>{job.status === 'COMPLETED' ? formatDuration(job.billableSeconds) : '—'}</span>
+                                    <small>{job.status === 'COMPLETED' ? formatUsd(job.priceUsd) : 'No charge'}</small>
+                                </div>
+                            </td>
+                            <td data-label="Actions">
+                                <div className="table-actions">
+                                    <button className="button compact-button" type="button" onClick={openDetails}>
+                                        <Eye size={15} /> Details
+                                    </button>
+                                </div>
+                            </td>
+                        </>
                     ) : (
                         <>
                     <td data-label="Job">
@@ -1795,8 +1826,8 @@ export default function Dashboard() {
                                 <ActionMenu menuId={`job-actions-${job.jobId}`} label={`Actions for job ${job.jobId}`} items={jobActionItems} />
                             ) : (
                                 <>
-                                    <button className="button compact-button" type="button" onClick={() => setExpandedJobId(expanded ? null : job.jobId)}>
-                                        <Eye size={15} /> {expanded ? 'Hide' : 'Details'}
+                                    <button className="button compact-button" type="button" onClick={openDetails}>
+                                        <Eye size={15} /> Details
                                     </button>
                                     {ACTIVE_STATUSES.has(job.status) && (
                                         <button className="button compact-button danger" type="button" onClick={() => handleCancelJob(job.jobId)}>
@@ -1815,7 +1846,7 @@ export default function Dashboard() {
                         </>
                     )}
                 </tr>
-                {expanded && (
+                {expanded && !compact && (
                     <tr className="data-row-details">
                         <td colSpan={overview ? 4 : 7}>
                             <div className="job-details queue-details">
@@ -1837,9 +1868,9 @@ export default function Dashboard() {
         );
     };
 
-    const renderJobTable = (rows, label, overview = false) => (
+    const renderJobTable = (rows, label, overview = false, compact = false) => (
         <div className="data-table-wrap queue-table" aria-live="polite">
-            <table className="data-table" aria-label={label}>
+            <table className={`data-table queue-job-table${compact ? ' queue-job-table-compact' : overview ? ' queue-job-table-overview' : ''}`} aria-label={label}>
                 <thead>
                     <tr>
                         {overview ? (
@@ -1848,6 +1879,14 @@ export default function Dashboard() {
                                 <th scope="col">Status</th>
                                 <th scope="col">Submitted</th>
                                 <th scope="col">Cost</th>
+                            </>
+                        ) : compact ? (
+                            <>
+                                <th scope="col">Job / file</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Submitted</th>
+                                <th scope="col">Duration / cost</th>
+                                <th scope="col">Actions</th>
                             </>
                         ) : (
                             <>
@@ -1862,12 +1901,12 @@ export default function Dashboard() {
                         )}
                     </tr>
                 </thead>
-                <tbody>{rows.map((job) => renderJobRow(job, overview))}</tbody>
+                <tbody>{rows.map((job) => renderJobRow(job, overview, compact))}</tbody>
             </table>
         </div>
     );
 
-    const renderJobSection = (title, description, rows, emptyTitle, emptyText, page, onPageChange) => {
+    const renderJobSection = (title, description, rows, emptyTitle, emptyText, page, onPageChange, compact = false) => {
         const pagination = paginateItems(rows, page);
         return (
             <section className="queue-section">
@@ -1880,7 +1919,7 @@ export default function Dashboard() {
                 </div>
                 {rows.length === 0 ? <EmptyState title={emptyTitle} text={emptyText} /> : (
                     <>
-                        {renderJobTable(pagination.items, title, false)}
+                        {renderJobTable(pagination.items, title, false, compact)}
                         <PaginationControls label={title} totalItems={rows.length} page={pagination.page} onPageChange={onPageChange} />
                     </>
                 )}
@@ -2939,7 +2978,7 @@ export default function Dashboard() {
                     ) : (
                         <div className="queue-stack">
                             {renderJobSection('Active queue', 'Submitted, queued, and running renders ordered by newest first.', activeJobs, 'No active jobs', 'Running work will be pinned here as soon as it is submitted.', activeJobsPage, setActiveJobsPage)}
-                            {renderJobSection('History', 'Completed, failed, cancelled, and archived outcomes.', historyJobs, 'No history in this view', 'Completed and terminal jobs appear here after processing.', historyJobsPage, setHistoryJobsPage)}
+                            {renderJobSection('History', 'Completed, failed, cancelled, and archived outcomes.', historyJobs, 'No history in this view', 'Completed and terminal jobs appear here after processing.', historyJobsPage, setHistoryJobsPage, true)}
                         </div>
                     )
                 )}
@@ -3493,20 +3532,26 @@ export default function Dashboard() {
     };
 
     if (authLoading || !user) return null;
+    const dashboardHeading = jobId
+        ? { eyebrow: 'Render record', title: 'Job details', description: 'Render settings, status, timeline, and billing for this job.' }
+        : viewMeta;
 
     return (
         <main className="dashboard-page">
             <Sidebar
-                activeView={activeView}
-                onChangeView={setActiveView}
+                activeView={jobId ? 'renders' : activeView}
+                onChangeView={(view) => {
+                    setActiveView(view);
+                    if (jobId) navigate('/app');
+                }}
             />
 
             <section className="dashboard-main" ref={dashboardMainRef}>
                 <div className="dashboard-titlebar operations-titlebar">
                     <div>
-                        <p className="eyebrow">{viewMeta.eyebrow}</p>
-                        <h1>{viewMeta.title}</h1>
-                        <p className="muted">{viewMeta.description}</p>
+                        <p className="eyebrow">{dashboardHeading.eyebrow}</p>
+                        <h1>{dashboardHeading.title}</h1>
+                        <p className="muted">{dashboardHeading.description}</p>
                     </div>
                     <div className="titlebar-actions">
                         <button className="button" type="button" onClick={loadAll}>
@@ -3527,38 +3572,50 @@ export default function Dashboard() {
 
                 <AnimatePresence mode="wait">
                     <motion.div
-                        key={activeView}
+                        key={jobId || activeView}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.15 }}
                         style={{ gridColumn: '1 / -1', minWidth: 0 }}
                     >
-                {activeView === 'submit' && <div className="dashboard-grid operations-grid">{renderSubmitForm()}</div>}
-                {activeView === 'overview' && (
-                    <div className="dashboard-metrics-grid operations-metrics">
-                        <MetricCard icon={FolderKanban} label="Projects" value={visibleProjects.length} detail={`${stats.unassignedJobs} unassigned jobs`} />
-                        <MetricCard icon={Activity} label="Active jobs" value={stats.activeJobs} detail={`${stats.totalJobs} total jobs`} tone="active" />
-                        <MetricCard icon={CheckCircle2} label="Completed" value={stats.completedJobs} detail={`${stats.totalFiles} downloadable files`} tone="good" />
-                        <MetricCard icon={XCircle} label="Failed" value={stats.failedJobs} detail={`${stats.cancelledJobs} cancelled`} tone="danger" />
-                        <MetricCard icon={Clock3} label="Spend" value={formatUsd(stats.totalSpend)} detail={`${formatDuration(stats.billableSeconds)} billed / Balance ${formatUsd(user.starterBalanceUsd)}`} />
-                    </div>
-                )}
+                        {jobId ? (
+                            <JobDetails
+                                jobId={jobId}
+                                onBack={() => {
+                                    setActiveView('renders');
+                                    navigate('/app');
+                                }}
+                            />
+                        ) : (
+                            <>
+                                {activeView === 'submit' && <div className="dashboard-grid operations-grid">{renderSubmitForm()}</div>}
+                                {activeView === 'overview' && (
+                                    <div className="dashboard-metrics-grid operations-metrics">
+                                        <MetricCard icon={FolderKanban} label="Projects" value={visibleProjects.length} detail={`${stats.unassignedJobs} unassigned jobs`} />
+                                        <MetricCard icon={Activity} label="Active jobs" value={stats.activeJobs} detail={`${stats.totalJobs} total jobs`} tone="active" />
+                                        <MetricCard icon={CheckCircle2} label="Completed" value={stats.completedJobs} detail={`${stats.totalFiles} downloadable files`} tone="good" />
+                                        <MetricCard icon={XCircle} label="Failed" value={stats.failedJobs} detail={`${stats.cancelledJobs} cancelled`} tone="danger" />
+                                        <MetricCard icon={Clock3} label="Spend" value={formatUsd(stats.totalSpend)} detail={`${formatDuration(stats.billableSeconds)} billed / Balance ${formatUsd(user.starterBalanceUsd)}`} />
+                                    </div>
+                                )}
 
-                {activeView === 'overview' && (
-                    <div className="dashboard-grid operations-grid">
-                        {renderJobs({ overview: true })}
-                        {renderFiles({ overview: true })}
-                        {renderProjects()}
-                    </div>
-                )}
-                {activeView === 'projects' && <div className="dashboard-grid operations-grid">{renderProjects()}</div>}
-                {activeView === 'renders' && <div className="dashboard-grid operations-grid">{renderJobs()}</div>}
-                {activeView === 'files' && <div className="dashboard-grid operations-grid">{renderFiles()}</div>}
-                {activeView === 'teams' && <div className="dashboard-grid operations-grid">{renderTeams()}</div>}
-                {activeView === 'usage' && <div className="dashboard-grid operations-grid">{renderUsage()}</div>}
-                {activeView === 'billing' && <div className="dashboard-grid operations-grid">{renderBilling()}</div>}
-                {activeView === 'access' && <div className="dashboard-grid operations-grid">{renderAccessKeys()}</div>}
+                                {activeView === 'overview' && (
+                                    <div className="dashboard-grid operations-grid">
+                                        {renderJobs({ overview: true })}
+                                        {renderFiles({ overview: true })}
+                                        {renderProjects()}
+                                    </div>
+                                )}
+                                {activeView === 'projects' && <div className="dashboard-grid operations-grid">{renderProjects()}</div>}
+                                {activeView === 'renders' && <div className="dashboard-grid operations-grid">{renderJobs()}</div>}
+                                {activeView === 'files' && <div className="dashboard-grid operations-grid">{renderFiles()}</div>}
+                                {activeView === 'teams' && <div className="dashboard-grid operations-grid">{renderTeams()}</div>}
+                                {activeView === 'usage' && <div className="dashboard-grid operations-grid">{renderUsage()}</div>}
+                                {activeView === 'billing' && <div className="dashboard-grid operations-grid">{renderBilling()}</div>}
+                                {activeView === 'access' && <div className="dashboard-grid operations-grid">{renderAccessKeys()}</div>}
+                            </>
+                        )}
                     </motion.div>
                 </AnimatePresence>
             </section>

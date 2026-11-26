@@ -1,16 +1,16 @@
 # RenderSphere Production Deployment Guide
 
-This guide describes the current production model for the RenderSphere web gateway, built frontend, PostgreSQL/Prisma database, RunPod worker, PayPal prepaid-credit top-ups, production logging, health checks, and safe metrics snapshots. It intentionally does not cover legal policies or multi-instance job polling coordination.
+This guide describes the current production model for the RenderSphere web gateway, built frontend, PostgreSQL/Prisma database, Modal Blender worker, PayPal prepaid-credit top-ups, production logging, health checks, and safe metrics snapshots. It intentionally does not cover legal policies or multi-instance job polling coordination.
 
 ## Runtime Components
 
 - Web gateway: Node/Express app from `server.js` serving `/api/*`, Socket.IO, health checks, and static frontend assets from `public/`.
 - Frontend: Vite/React app from `frontend/`, built into `public/` and served by the web gateway.
 - Database: PostgreSQL accessed through Prisma.
-- Worker: existing RunPod Blender worker image built from `Dockerfile` and `handler.py`.
+- Worker: Modal app in `modal_app.py`; its GPU image installs Blender 4.4.3 and runs `handler.py`.
 - Object storage: Cloudflare R2 for uploaded source files and rendered outputs.
 
-The web image is separate from the RunPod worker image. Use `Dockerfile.web` for the web gateway/frontend and keep `Dockerfile` for the GPU worker.
+The web image remains separate from the Modal worker. Use `Dockerfile.web` for the web gateway/frontend; Modal builds its worker image from the Python app definition.
 
 ## Required Production Environment Variables
 
@@ -25,8 +25,8 @@ Required for production web startup:
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_BUCKET_NAME`
-- `RUNPOD_ENDPOINT_ID`
-- `RUNPOD_API_KEY`
+- `MODAL_ENDPOINT_URL`
+- `MODAL_API_SECRET`
 
 Recommended web variables:
 
@@ -63,10 +63,10 @@ Recommended web variables:
 - `RENDERSPHERE_ACCOUNT_RATE_LIMIT_MAX`
 - `RENDERSPHERE_RENDER_RATE_LIMIT_WINDOW_MS`
 - `RENDERSPHERE_RENDER_RATE_LIMIT_MAX`
-- `RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS`
-- `RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES`
-- `RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES`
-- `RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS`
+- `RENDERSPHERE_MODAL_REQUEST_TIMEOUT_MS`
+- `RENDERSPHERE_MODAL_STATUS_MAX_RETRIES`
+- `RENDERSPHERE_MODAL_CANCEL_MAX_RETRIES`
+- `RENDERSPHERE_MODAL_RETRY_BACKOFF_MS`
 - `RENDERSPHERE_LOG_LEVEL`
 - `RENDERSPHERE_LOG_FORMAT`
 - `RENDERSPHERE_REQUEST_LOGGING`
@@ -85,6 +85,7 @@ Validation rules:
 
 - `DATABASE_URL` must be a PostgreSQL URL.
 - `RENDERSPHERE_PUBLIC_URL` must be a valid URL in production.
+- `MODAL_ENDPOINT_URL` must be a valid Modal web endpoint URL.
 - `RENDERSPHERE_RATE_LIMIT_STORE` must be `memory` or `redis`.
 - `RENDERSPHERE_RATE_LIMIT_REDIS_URL` is required when `RENDERSPHERE_RATE_LIMIT_STORE=redis`.
 - Default page size cannot exceed max page size.
@@ -93,7 +94,7 @@ Validation rules:
 - `RENDERSPHERE_PAYPAL_PREPAID_PACKAGES` must resolve to at least one valid server-side package.
 - Custom PayPal top-up minimum and maximum amounts must be positive, minimum cannot exceed maximum, currency must be a three-letter code, and decimal places must be an integer from 0 through 6.
 
-Local development only requires `DATABASE_URL` at server startup so developers can run the gateway without real R2/RunPod/PayPal credentials until they exercise those integrations.
+Local development only requires `DATABASE_URL` at server startup so developers can run the gateway without real R2/Modal/PayPal credentials until they exercise those integrations.
 
 ## Build and Release Flow
 
@@ -148,27 +149,46 @@ docker build -f Dockerfile.web -t rendersphere-web:latest .
 
 The image does not run migrations automatically in `CMD`. Run Prisma migrations as a separate release step before routing traffic to the new web container.
 
-### Worker image
+### Modal renderer
 
-The RunPod worker image remains unchanged and is built from the existing worker Dockerfile:
+Install Modal and authenticate the deployment environment with a Modal token using `python -m modal setup`. Ensure these two Modal Secrets exist in the same environment as the deployment. Reuse the existing worker secret when present; create the gateway secret separately so an older deployment's secret is not changed.
 
 ```bash
-docker build -f Dockerfile -t blender-runpod-worker:latest .
+python -m modal secret create rendersphere-worker-env \
+  R2_ENDPOINT="https://<account-id>.r2.cloudflarestorage.com" \
+  R2_ACCESS_KEY_ID="<worker-access-key>" \
+  R2_SECRET_ACCESS_KEY="<worker-secret-key>" \
+  R2_BUCKET_NAME="<bucket-name>"
+
+python -m modal secret create rendersphere-modal-gateway \
+  MODAL_API_SECRET="<long-random-shared-secret>"
 ```
 
-Publish and configure the worker image in RunPod serverless. Required worker variables:
+The worker's R2 credentials should have only the permissions needed to read uploaded scenes and write rendered outputs. The gateway secret is also configured as `MODAL_API_SECRET` in the RenderSphere web service; set `MODAL_ENDPOINT_URL` to the gateway URL printed by Modal after deployment. The web service passes its configured public URL to each render for progress callbacks, so the worker secret does not need a backend URL.
 
-- `R2_ENDPOINT`
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `R2_BUCKET_NAME`
+Deploy the renderer with:
 
-Recommended worker variables:
+```bash
+python -m pip install -r requirements-modal.txt
+python -m modal deploy modal_app.py
+```
+
+The Modal app builds Blender 4.4.3 on CUDA 12.4.1 and requests an L40S GPU, with up to 20 concurrent render calls. Each animation currently runs as one function call; the concurrency limit scales separate render jobs and does not split a single animation across GPUs. Any frame-level fan-out should be benchmarked for correctness, latency, and cost before enabling it.
+
+For a control-flow test without a GPU payment method, deploy the same app in CPU-only mode:
+
+```powershell
+$env:RENDERSPHERE_MODAL_CPU_TEST = "true"
+npm run modal:deploy
+Remove-Item Env:RENDERSPHERE_MODAL_CPU_TEST
+```
+
+CPU mode forces Cycles onto the CPU and is intended only for a tiny test scene. It does not validate GPU/CUDA behavior or production render performance. Redeploy without the variable after adding a payment method to restore the L40S worker.
+
+Optional worker variables can be added to `rendersphere-worker-env`:
 
 - `RENDER_TIMEOUT_SECONDS`
 - `RENDER_MIN_TMP_FREE_MB`
-
-Use least-privilege R2 credentials for the worker. It should only read uploaded source files and write completed render outputs.
 
 ## Database Migrations
 
@@ -207,7 +227,7 @@ Before using it, replace placeholder passwords, domain names, and environment va
 The gateway exposes operational endpoints that do not return secret values.
 
 - `GET /healthz` is lightweight liveness. It returns process/service status, uptime, and the request ID without querying PostgreSQL.
-- `GET /readyz` is readiness. It checks environment validation, Prisma accessibility, PostgreSQL connectivity, and whether required R2/RunPod configuration groups are present. It returns HTTP 200 when ready and HTTP 503 when not ready, plus alert-ready booleans for database, environment, and provider-configuration failures.
+- `GET /readyz` is readiness. It checks environment validation, Prisma accessibility, PostgreSQL connectivity, and whether required R2/Modal configuration groups are present. It returns HTTP 200 when ready and HTTP 503 when not ready, plus alert-ready booleans for database, environment, and provider-configuration failures.
 - `GET /api/admin/metrics` is the default metrics snapshot endpoint and requires `RENDERSPHERE_ADMIN_TOKEN` bearer authentication.
 - `GET /metrics` exposes the same safe JSON snapshot without authentication only when `RENDERSPHERE_PUBLIC_METRICS=true`. Keep this disabled unless the deployment network restricts access to trusted monitoring infrastructure.
 
@@ -232,7 +252,7 @@ The JSON metrics snapshot includes:
 - HTTP request counts, average durations, and maximum durations by normalized route and status class.
 - Job counts by status, active-job count, dispatch-status counts, and count of jobs stuck in `DISPATCHING` without a provider ID.
 - Billing-state counts, unreleased reservation count, credit transaction counts by type, and audit-event volume for the last hour.
-- Provider readiness indicators for PostgreSQL, R2 configuration, RunPod configuration, rate-limit store, and Redis rate-limit configuration.
+- Provider readiness indicators for PostgreSQL, R2 configuration, Modal configuration, rate-limit store, and Redis rate-limit configuration.
 - Environment readiness summary without secret values.
 
 ### Suggested alerts
@@ -240,8 +260,8 @@ The JSON metrics snapshot includes:
 Start with these alert rules and tune thresholds after observing real traffic:
 
 - `/readyz` returns HTTP 503 for 2 consecutive checks or 2 minutes.
-- `providers.runpod.configured=false` or `providers.r2.configured=false` in production.
-- `jobs.dispatch.dispatchingWithoutProvider > 0` for more than one polling interval plus expected RunPod dispatch latency; this can indicate a manual reconciliation case.
+- `providers.modal.configured=false` or `providers.r2.configured=false` in production.
+- `jobs.dispatch.dispatchingWithoutProvider > 0` for more than one polling interval plus expected Modal dispatch latency; this can indicate a manual reconciliation case.
 - `billing.unreleasedReservations > 0` growing for more than 15 minutes, especially with `billing.byState.RELEASING` or `billing.byState.SETTLING` non-zero.
 - `jobs.recentlyFailedJobs` above a baseline threshold, or a sudden increase in `jobs.byStatus.DISPATCH_FAILED`.
 - HTTP `5xx` request count by route increasing over a short window, especially `/api/trigger-render`, `/api/job-status/:jobId`, and `/api/get-upload-url`.
@@ -255,9 +275,9 @@ For prepaid credits and render dispatch incidents:
 1. Capture the user-visible `requestId`, local `jobId`, `providerJobId` when present, and timestamp.
 2. Check `/api/admin/metrics` for dispatch, job status, and billing-state counts.
 3. Search logs by `requestId`, then by `jobId` and `providerJobId` if the request spans async polling.
-4. If a job is `DISPATCHING` with no `providerJobId`, do not release credits until checking whether RunPod accepted the job but the local attachment failed.
+4. If a job is `DISPATCHING` with no `providerJobId`, do not release credits until checking whether Modal accepted the job but the local attachment failed.
 5. If `billingState` is `RELEASING` or `SETTLING`, inspect credit ledger/audit rows for idempotency keys before retrying any repair action.
-6. If RunPod status polling is failing, compare provider readiness, RunPod dashboard health, and `RUNPOD_*` timeout/retry configuration.
+6. If Modal status polling is failing, compare provider readiness, Modal dashboard health, and `RENDERSPHERE_MODAL_*` timeout/retry configuration.
 7. For R2 incidents, confirm signed upload/download errors in logs, bucket credentials/configuration readiness, and object lifecycle rules before re-rendering user jobs.
 
 Do not reset production data during incident response. Prefer idempotent service helpers and additive repair scripts reviewed against ledger/audit records.
@@ -270,24 +290,16 @@ If a CDN is added later, keep API and Socket.IO routing pointed at the gateway a
 
 ## CI and Release Gates
 
-The Docker workflow is the production release validation gate. It preserves the existing RunPod worker image publishing path while adding pull-request and push validation for the web gateway, database, frontend, dependency, Docker, and extension artifact checks.
+The CircleCI config contains a gated Modal deployment job. It only deploys when the commit message contains `[modal-release]`; run the repository's web, database, dependency, and extension validations separately before using that release marker.
 
-CI jobs:
+The deployment job installs `requirements-modal.txt` and runs `modal deploy modal_app.py`.
 
-- `Backend, Prisma, migrations, and smoke tests` installs root dependencies, runs backend syntax/static validation, validates and generates Prisma, verifies isolated PostgreSQL schema targets, deploys migrations to a disposable PostgreSQL service schema, checks migration status, and runs smoke tests against a separate isolated schema.
-- `Frontend lint and production build` installs frontend dependencies, runs ESLint, and builds production assets.
-- `Dependency audit` runs root and standalone frontend production dependency audits with a high-severity threshold.
-- `Extension package and checksum validation` packages the Blender add-on, writes and verifies SHA-256 checksums, and uploads both public download artifacts and checksum files.
-- `Validate web gateway image` builds `Dockerfile.web` without pushing.
-- `Validate RunPod worker image` builds `Dockerfile` without pushing.
-- `Build and push RunPod worker` runs only on non-pull-request events after all validation jobs pass, logs in to Docker Hub, and publishes `latest` plus the commit SHA tag.
+Required CircleCI environment variables for Modal deployment:
 
-Required GitHub secrets for worker publishing:
+- `MODAL_TOKEN_ID`
+- `MODAL_TOKEN_SECRET`
 
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-
-No production application secrets are required for CI validation. CI uses disposable PostgreSQL credentials from the job service container and mock provider configuration in smoke tests. Do not add real R2, RunPod, PayPal, admin, payment, or database secrets to CI logs.
+Only the Modal deployment job needs `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`. Do not add R2, Modal API, PayPal, admin, payment, or database secrets to CI logs.
 
 ### Release checklist
 
@@ -439,7 +451,7 @@ Operational rules:
 
 ## Render Credit Reservations and Budgets
 
-Render start estimates a conservative preauthorized amount from normalized render settings, configured seconds-per-frame, output format, engine, denoiser, samples, resolution, and animation frame count. It reserves prepaid credits before dispatching to RunPod.
+Render start estimates a conservative preauthorized amount from normalized render settings, configured seconds-per-frame, output format, engine, denoiser, samples, resolution, and animation frame count. It reserves prepaid credits before dispatching to Modal.
 
 Budget configuration:
 
@@ -451,29 +463,29 @@ Budget configuration:
 
 Reservation behavior:
 
-- The gateway rejects render start with HTTP 402 before local job creation or RunPod dispatch if available credits are lower than the required reservation.
-- Accepted submissions create a local job and a `RENDER_RESERVATION_HOLD` before calling RunPod.
-- After RunPod accepts dispatch, the gateway stores provider dispatch metadata and clients continue using the local `jobId`.
+- The gateway rejects render start with HTTP 402 before local job creation or Modal dispatch if available credits are lower than the required reservation.
+- Accepted submissions create a local job and a `RENDER_RESERVATION_HOLD` before calling Modal.
+- After Modal accepts dispatch, the gateway stores provider dispatch metadata and clients continue using the local `jobId`.
 - Pre-acceptance dispatch failures release the pending hold.
 - Completed jobs release the hold and apply idempotent final `RENDER_CHARGE` capped by `maxBudgetUsd`.
 - Failed or cancelled jobs release unreleased holds and mark billing as released.
 
-## RunPod Dispatch Idempotency and Reconciliation
+## Modal Dispatch Idempotency and Reconciliation
 
 Render submission accepts an optional `Idempotency-Key` or `X-Idempotency-Key` header, or `idempotencyKey` / `clientRequestId` request body field. The server scopes this value per user and stores it on `Job.idempotencyKey` with a unique index.
 
 Operational behavior:
 
-- Retrying with the same idempotency key after provider acceptance returns the existing local/provider job.
+- Retrying with the same idempotency key after Modal acceptance returns the existing local/provider job.
 - Retrying while the local job is still pending/dispatching returns the existing local job state.
 - Retrying after a pre-acceptance dispatch failure returns HTTP 409 with the failed local job; use a new idempotency key for an intentional fresh submission.
-- The local `jobId` is the application identifier. `providerJobId` is the RunPod identifier.
+- The local `jobId` is the application identifier. `providerJobId` is the Modal FunctionCall identifier.
 - Jobs stuck in `dispatchStatus=DISPATCHING` with no `providerJobId` require manual reconciliation before releasing holds.
 
 Provider-call resilience:
 
-- RunPod status and cancellation calls use request timeouts, bounded retries, and exponential backoff for transient failures.
-- RunPod dispatch does not automatically retry unsafe `/run` calls inside the provider helper.
+- Modal status and cancellation calls use request timeouts, bounded retries, and exponential backoff for transient failures.
+- Modal dispatch does not automatically retry submissions, avoiding duplicate render calls when a response is lost.
 - Provider errors returned to clients are sanitized and include a `retryable` boolean when available.
 
 ## API Pagination and Abuse Controls

@@ -983,6 +983,7 @@ def _run_upload_bg(server_url, api_key, temp_path, file_size, trigger_payload):
     """Run upload + trigger in a background thread so Blender stays responsive."""
     global _bg_upload
     auth = lambda ct=None: _make_auth_headers(api_key, ct)
+    stage = 'Requesting upload link'
     try:
         _bg_upload['status'] = 'Requesting upload link...'
         api_endpoint = f"{server_url}/api/get-upload-url"
@@ -999,6 +1000,7 @@ def _run_upload_bg(server_url, api_key, temp_path, file_size, trigger_payload):
         if not _bg_upload['upload_url'] or not _bg_upload['file_key']:
             raise RuntimeError('Upload URL response was missing uploadUrl or key.')
 
+        stage = 'Uploading scene to Cloudflare R2'
         _bg_upload['status'] = 'Uploading to cloud storage...'
         upload_res = http_put_file(_bg_upload['upload_url'], temp_path, file_size)
         upload_status = upload_res.status
@@ -1006,6 +1008,7 @@ def _run_upload_bg(server_url, api_key, temp_path, file_size, trigger_payload):
         if upload_status not in (200, 201):
             raise RuntimeError(f"Upload failed with status {upload_status}.")
 
+        stage = 'Submitting render request'
         _bg_upload['status'] = 'Triggering render...'
         _bg_upload['progress_pct'] = 100
         trigger_payload['fileKey'] = _bg_upload['file_key']
@@ -1025,7 +1028,7 @@ def _run_upload_bg(server_url, api_key, temp_path, file_size, trigger_payload):
         _bg_upload['phase'] = 'submitted'
         _bg_upload['status'] = 'Render submitted! Waiting for worker...'
     except Exception as exc:
-        _bg_upload['error'] = describe_url_error(exc)
+        _bg_upload['error'] = f"{stage} failed: {describe_url_error(exc)}"
         _bg_upload['phase'] = 'failed'
         _bg_upload['status'] = f"Failed: {_bg_upload['error']}"
         _bg_upload['success'] = False

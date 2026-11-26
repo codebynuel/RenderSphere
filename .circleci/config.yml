@@ -1,34 +1,28 @@
 version: 2.1
 
-orbs:
-  docker: circleci/docker@2.4.0
-
 jobs:
-  build-runpod-worker:
+  deploy-modal-renderer:
     docker:
-      - image: cimg/node:22.0
+      - image: cimg/python:3.11
     steps:
       - checkout
       - run:
-          name: Check for [docker-release] in commit message
+          name: Check for [modal-release] in commit message
           command: |
             COMMIT_MSG=$(git log -1 --pretty=%B)
-            if [[ "$COMMIT_MSG" != *"[docker-release]"* ]]; then
-              echo "Commit message does not contain [docker-release], skipping build"
+            if [[ "$COMMIT_MSG" != *"[modal-release]"* ]]; then
+              echo "Commit message does not contain [modal-release], skipping deployment"
               circleci step halt
             fi
-            echo "Found [docker-release] in commit message, proceeding with build"
-      - setup_remote_docker:
-          version: "20.10.24"
-      - run: |
-          docker build -t $DOCKERHUB_USERNAME/blender-runpod-worker:v6.5 -t $DOCKERHUB_USERNAME/blender-runpod-worker:<< pipeline.number >> -f Dockerfile .
-      - run: |
-          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-      - run: |
-          docker push $DOCKERHUB_USERNAME/blender-runpod-worker:v6.5
-          docker push $DOCKERHUB_USERNAME/blender-runpod-worker:<< pipeline.number >>
+            echo "Found [modal-release], proceeding with Modal deployment"
+      - run:
+          name: Install Modal CLI
+          command: python -m pip install -r requirements-modal.txt
+      - run:
+          name: Deploy Modal renderer
+          command: python -m modal deploy modal_app.py
 
 workflows:
-  build-worker:
+  deploy-renderer:
     jobs:
-      - build-runpod-worker
+      - deploy-modal-renderer

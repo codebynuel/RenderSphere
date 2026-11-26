@@ -9,8 +9,8 @@ const PROVIDER_REQUIRED_ENV_VARS = [
   'R2_ACCESS_KEY_ID',
   'R2_SECRET_ACCESS_KEY',
   'R2_BUCKET_NAME',
-  'RUNPOD_ENDPOINT_ID',
-  'RUNPOD_API_KEY',
+  'MODAL_ENDPOINT_URL',
+  'MODAL_API_SECRET',
 ];
 
 const PRODUCTION_REQUIRED_ENV_VARS = [
@@ -332,10 +332,12 @@ const config = {
     customTopUp: parseNowPaymentsCustomTopUpConfig(),
   },
   jobRecordRetentionDays: parsePositiveIntegerEnv('RENDERSPHERE_JOB_RECORD_RETENTION_DAYS', 30),
-  runpodRequestTimeoutMs: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS', 15000),
-  runpodStatusMaxRetries: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES', 2),
-  runpodCancelMaxRetries: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES', 1),
-  runpodRetryBackoffMs: parsePositiveIntegerEnv('RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS', 300),
+  modalEndpointUrl: process.env.MODAL_ENDPOINT_URL || '',
+  modalApiSecret: process.env.MODAL_API_SECRET || '',
+  modalRequestTimeoutMs: parsePositiveIntegerEnv('RENDERSPHERE_MODAL_REQUEST_TIMEOUT_MS', 30000),
+  modalStatusMaxRetries: parsePositiveIntegerEnv('RENDERSPHERE_MODAL_STATUS_MAX_RETRIES', 2),
+  modalCancelMaxRetries: parsePositiveIntegerEnv('RENDERSPHERE_MODAL_CANCEL_MAX_RETRIES', 1),
+  modalRetryBackoffMs: parsePositiveIntegerEnv('RENDERSPHERE_MODAL_RETRY_BACKOFF_MS', 300),
   secureCookies: process.env.RENDERSPHERE_SECURE_COOKIES === 'true' || process.env.NODE_ENV === 'production',
   resendApiKey: process.env.RENDERSPHERE_RESEND_API_KEY || '',
   emailFrom: process.env.RENDERSPHERE_EMAIL_FROM || 'RenderSphere <noreply@rendersphere.app>',
@@ -351,6 +353,12 @@ function environmentValidation({ production = config.isProduction } = {}) {
 
   const publicUrlError = urlEnvError('RENDERSPHERE_PUBLIC_URL', { required: production });
   if (publicUrlError && !missing.includes('RENDERSPHERE_PUBLIC_URL')) invalid.push(publicUrlError);
+
+  const modalUrlError = urlEnvError('MODAL_ENDPOINT_URL', { required: production });
+  if (modalUrlError && !missing.includes('MODAL_ENDPOINT_URL')) invalid.push(modalUrlError);
+  if (!modalUrlError && envPresent('MODAL_ENDPOINT_URL') && new URL(process.env.MODAL_ENDPOINT_URL).protocol !== 'https:') {
+    invalid.push('MODAL_ENDPOINT_URL must use HTTPS');
+  }
 
   if (!VALID_RATE_LIMIT_STORES.has(config.rateLimitStore)) {
     invalid.push('RENDERSPHERE_RATE_LIMIT_STORE must be memory or redis');
@@ -427,7 +435,7 @@ function getEnvironmentReadiness({ production = config.isProduction } = {}) {
     invalid: validation.invalid,
     requiredPresent: validation.required.filter(envPresent),
     r2Configured: groupConfigured(['CLOUDFLARE_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']),
-    runpodConfigured: groupConfigured(['RUNPOD_ENDPOINT_ID', 'RUNPOD_API_KEY']),
+    modalConfigured: groupConfigured(['MODAL_ENDPOINT_URL', 'MODAL_API_SECRET']),
     paypalConfigured: config.paypal.mock || Boolean(config.paypal.clientId && config.paypal.clientSecret),
     paypalEnvironment: config.paypal.environment,
     paypalMock: config.paypal.mock,

@@ -36,7 +36,7 @@ function normalizePath(pathname = '') {
     .split('?')[0]
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, ':id')
     .replace(/render:[0-9a-f-]+/gi, 'render::id')
-    .replace(/mock-runpod-[^/]+/gi, 'mock-runpod::id')
+    .replace(/mock-modal-[^/]+/gi, 'mock-modal::id')
     .replace(/\/[^/]{24,}(?=\/|$)/g, '/:id');
 }
 
@@ -173,7 +173,7 @@ async function buildOperationalSnapshot() {
     providers: {
       database: { configured: true, provider: 'postgres' },
       r2: { configured: readiness.r2Configured },
-      runpod: { configured: readiness.runpodConfigured },
+      modal: { configured: readiness.modalConfigured },
       rateLimitStore: readiness.rateLimitStore,
       redisRateLimitConfigured: readiness.redisRateLimitConfigured,
     },

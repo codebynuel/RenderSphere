@@ -67,10 +67,10 @@ function createAdminRouter({ buildOperationalSnapshot, requireAdmin }) {
         starterBalanceUsd: config.freeRenderCredits,
         minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
         jobRecordRetentionDays: config.jobRecordRetentionDays,
-        runpodRequestTimeoutMs: config.runpodRequestTimeoutMs,
-        runpodStatusMaxRetries: config.runpodStatusMaxRetries,
-        runpodCancelMaxRetries: config.runpodCancelMaxRetries,
-        runpodRetryBackoffMs: config.runpodRetryBackoffMs,
+        modalRequestTimeoutMs: config.modalRequestTimeoutMs,
+        modalStatusMaxRetries: config.modalStatusMaxRetries,
+        modalCancelMaxRetries: config.modalCancelMaxRetries,
+        modalRetryBackoffMs: config.modalRetryBackoffMs,
       },
     });
   });

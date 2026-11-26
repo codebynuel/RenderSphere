@@ -13,8 +13,8 @@ import { buildOperationalSnapshot, requestIdMiddleware, requestLoggingMiddleware
 import { accountRateLimitKey, authAttemptRateLimitKey, createRateLimiter, createRateLimitStore, requireSameOriginForBrowserWrites, securityHeaders } from './helpers/security.js';
 import { prisma } from './src/db.js';
 import { authenticateToken, parseCookieHeader, requireAdmin, requireAuth } from './src/services/authService.js';
-import { fetchRunpodJobStatus, getRunpodExecutionSeconds } from './src/services/runpodService.js';
-import { jobIsProviderDispatched, persistRunpodStatus, providerJobIdForJob, serializeJob } from './src/services/jobService.js';
+import { fetchModalJobStatus, getModalExecutionSeconds } from './src/services/modalService.js';
+import { jobIsProviderDispatched, persistModalStatus, providerJobIdForJob, serializeJob } from './src/services/jobService.js';
 
 import { createAdminRouter } from './routes/admin.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -98,9 +98,9 @@ function socketToken(socket) {
   return cookies.get(SESSION_COOKIE_NAME) || null;
 }
 
-function emitJobUpdate(job, rpData = null) {
+function emitJobUpdate(job, providerData = null) {
   if (!job) return;
-  const payload = serializeJob(job, rpData);
+  const payload = serializeJob(job, providerData);
   io.to(`user:${job.userId}`).to(`job:${job.jobId}`).emit('job_update', payload);
 }
 
@@ -239,10 +239,10 @@ const activeJobPoller = setInterval(async () => {
     await Promise.all(activeJobs.map(async (job) => {
       try {
         if (!jobIsProviderDispatched(job)) return;
-        const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job));
+        const modalData = await fetchModalJobStatus(providerJobIdForJob(job));
         const prevStatus = job.status;
-        const updatedJob = await persistRunpodStatus(job.userId, job.jobId, rpData);
-        emitJobUpdate(updatedJob || job, rpData);
+        const updatedJob = await persistModalStatus(job.userId, job.jobId, modalData);
+        emitJobUpdate(updatedJob || job, modalData);
 
         // Send email notification on terminal status change
         if (updatedJob && prevStatus !== updatedJob.status && !updatedJob.notificationSent) {
@@ -258,8 +258,8 @@ const activeJobPoller = setInterval(async () => {
         // Live spend alert — fires during rendering when running cost exceeds threshold, once per job
         if (updatedJob && updatedJob.spendAlertUsd && !updatedJob.notificationSent) {
           const billingMeta = (updatedJob.billingMetadata && typeof updatedJob.billingMetadata === 'object') ? updatedJob.billingMetadata : {};
-          if (!billingMeta.spendAlertSent && rpData) {
-            const executionSeconds = getRunpodExecutionSeconds(rpData, updatedJob);
+          if (!billingMeta.spendAlertSent && modalData) {
+            const executionSeconds = getModalExecutionSeconds(modalData, updatedJob);
             const runningCost = Math.max(0, executionSeconds * config.renderPricePerSecondUsd);
             if (runningCost > Number(updatedJob.spendAlertUsd)) {
               const user = await prisma.user.findUnique({ where: { id: updatedJob.userId } });
@@ -279,7 +279,7 @@ const activeJobPoller = setInterval(async () => {
           }
         }
       } catch (error) {
-        logger.warn('Could not poll RunPod job', {
+        logger.warn('Could not poll Modal job', {
           context: 'job_poller',
           jobId: job.jobId,
           providerJobId: providerJobIdForJob(job),

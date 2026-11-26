@@ -65,8 +65,8 @@ const serverEnv = {
   R2_ACCESS_KEY_ID: 'smoke-access-key',
   R2_SECRET_ACCESS_KEY: 'smoke-secret-key',
   R2_BUCKET_NAME: 'smoke-bucket',
-  RUNPOD_ENDPOINT_ID: 'smoke-endpoint',
-  RUNPOD_API_KEY: 'smoke-runpod-key',
+  MODAL_ENDPOINT_URL: 'https://rendersphere-smoke.modal.run',
+  MODAL_API_SECRET: 'smoke-modal-secret',
   RENDERSPHERE_INVITE_CODE: 'smoke-invite',
   RENDERSPHERE_ADMIN_TOKEN: 'smoke-admin',
   RENDERSPHERE_FREE_RENDER_CREDITS_USD: '5',
@@ -75,13 +75,13 @@ const serverEnv = {
   RENDERSPHERE_MIN_RENDER_RESERVATION_USD: '0.50',
   RENDERSPHERE_DEFAULT_RENDER_MAX_BUDGET_USD: '2.00',
   RENDERSPHERE_MAX_RENDER_BUDGET_USD: '20.00',
-  RENDERSPHERE_MOCK_RUNPOD: 'true',
+  RENDERSPHERE_MOCK_MODAL: 'true',
   RENDERSPHERE_JOB_POLL_INTERVAL_MS: '600000',
-  RENDERSPHERE_RUNPOD_REQUEST_TIMEOUT_MS: '250',
-  RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES: '2',
-  RENDERSPHERE_RUNPOD_CANCEL_MAX_RETRIES: '1',
-  RENDERSPHERE_RUNPOD_RETRY_BACKOFF_MS: '10',
-  RENDERSPHERE_MOCK_RUNPOD_FAIL_FILEKEY_PATTERN: 'dispatch-fail',
+  RENDERSPHERE_MODAL_REQUEST_TIMEOUT_MS: '250',
+  RENDERSPHERE_MODAL_STATUS_MAX_RETRIES: '2',
+  RENDERSPHERE_MODAL_CANCEL_MAX_RETRIES: '1',
+  RENDERSPHERE_MODAL_RETRY_BACKOFF_MS: '10',
+  RENDERSPHERE_MOCK_MODAL_FAIL_FILEKEY_PATTERN: 'dispatch-fail',
   RENDERSPHERE_MAX_CONCURRENT_JOBS: '4',
   RENDERSPHERE_DEFAULT_PAGE_SIZE: '2',
   RENDERSPHERE_MAX_PAGE_SIZE: '3',
@@ -116,16 +116,23 @@ const { logger, redactSecrets } = await import('../helpers/logger.js');
 const { prisma } = await import('../src/db.js');
 const { CREDIT_TRANSACTION_TYPES, applyCreditTransaction, chargeRenderCredits, grantCredits } = await import('../src/services/creditService.js');
 const { capturePayPalTopUpOrder } = await import('../src/services/paypalService.js');
-const { persistRunpodStatus } = await import('../src/services/jobService.js');
-const { RunpodProviderError, fetchRunpodJobStatus } = await import('../src/services/runpodService.js');
+const { persistModalStatus } = await import('../src/services/jobService.js');
+const { ModalProviderError, fetchModalJobStatus } = await import('../src/services/modalService.js');
 
-async function verifyRunpodRetryHelper() {
+async function verifyModalRetryHelper() {
   const originalFetch = globalThis.fetch;
-  const originalMockRunpod = process.env.RENDERSPHERE_MOCK_RUNPOD;
+  const originalMockModal = process.env.RENDERSPHERE_MOCK_MODAL;
   let attempts = 0;
 
-  process.env.RENDERSPHERE_MOCK_RUNPOD = 'false';
-  globalThis.fetch = async () => {
+  process.env.RENDERSPHERE_MOCK_MODAL = 'false';
+  globalThis.fetch = async (url, options) => {
+    if (url !== serverEnv.MODAL_ENDPOINT_URL || options.headers.Authorization !== `Bearer ${serverEnv.MODAL_API_SECRET}`) {
+      throw new Error('Modal provider request did not use the configured endpoint and authorization token.');
+    }
+    const requestBody = JSON.parse(options.body);
+    if (requestBody.action !== 'status' || requestBody.id !== 'retry-smoke') {
+      throw new Error('Modal status request did not include the expected action and function call ID.');
+    }
     attempts += 1;
     if (attempts === 1) {
       return new Response(JSON.stringify({ error: 'temporary provider outage' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
@@ -134,9 +141,9 @@ async function verifyRunpodRetryHelper() {
   };
 
   try {
-    const retriedStatus = await fetchRunpodJobStatus('retry-smoke');
+    const retriedStatus = await fetchModalJobStatus('retry-smoke');
     if (attempts !== 2 || retriedStatus.status !== 'IN_PROGRESS') {
-      throw new Error(`RunPod retry helper did not retry once as expected; attempts=${attempts}, status=${retriedStatus.status}.`);
+      throw new Error(`Modal retry helper did not retry once as expected; attempts=${attempts}, status=${retriedStatus.status}.`);
     }
 
     globalThis.fetch = async () => new Promise((resolve, reject) => {
@@ -144,24 +151,24 @@ async function verifyRunpodRetryHelper() {
       abortError.name = 'AbortError';
       setTimeout(() => reject(abortError), 20);
     });
-    process.env.RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES = '0';
+    process.env.RENDERSPHERE_MODAL_STATUS_MAX_RETRIES = '0';
 
     try {
-      await fetchRunpodJobStatus('timeout-smoke');
-      throw new Error('RunPod timeout helper unexpectedly succeeded.');
+      await fetchModalJobStatus('timeout-smoke');
+      throw new Error('Modal timeout helper unexpectedly succeeded.');
     } catch (error) {
-      if (!(error instanceof RunpodProviderError) || error.status !== 504 || error.code !== 'RUNPOD_TIMEOUT') {
-        throw new Error(`RunPod timeout helper returned the wrong error classification: ${error.code || error.message}.`);
+      if (!(error instanceof ModalProviderError) || error.status !== 504 || error.code !== 'MODAL_TIMEOUT') {
+        throw new Error(`Modal timeout helper returned the wrong error classification: ${error.code || error.message}.`);
       }
     }
   } finally {
     globalThis.fetch = originalFetch;
-    process.env.RENDERSPHERE_MOCK_RUNPOD = originalMockRunpod;
-    process.env.RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES = serverEnv.RENDERSPHERE_RUNPOD_STATUS_MAX_RETRIES;
+    process.env.RENDERSPHERE_MOCK_MODAL = originalMockModal;
+    process.env.RENDERSPHERE_MODAL_STATUS_MAX_RETRIES = serverEnv.RENDERSPHERE_MODAL_STATUS_MAX_RETRIES;
   }
 }
 
-await verifyRunpodRetryHelper();
+await verifyModalRetryHelper();
 
 const sanitizedPayload = publicErrorPayload(new Error('database password leaked internally'), { requestId: 'smoke-helper-request' }, 'Internal server error', { production: true });
 if (sanitizedPayload.error !== 'Internal server error' || sanitizedPayload.requestId !== 'smoke-helper-request') {
@@ -255,7 +262,12 @@ try {
   assertRequestId(health, '/healthz', 'smoke-request-health-0001');
 
   const readiness = await rawRequest('/readyz');
-  if (!readiness.response.ok || readiness.data.status !== 'ready' || typeof readiness.data.alertHints?.databaseUnavailable !== 'boolean') {
+  if (
+    !readiness.response.ok
+    || readiness.data.status !== 'ready'
+    || typeof readiness.data.alertHints?.databaseUnavailable !== 'boolean'
+    || readiness.data.checks?.dependencies?.modalConfigured !== true
+  ) {
     throw new Error('/readyz did not return alert-ready readiness information.');
   }
   assertRequestId(readiness, '/readyz');
@@ -311,7 +323,7 @@ try {
   });
   if (!initialMetrics.response.ok) throw new Error(`GET /api/admin/metrics failed: ${initialMetrics.response.status} ${initialMetrics.data.error || ''}`);
   assertRequestId(initialMetrics, '/api/admin/metrics');
-  if (!Array.isArray(initialMetrics.data.http) || !initialMetrics.data.jobs?.byStatus || !initialMetrics.data.billing?.byState || !initialMetrics.data.providers?.database || initialMetrics.data.readiness?.status !== 'ok') {
+  if (!Array.isArray(initialMetrics.data.http) || !initialMetrics.data.jobs?.byStatus || !initialMetrics.data.billing?.byState || !initialMetrics.data.providers?.database || initialMetrics.data.providers?.modal?.configured !== true || initialMetrics.data.readiness?.status !== 'ok') {
     throw new Error('/api/admin/metrics did not return the expected operational metrics snapshot.');
   }
 
@@ -609,7 +621,7 @@ try {
     throw new Error('Retrying a failed dispatch idempotency key did not return the recoverable failed job without redispatching.');
   }
 
-  const completedJob = await persistRunpodStatus(registered.user.id, fundedRender.jobId, {
+  const completedJob = await persistModalStatus(registered.user.id, fundedRender.jobId, {
     status: 'COMPLETED',
     output: { result_key: `finished_renders/${fundedRender.jobId}.png` },
     executionTime: 125000,
@@ -628,7 +640,7 @@ try {
     throw new Error('Completed render did not record the expected charge and reservation release.');
   }
 
-  await persistRunpodStatus(registered.user.id, fundedRender.jobId, {
+  await persistModalStatus(registered.user.id, fundedRender.jobId, {
     status: 'COMPLETED',
     output: { result_key: `finished_renders/${fundedRender.jobId}.png` },
     executionTime: 125000,
@@ -856,7 +868,7 @@ try {
     idempotencyKey: `render-reservation:${failedJobId}`,
     metadata: { source: 'smoke_failed_job' },
   });
-  const releasedFailedJob = await persistRunpodStatus(registered.user.id, failedJobId, { status: 'FAILED', error: 'Smoke render failure' });
+  const releasedFailedJob = await persistModalStatus(registered.user.id, failedJobId, { status: 'FAILED', error: 'Smoke render failure' });
   const failedRelease = await prisma.creditTransaction.findFirst({
     where: { userId: registered.user.id, type: CREDIT_TRANSACTION_TYPES.RESERVATION_RELEASE, jobId: failedJobId },
   });

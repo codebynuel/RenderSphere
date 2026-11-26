@@ -1,4 +1,3 @@
-import runpod
 import boto3
 import subprocess
 import os
@@ -383,11 +382,6 @@ def stream_blender_process(process, job, start_frame, end_frame, frame_step, sam
 
                 now = time.time()
                 if changed and (now - last_update_time > 2.0):
-                    runpod.serverless.progress_update(job, {
-                        "current_frame": current_frame_val,
-                        "current_sample": current_sample_val,
-                        "percent": progress_percent(),
-                    })
                     report_backend_progress(job, current_frame_val, current_sample_val, progress_percent())
                     last_update_time = now
 
@@ -420,11 +414,6 @@ def stream_blender_process(process, job, start_frame, end_frame, frame_step, sam
     if is_animation:
         completed_frame = start_frame + ((end_frame - start_frame) // max(frame_step, 1)) * max(frame_step, 1)
 
-    runpod.serverless.progress_update(job, {
-        "current_frame": completed_frame,
-        "current_sample": samples,
-        "percent": 100,
-    })
     report_backend_progress(job, completed_frame, samples, 100)
 
 
@@ -448,8 +437,8 @@ def report_backend_progress(job, current_frame, current_sample, percent):
             method='POST',
         )
         urllib.request.urlopen(req, timeout=5)
-    except Exception:
-        pass  # Progress reporting is non-critical
+    except Exception as exc:
+        print(f"Progress report failed: {exc}")
 
 
 def render_job(job):
@@ -668,7 +657,4 @@ def render_job(job):
             os.remove(upload_file)
         if os.path.exists(gpu_script_path):
             os.remove(gpu_script_path)
-
-
-runpod.serverless.start({"handler": render_job})
 

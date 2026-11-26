@@ -16,10 +16,10 @@ function limitSummary(config) {
     defaultRenderMaxBudgetUsd: config.defaultRenderMaxBudgetUsd,
     maxRenderBudgetUsd: config.maxRenderBudgetUsd,
     minRenderStartBalanceUsd: config.minRenderStartBalanceUsd,
-    runpodRequestTimeoutMs: config.runpodRequestTimeoutMs,
-    runpodStatusMaxRetries: config.runpodStatusMaxRetries,
-    runpodCancelMaxRetries: config.runpodCancelMaxRetries,
-    runpodRetryBackoffMs: config.runpodRetryBackoffMs,
+    modalRequestTimeoutMs: config.modalRequestTimeoutMs,
+    modalStatusMaxRetries: config.modalStatusMaxRetries,
+    modalCancelMaxRetries: config.modalCancelMaxRetries,
+    modalRetryBackoffMs: config.modalRetryBackoffMs,
   };
 }
 
@@ -42,12 +42,12 @@ function createSystemRouter({ buildOperationalSnapshot, config }) {
       database: { status: 'unknown', provider: 'postgres' },
       dependencies: {
         r2Configured: false,
-        runpodConfigured: false,
+        modalConfigured: false,
       },
     };
 
     checks.dependencies.r2Configured = checks.environment.r2Configured;
-    checks.dependencies.runpodConfigured = checks.environment.runpodConfigured;
+    checks.dependencies.modalConfigured = checks.environment.modalConfigured;
 
     try {
       await prisma.$queryRaw`SELECT 1`;
@@ -69,7 +69,7 @@ function createSystemRouter({ buildOperationalSnapshot, config }) {
       alertHints: {
         databaseUnavailable: checks.database.status !== 'ok',
         environmentInvalid: checks.environment.status !== 'ok',
-        providerConfigurationMissing: !checks.dependencies.r2Configured || !checks.dependencies.runpodConfigured,
+        providerConfigurationMissing: !checks.dependencies.r2Configured || !checks.dependencies.modalConfigured,
       },
       requestId: req.id || req.requestId || null,
     });

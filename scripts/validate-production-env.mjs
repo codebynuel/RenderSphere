@@ -8,7 +8,7 @@ try {
     production: readiness.production,
     requiredPresent: readiness.requiredPresent,
     r2Configured: readiness.r2Configured,
-    runpodConfigured: readiness.runpodConfigured,
+    modalConfigured: readiness.modalConfigured,
     publicUrlConfigured: readiness.publicUrlConfigured,
     rateLimitStore: readiness.rateLimitStore,
     redisRateLimitConfigured: readiness.redisRateLimitConfigured,

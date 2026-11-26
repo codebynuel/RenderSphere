@@ -2,10 +2,10 @@ import { ACTIVE_JOB_STATUSES, VALID_DENOISERS, VALID_ENGINES, VALID_OUTPUT_FORMA
 import { logger } from '../../helpers/logger.js';
 import { prisma } from '../db.js';
 import { chargeRenderCredits, releaseRenderReservation } from './creditService.js';
-import { fetchRunpodJobStatus, getRunpodExecutionSeconds, getRunpodResultKey } from './runpodService.js';
+import { fetchModalJobStatus, getModalExecutionSeconds, getModalResultKey } from './modalService.js';
 
 const INTERNAL_ERROR_MARKERS = [
-  'runpod',
+  'modal',
   'traceback',
   'error_traceback',
   'hostname',
@@ -158,7 +158,7 @@ export function validateRenderChoices({ engine, outputFormat, denoiser }) {
   return null;
 }
 
-export function buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings }) {
+export function buildRenderInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings }) {
   return {
     fileKey,
     engine,
@@ -263,8 +263,8 @@ function unwrapStreamPayload(item) {
   return payload;
 }
 
-export function extractProgressFromRunpodData(rpData) {
-  const stream = Array.isArray(rpData?.stream) ? rpData.stream : [];
+export function extractProgressFromModalData(modalData) {
+  const stream = Array.isArray(modalData?.stream) ? modalData.stream : [];
 
   for (const item of [...stream].reverse()) {
     const payload = unwrapStreamPayload(item);
@@ -323,7 +323,7 @@ export function calculateProgressPercent(job, progressInput = job?.progress) {
   return 2;
 }
 
-export function serializeJob(job, rpData = null) {
+export function serializeJob(job, providerData = null) {
   if (!job) return null;
   const progress = normalizeProgress(job.progress);
   const serialized = {
@@ -335,7 +335,7 @@ export function serializeJob(job, rpData = null) {
     downloadUrl: job.status === 'COMPLETED' && job.resultKey ? renderedFileDownloadPath(job.jobId) : null,
   };
 
-  if (rpData?.stream) serialized.stream = rpData.stream;
+  if (providerData?.stream) serialized.stream = providerData.stream;
   return serialized;
 }
 
@@ -426,10 +426,10 @@ export function jobIsProviderDispatched(job) {
   return Boolean(providerJobIdForJob(job) && job?.dispatchStatus === 'DISPATCHED');
 }
 
-export async function persistRunpodStatus(userId, jobId, rpData, { requestId = null } = {}) {
-  const status = rpData.status || 'UNKNOWN';
-  const resultKey = getRunpodResultKey(rpData);
-  const progress = extractProgressFromRunpodData(rpData);
+export async function persistModalStatus(userId, jobId, modalData, { requestId = null } = {}) {
+  const status = modalData.status || 'UNKNOWN';
+  const resultKey = getModalResultKey(modalData);
+  const progress = extractProgressFromModalData(modalData);
 
   const job = await prisma.job.findUnique({ where: { jobId }, include: { project: true } });
   if (!job || job.userId !== userId) return null;
@@ -453,17 +453,17 @@ export async function persistRunpodStatus(userId, jobId, rpData, { requestId = n
       updatedAt: new Date().toISOString(),
     };
   } else if (status === 'FAILED') {
-    updateData.error = sanitizeRenderError(rpData.error || rpData.output, 'Render failed while processing the scene.');
+    updateData.error = sanitizeRenderError(modalData.error || modalData.output, 'Render failed while processing the scene.');
     updateData.failedAt = job.failedAt || new Date();
   } else if (status === 'CANCELLED') {
     updateData.cancelledAt = job.cancelledAt || new Date();
   }
 
-  logger.debug('Persisting RunPod status', { context: 'job_status', requestId, userId, jobId, status, resultKey });
+  logger.debug('Persisting Modal status', { context: 'job_status', requestId, userId, jobId, status, resultKey });
 
   return prisma.$transaction(async (tx) => {
     if (status === 'COMPLETED' && updateData.resultKey && !job.billedAt) {
-      const billableSeconds = getRunpodExecutionSeconds(rpData, job);
+      const billableSeconds = getModalExecutionSeconds(modalData, job);
       const uncappedPriceUsd = roundMoney(billableSeconds * config.renderPricePerSecondUsd);
       const priceUsd = roundMoney(Math.max(uncappedPriceUsd, config.minimumJobChargeUsd));
       const reservationAmount = unreleasedReservationAmount(job);
@@ -582,9 +582,9 @@ export async function syncActiveJobsForUser(userId, emitJobUpdate = null, { requ
   await Promise.all(syncableJobs.map(async (job) => {
     try {
       if (!jobIsProviderDispatched(job)) return;
-      const rpData = await fetchRunpodJobStatus(providerJobIdForJob(job), { requestId });
-      const updatedJob = await persistRunpodStatus(userId, job.jobId, rpData, { requestId });
-      if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, rpData);
+      const modalData = await fetchModalJobStatus(providerJobIdForJob(job), { requestId });
+      const updatedJob = await persistModalStatus(userId, job.jobId, modalData, { requestId });
+      if (updatedJob && emitJobUpdate) emitJobUpdate(updatedJob, modalData);
     } catch (error) {
       logger.warn('Could not sync render job', { context: 'job_sync', requestId, userId, jobId: job.jobId, providerJobId: providerJobIdForJob(job), error });
     }

@@ -5,8 +5,8 @@ import { logger, withRequest } from '../../helpers/logger.js';
 import { prisma } from '../db.js';
 import { publicUser } from '../services/authService.js';
 import { reserveRenderCredits } from '../services/creditService.js';
-import { buildRunpodInput, estimateRenderCostUsd, normalizeMoneyInput, normalizeRenderSettings, releaseJobReservation, resolveRenderBudget, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
-import { cancelRunpodJob, startRunpodRender } from '../services/runpodService.js';
+import { buildRenderInput, estimateRenderCostUsd, normalizeMoneyInput, normalizeRenderSettings, releaseJobReservation, resolveRenderBudget, sanitizeRenderError, serializeJob, validateRenderChoices } from '../services/jobService.js';
+import { cancelModalJob, startModalRender } from '../services/modalService.js';
 import { createUploadUrl, isSafeFileName, isSafeObjectKey } from '../services/storageService.js';
 import { userCanSubmitToProject } from '../services/projectService.js';
 
@@ -34,7 +34,7 @@ function dispatchFailureMetadata(error, patch = {}) {
     providerErrorCode: error.code || null,
     providerStatus: error.status || null,
     providerRetryable: Boolean(error.retryable),
-    providerError: sanitizeRenderError(error.data || error.message, 'RunPod dispatch failed before provider acceptance.'),
+    providerError: sanitizeRenderError(error.data || error.message, 'Modal dispatch failed before provider acceptance.'),
   });
 }
 
@@ -187,7 +187,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       const project = projectId ? await prisma.project.findUnique({ where: { id: projectId } }) : null;
 
       const spendAlertUsd = normalizeMoneyInput(req.body.spendAlertUsd);
-      const runpodInput = buildRunpodInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
+      const renderInput = buildRenderInput({ fileKey, engine, outputFormat, denoiser, normalizedSettings });
       const costEstimate = estimateRenderCostUsd({ engine, outputFormat, denoiser, normalizedSettings });
       const budget = resolveRenderBudget({ estimatedCostUsd: costEstimate.estimatedCostUsd });
       const localJobId = internalDispatchReference();
@@ -227,7 +227,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               dispatchStatus: 'PENDING',
               idempotencyKey: scopedIdempotencyKey,
               accessKeyId: req.accessKey?.id || null,
-              settings: { ...runpodInput, dispatchReference: localJobId },
+              settings: { ...renderInput, dispatchReference: localJobId },
               frameCount: normalizedSettings.frameCount,
               estimatedCostUsd: costEstimate.estimatedCostUsd,
               spendAlertUsd: spendAlertUsd || null,
@@ -289,13 +289,18 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
         if (emitJobUpdate) emitJobUpdate(job, null);
 
         logger.info('Dispatching render job to provider', withRequest(req, { context: 'render_dispatch', jobId: localJobId, idempotencyKey: scopedIdempotencyKey || localJobId }));
-        const data = await startRunpodRender(
-          { ...runpodInput, dispatchReference: localJobId, idempotencyKey: scopedIdempotencyKey },
+        const data = await startModalRender(
+          {
+            ...renderInput,
+            dispatchReference: localJobId,
+            idempotencyKey: scopedIdempotencyKey,
+            backendUrl: config.publicUrl || null,
+          },
           { idempotencyKey: scopedIdempotencyKey || localJobId, requestId: req.id || req.requestId || null }
         );
         providerData = data;
         providerJobId = data.id;
-        if (!providerJobId) throw new Error('RunPod accepted dispatch without returning a provider job id');
+        if (!providerJobId) throw new Error('Modal accepted dispatch without returning a provider job id');
 
         job = await prisma.job.update({
           where: { jobId: localJobId },
@@ -353,7 +358,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
               user: publicUser(refreshedUser),
             });
           } catch (reconcileError) {
-            logger.error('RunPod accepted a job but local provider id attachment needs manual reconciliation', withRequest(req, {
+            logger.error('Modal accepted a job but local provider id attachment needs manual reconciliation', withRequest(req, {
               context: 'render_dispatch',
               jobId: job.jobId,
               providerJobId,
@@ -372,7 +377,7 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
                   status: 'DISPATCH_FAILED',
                   dispatchStatus: 'FAILED',
                   failedAt: currentJob.failedAt || new Date(),
-                  error: sanitizeRenderError(error.data || error.message, 'RunPod dispatch failed before provider acceptance.'),
+                  error: sanitizeRenderError(error.data || error.message, 'Modal dispatch failed before provider acceptance.'),
                   billingState: currentJob.reservationReleasedAt ? currentJob.billingState : 'RELEASING',
                   dispatchMetadata: dispatchFailureMetadata(error, currentJob.dispatchMetadata),
                   progress: { percent: 0, updatedAt: new Date().toISOString(), message: 'Dispatch failed before provider acceptance' },
@@ -417,12 +422,12 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
       try {
         const providerJobId = job.providerJobId || job.jobId;
         const hasProviderJob = job.dispatchStatus === 'DISPATCHED' && providerJobId;
-        const runpodResult = hasProviderJob
-          ? await cancelRunpodJob(providerJobId, { requestId: req.id || req.requestId || null })
+        const providerResult = hasProviderJob
+          ? await cancelModalJob(providerJobId, { requestId: req.id || req.requestId || null })
           : { ok: true, status: 200, data: { id: providerJobId, status: 'CANCELLED', localOnly: true } };
         let updatedJob = job;
 
-        if (runpodResult.ok) {
+        if (providerResult.ok) {
           updatedJob = await prisma.$transaction(async (tx) => {
             const cancelledJob = await tx.job.update({
               where: { jobId },
@@ -447,14 +452,14 @@ export function createRenderController({ emitJobUpdate = null } = {}) {
             });
             return tx.job.findUnique({ where: { jobId }, include: { project: true } });
           });
-          if (emitJobUpdate) emitJobUpdate(updatedJob, runpodResult.data);
+          if (emitJobUpdate) emitJobUpdate(updatedJob, providerResult.data);
         }
 
-        return res.status(runpodResult.ok ? 200 : runpodResult.status).json({
-          success: runpodResult.ok,
-          status: runpodResult.status,
-          provider: runpodResult.data,
-          job: serializeJob(updatedJob, runpodResult.data),
+        return res.status(providerResult.ok ? 200 : providerResult.status).json({
+          success: providerResult.ok,
+          status: providerResult.status,
+          provider: providerResult.data,
+          job: serializeJob(updatedJob, providerResult.data),
         });
       } catch (error) {
         logger.error('Cancel render job failed', withRequest(req, { context: 'render_cancel', jobId, error }));
